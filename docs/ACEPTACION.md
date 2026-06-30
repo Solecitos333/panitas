@@ -2,6 +2,7 @@
 
 - [ ] Cada rol solo ve sus módulos y acciones.
 - [ ] Usuario anónimo, inactivo o sin correo verificado queda bloqueado.
+- [ ] Google permite elegir una cuenta, pero una identidad sin perfil activo no obtiene acceso operativo.
 - [ ] Dos usuarios no pueden abrir simultáneamente la misma mesa.
 - [ ] La secuencia comanda → cocina → servicio → cobro libera la mesa.
 - [ ] Un doble clic o cambio concurrente no duplica cobro, factura ni NCF.

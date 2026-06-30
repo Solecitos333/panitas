@@ -1,5 +1,13 @@
 import './styles.css';
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut, sendPasswordResetEmail } from 'firebase/auth';
+import {
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut
+} from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { getFirebaseServices, hasFirebaseConfig } from './services/firebase.js';
 import { DataService } from './services/data-service.js';
@@ -50,6 +58,22 @@ function showLogin(auth, message = '') {
       catch (error) { showLogin(auth, loginError(error)); }
       finally { button.disabled = false; }
     },
+    async signInGoogle(button) {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      try {
+        button.disabled = true;
+        await signInWithPopup(auth, provider);
+      } catch (error) {
+        if (['auth/popup-blocked', 'auth/operation-not-supported-in-this-environment'].includes(error.code)) {
+          await signInWithRedirect(auth, provider);
+          return;
+        }
+        if (error.code !== 'auth/popup-closed-by-user') showLogin(auth, loginError(error));
+      } finally {
+        button.disabled = false;
+      }
+    },
     async resetPassword(email) {
       if (!email) return showLogin(auth, 'Escribe primero tu correo.');
       try { await sendPasswordResetEmail(auth, email); showLogin(auth, 'Te enviamos un enlace para crear una nueva contraseña.'); }
@@ -60,6 +84,8 @@ function showLogin(auth, message = '') {
 
 function loginError(error) {
   if (['auth/invalid-credential','auth/user-not-found','auth/wrong-password'].includes(error.code)) return 'Correo o contraseña incorrectos.';
+  if (error.code === 'auth/account-exists-with-different-credential') return 'Ese correo ya usa otro método de acceso. Entra con tu contraseña y solicita vincular Google.';
+  if (error.code === 'auth/unauthorized-domain') return 'Este dominio todavía no está autorizado para iniciar sesión con Google.';
   if (error.code === 'auth/too-many-requests') return 'Demasiados intentos. Espera unos minutos.';
   if (error.code === 'auth/network-request-failed') return 'No hay conexión con el servicio de acceso.';
   return 'No pudimos iniciar la sesión.';
