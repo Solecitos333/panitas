@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" role="img" aria-labelledby="title">
+  <title id="title">Los Panitas by Nechy</title>
+  <rect width="180" height="180" rx="42" fill="#23170f"/>
+  <circle cx="90" cy="82" r="55" fill="#ffb126"/>
+  <path d="M47 79c18-34 68-45 91-8-8 2-14 8-17 16-12-12-37-15-52 2-6-7-13-10-22-10Z" fill="#7b2e1e"/>
+  <path d="M58 103c20 17 48 18 66-1" fill="none" stroke="#23170f" stroke-width="8" stroke-linecap="round"/>
+  <text x="90" y="157" text-anchor="middle" font-family="Arial,sans-serif" font-size="17" font-weight="800" fill="#fff7e8">LOS PANITAS</text>
+</svg>

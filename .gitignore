@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.firebase/
+.env
+.env.*
+!.env.example
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+*.local
+*.key.json
+service-account*.json
+backups/
+migrations/private/
+coverage/
+test-results/
