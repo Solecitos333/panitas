@@ -14,3 +14,5 @@ backups/
 migrations/private/
 coverage/
 test-results/
+# Credenciales efímeras creadas por google-github-actions/auth
+gha-creds-*.json

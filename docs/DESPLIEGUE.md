@@ -25,7 +25,7 @@ El script solo crea configuración, contadores y doce mesas; no fabrica ventas, 
 
 ## GitHub Actions
 
-Los pull requests validan código, reglas y build, y generan un canal preview. `main` despliega producción. Se requiere el secret `FIREBASE_SERVICE_ACCOUNT_LOS_PANITAS_BY_NECHY`; el JSON nunca se guarda en el repositorio.
+Los pull requests validan código, reglas y build, y generan un canal preview `pr-{número}` por 14 días. `main` despliega producción. Se requiere el secret `FIREBASE_SERVICE_ACCOUNT_LOS_PANITAS_BY_NECHY`; el JSON nunca se guarda en el repositorio. La autenticación de Google crea un archivo efímero durante el job y lo elimina al finalizar.
 
 El proyecto asignado es `los-panitas-by-nechy`.
 

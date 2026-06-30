@@ -19,9 +19,23 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - uses: FirebaseExtended/action-hosting-deploy@v0
+      - uses: google-github-actions/auth@v3
         with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LOS_PANITAS_BY_NECHY }}
-          projectId: los-panitas-by-nechy
-          expires: 14d
+          project_id: los-panitas-by-nechy
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LOS_PANITAS_BY_NECHY }}
+      - name: Desplegar canal preview
+        shell: bash
+        run: |
+          set +e
+          output=$(npx firebase-tools hosting:channel:deploy "pr-${{ github.event.number }}" --project los-panitas-by-nechy --expires 14d --non-interactive 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+          if printf '%s' "$output" | grep -Fq 'is the current active version'; then
+            echo 'Firebase confirmó que el canal preview ya apunta a esta versión.'
+            exit 0
+          fi
+          exit "$status"
