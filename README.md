@@ -1,5 +1,10 @@
 # Los Panitas by Nechy
 
+[![Calidad](https://github.com/Solecitos333/panitas/actions/workflows/ci.yml/badge.svg)](https://github.com/Solecitos333/panitas/actions/workflows/ci.yml)
+[![Producción Firebase](https://github.com/Solecitos333/panitas/actions/workflows/firebase-hosting-merge.yml/badge.svg)](https://github.com/Solecitos333/panitas/actions/workflows/firebase-hosting-merge.yml)
+
+**Demo desplegada:** [los-panitas-by-nechy.web.app](https://los-panitas-by-nechy.web.app)
+
 Sistema independiente de punto de venta, comandas, cocina, caja y facturación para **Los Panitas by Nechy**. No comparte código, autenticación, Firestore, inventario ni despliegue con Futunet o Creaticos.
 
 ## Módulos
