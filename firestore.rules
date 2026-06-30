@@ -48,6 +48,27 @@ service cloud.firestore {
       return value is int && value >= 0 && value <= 100000000000;
     }
 
+    function validRoles(value) {
+      return value is list
+        && value.size() > 0
+        && value.hasOnly(['owner', 'manager', 'cashier', 'waiter', 'kitchen']);
+    }
+
+    function invitedSelf(userId) {
+      return verified()
+        && request.auth.uid == userId
+        && exists(/databases/$(database)/documents/userInvites/$(request.auth.token.email))
+        && get(/databases/$(database)/documents/userInvites/$(request.auth.token.email)).data.active == true
+        && get(/databases/$(database)/documents/userInvites/$(request.auth.token.email)).data.email == request.auth.token.email
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.roles == get(/databases/$(database)/documents/userInvites/$(request.auth.token.email)).data.roles
+        && request.resource.data.active == true
+        && request.resource.data.displayName is string
+        && request.resource.data.keys().hasOnly([
+          'email', 'displayName', 'roles', 'active', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'
+        ]);
+    }
+
     function validOrderTransition(before, after) {
       return (before == 'pending' && after in ['preparing', 'cancelled'])
         || (before == 'preparing' && after in ['pending', 'ready', 'cancelled'])
@@ -66,14 +87,23 @@ service cloud.firestore {
     match /users/{userId} {
       allow get: if verified() && request.auth.uid == userId || isOwner();
       allow list: if isOwner();
-      allow create: if isOwner()
-        && request.resource.data.roles is list
-        && request.resource.data.roles.hasOnly(['owner', 'manager', 'cashier', 'waiter', 'kitchen'])
-        && request.resource.data.active is bool;
+      allow create: if invitedSelf(userId) || (isOwner()
+        && validRoles(request.resource.data.roles)
+        && request.resource.data.active is bool);
       allow update: if isOwner()
         && request.auth.uid != userId
-        && request.resource.data.roles is list
-        && request.resource.data.roles.hasOnly(['owner', 'manager', 'cashier', 'waiter', 'kitchen'])
+        && validRoles(request.resource.data.roles)
+        && request.resource.data.active is bool;
+      allow delete: if false;
+    }
+
+    match /userInvites/{email} {
+      allow get: if isOwner() || (verified() && request.auth.token.email == email);
+      allow list: if isOwner();
+      allow create, update: if isOwner()
+        && request.resource.data.email == email
+        && request.resource.data.displayName is string
+        && validRoles(request.resource.data.roles)
         && request.resource.data.active is bool;
       allow delete: if false;
     }

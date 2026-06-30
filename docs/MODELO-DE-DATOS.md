@@ -3,6 +3,7 @@
 | Colección | Propósito | Mutabilidad |
 |---|---|---|
 | `users` | Perfil, roles y estado | Solo propietario; no autoelevación |
+| `userInvites` | Invitaciones por correo, rol y estado | Solo propietario; lectura individual del destinatario |
 | `settings` | Identidad y parámetros comerciales | Solo propietario |
 | `counters` | Secuencias de documentos y NCF | Transaccional |
 | `products` | Catálogo e inventario propio | Gerencia/propietario; stock por venta |

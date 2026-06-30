@@ -8,7 +8,7 @@ import {
   signInWithRedirect,
   signOut
 } from 'firebase/auth';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import { getFirebaseServices, hasFirebaseConfig } from './services/firebase.js';
 import { DataService } from './services/data-service.js';
 import { MemoryDataService } from './services/memory-service.js';
@@ -41,6 +41,11 @@ async function bootstrap() {
     application?.destroy(); application = null; unsubscribeProfile?.(); unsubscribeProfile = null;
     if (!firebaseUser) return showLogin(auth);
     if (!firebaseUser.emailVerified) return renderAccessDenied(root, 'Confirma tu correo antes de entrar. Puedes solicitar un nuevo acceso al propietario.', () => signOut(auth));
+    try {
+      await provisionInvitedProfile(db, firebaseUser);
+    } catch (error) {
+      return renderAccessDenied(root, `No pudimos activar tu invitación: ${error.message}`, () => signOut(auth));
+    }
     renderPending(root, 'Validando permisos…');
     unsubscribeProfile = onSnapshot(doc(db, 'users', firebaseUser.uid), (snapshot) => {
       if (!snapshot.exists()) return renderAccessDenied(root, 'Tu cuenta existe, pero todavía no tiene un perfil operativo asignado.', () => signOut(auth));
@@ -51,6 +56,29 @@ async function bootstrap() {
     }, (error) => renderAccessDenied(root, `No pudimos validar tus permisos: ${error.message}`, () => signOut(auth)));
   });
 }
+
+async function provisionInvitedProfile(db, firebaseUser) {
+  const profileRef = doc(db, 'users', firebaseUser.uid);
+  if ((await getDoc(profileRef)).exists()) return;
+  const email = String(firebaseUser.email || '').trim().toLowerCase();
+  if (!email) return;
+  const invitation = await getDoc(doc(db, 'userInvites', email));
+  if (!invitation.exists() || invitation.data().active !== true) return;
+  const invite = invitation.data();
+  const roles = Array.isArray(invite.roles) ? invite.roles.filter((role) => ROLES.includes(role)) : [];
+  if (String(invite.email || '').toLowerCase() !== email || !roles.length) throw new Error('La invitación no es válida.');
+  await setDoc(profileRef, {
+    email,
+    displayName: String(invite.displayName || firebaseUser.displayName || email).trim().slice(0, 160),
+    roles,
+    active: true,
+    createdAt: serverTimestamp(),
+    createdBy: String(invite.createdBy || 'invitation'),
+    updatedAt: serverTimestamp(),
+    updatedBy: firebaseUser.uid
+  });
+}
+
 function showLogin(auth, message = '') {
   renderLogin(root, {
     async signIn(email, password, button) {

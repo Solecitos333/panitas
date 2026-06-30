@@ -11,13 +11,13 @@ import { calculateDocument, toCents } from '../domain/billing.js';
 import { renderDashboard, renderKds, renderOrderDrawer, renderPos, renderTables } from '../modules/operations.js';
 import { exportReport, renderInvoiceModal, renderInvoices, renderReports } from '../modules/billing.js';
 import { renderClientForm, renderClients, renderProductForm, renderProducts } from '../modules/directory.js';
-import { renderCash, renderSettings } from '../modules/administration.js';
+import { renderCash, renderSettings, renderUserForm, renderUsers } from '../modules/administration.js';
 import { escapeHtml, formatMoney } from '../lib/format.js';
 
 const NAV = [
   ['dashboard','layout-dashboard','Resumen'], ['pos','shopping-cart','Punto de venta'], ['tables','utensils','Mesas'],
   ['kds','chef-hat','Cocina KDS'], ['invoices','receipt-text','Facturación'], ['clients','users','Clientes'],
-  ['products','package','Productos'], ['cash','wallet-cards','Caja'], ['reports','chart-no-axes-combined','Reportes'], ['settings','settings','Configuración']
+  ['products','package','Productos'], ['cash','wallet-cards','Caja'], ['reports','chart-no-axes-combined','Reportes'], ['users','user-plus','Usuarios'], ['settings','settings','Configuración']
 ];
 
 const icons = {
@@ -32,11 +32,11 @@ const icons = {
 export function createApplication({ root, user, service, onLogout, development = false }) {
   const state = {
     user, settings: {}, route: initialRoute(user), cart: [], selectedOrderId: '', selectedInvoiceId: '', modal: '',
-    products: [], clients: [], tables: [], orders: [], invoices: [], payments: [], cashSessions: [], development,
+    products: [], clients: [], tables: [], orders: [], invoices: [], payments: [], cashSessions: [], users: [], userInvites: [], development,
     capabilities: {
       bill: can(user, 'billing:create'), cancelInvoice: can(user, 'billing:cancel'), chargeOrder: can(user, 'orders:charge'),
       createOrder: can(user, 'orders:create'), updateOrder: can(user, 'orders:update'), serveOrder: can(user, 'orders:serve'),
-      kitchenOrder: can(user, 'orders:kitchen'), viewKds: can(user, 'kds:view'), manageCatalog: can(user, 'catalog:*'), manageClients: can(user, 'clients:*')
+      kitchenOrder: can(user, 'orders:kitchen'), viewKds: can(user, 'kds:view'), manageCatalog: can(user, 'catalog:*'), manageClients: can(user, 'clients:*'), manageUsers: can(user, 'users:manage')
     }
   };
   let destroyed = false;
@@ -45,7 +45,7 @@ export function createApplication({ root, user, service, onLogout, development =
     state.settings = await service.loadSettings();
     service.watchAll({
       products: update('products'), clients: update('clients'), tables: update('tables'), orders: update('orders'),
-      invoices: update('invoices'), payments: update('payments'), cashSessions: update('cashSessions')
+      invoices: update('invoices'), payments: update('payments'), cashSessions: update('cashSessions'), users: update('users'), userInvites: update('userInvites')
     });
     render();
   }
@@ -61,7 +61,7 @@ export function createApplication({ root, user, service, onLogout, development =
   function renderContent() {
     if (!root.querySelector('#main-content')) return;
     state.activeCash = activeCash();
-    const renderers = { dashboard: renderDashboard, pos: renderPos, tables: renderTables, kds: renderKds, invoices: renderInvoices, clients: renderClients, products: renderProducts, cash: renderCash, reports: renderReports, settings: renderSettings };
+    const renderers = { dashboard: renderDashboard, pos: renderPos, tables: renderTables, kds: renderKds, invoices: renderInvoices, clients: renderClients, products: renderProducts, cash: renderCash, reports: renderReports, users: renderUsers, settings: renderSettings };
     const renderer = renderers[state.route] || renderDashboard;
     root.querySelector('#main-content').innerHTML = renderer(state);
     renderModal(); bindContent(); iconsRefresh();
@@ -76,6 +76,7 @@ export function createApplication({ root, user, service, onLogout, development =
     else if (state.modal === 'invoice') modalRoot.innerHTML = renderInvoiceModal(state.invoices.find((item)=>item.id===state.selectedInvoiceId), state.payments, state.capabilities);
     else if (state.modal === 'payment') modalRoot.innerHTML = paymentModal();
     else if (state.modal === 'charge') modalRoot.innerHTML = chargeModal();
+    else if (state.modal === 'user') modalRoot.innerHTML = renderUserForm(state.editingUser, state.editingUserSource);
     else modalRoot.innerHTML = '';
     iconsRefresh(); bindModal();
   }
@@ -104,6 +105,8 @@ export function createApplication({ root, user, service, onLogout, development =
     root.querySelector('#invoice-status-filter')?.addEventListener('change',filterInvoiceRows);
     root.querySelector('[data-product-new]')?.addEventListener('click',()=>openForm('product'));
     root.querySelector('[data-client-new]')?.addEventListener('click',()=>openForm('client'));
+    root.querySelector('[data-user-new]')?.addEventListener('click',()=>openUserForm());
+    root.querySelectorAll('[data-user-edit]').forEach((button)=>button.addEventListener('click',()=>openUserForm(button.dataset.userEdit,button.dataset.userSource)));
     root.querySelectorAll('[data-product-edit]').forEach((button)=>button.addEventListener('click',()=>openForm('product',button.dataset.productEdit)));
     root.querySelectorAll('[data-client-edit]').forEach((button)=>button.addEventListener('click',()=>openForm('client',button.dataset.clientEdit)));
     root.querySelector('#directory-search')?.addEventListener('input',filterDirectory);
@@ -119,6 +122,7 @@ export function createApplication({ root, user, service, onLogout, development =
     modalRoot?.querySelectorAll('[data-modal-close]').forEach((item)=>item.addEventListener('click',(event)=>{if(event.target.closest('[data-modal-card]')&&!event.target.closest('button[data-modal-close]'))return;closeModal();}));
     modalRoot?.querySelector('#product-form')?.addEventListener('submit',saveProduct);
     modalRoot?.querySelector('#client-form')?.addEventListener('submit',saveClient);
+    modalRoot?.querySelector('#user-access-form')?.addEventListener('submit',saveUserAccess);
     modalRoot?.querySelector('[data-order-transition]')?.addEventListener('click',(event)=>perform(()=>service.transitionOrder(state.selectedOrderId,event.currentTarget.dataset.orderTransition),'Comanda actualizada.',closeModal));
     modalRoot?.querySelector('[data-order-charge]')?.addEventListener('click',()=>{state.modal='charge';renderModal();});
     modalRoot?.querySelector('[data-order-cancel]')?.addEventListener('click',cancelOrder);
@@ -136,6 +140,7 @@ export function createApplication({ root, user, service, onLogout, development =
   async function submitPos(event){event.preventDefault();if(!navigator.onLine&&!state.development)return toast('Conéctate para procesar la operación.','warning');if(!state.cart.length)return;const form=new FormData(event.currentTarget);const tableId=form.get('tableId');const documentType=form.get('documentType')||'invoice';if(!tableId&&!state.capabilities.bill)return toast('Selecciona una mesa para enviar la comanda.','danger');const client=state.clients.find((item)=>item.id===form.get('clientId'));const input={items:state.cart.map((item)=>({...item})),clientId:client?.id||'',clientName:form.get('clientName')||client?.name||'Consumidor final',notes:form.get('notes'),priority:form.get('priority')};try{setBusy(event.submitter,true);if(tableId){await service.createOrder({...input,tableId});toast('Comanda enviada a cocina.','success');}else{const totals=calculateDocument(input.items);const method=form.get('paymentMethod');const isCredit=method==='credit';if(documentType==='invoice'&&!isCredit&&!state.activeCash)throw new Error('Abre una caja antes de registrar el cobro.');await service.createDirectDocument({...input,documentType,ncfType:form.get('ncfType'),payment:{amountCents:isCredit?0:totals.totalCents,method,cashSessionId:state.activeCash?.id||''}});toast('Documento creado correctamente.','success');}state.cart=[];renderContent();}catch(error){toast(error.message,'danger');}finally{setBusy(event.submitter,false);}}
   async function saveProduct(event){event.preventDefault();const f=new FormData(event.currentTarget);await perform(()=>service.saveProduct({id:f.get('id'),name:f.get('name'),sku:f.get('sku'),category:f.get('category'),priceCents:toCents(f.get('price')),costCents:toCents(f.get('cost')||0),taxRate:Number(f.get('taxRate')||0),stock:Number(f.get('stock')||0),active:f.get('active')==='on'}),'Producto guardado.',closeModal);}
   async function saveClient(event){event.preventDefault();const f=new FormData(event.currentTarget);await perform(()=>service.saveClient({id:f.get('id'),name:f.get('name'),rnc:f.get('rnc'),phone:f.get('phone'),email:f.get('email'),address:f.get('address'),active:f.get('active')==='on'}),'Cliente guardado.',closeModal);}
+  async function saveUserAccess(event){event.preventDefault();const f=new FormData(event.currentTarget);await perform(()=>service.saveUserAccess({uid:f.get('uid'),displayName:f.get('displayName'),email:f.get('email'),role:f.get('role'),active:f.get('active')==='on'}),f.get('uid')?'Acceso actualizado.':'Invitación creada. La persona ya puede entrar con Google.',closeModal);}
   async function openCash(event){event.preventDefault();const f=new FormData(event.currentTarget);await perform(()=>service.openCashSession({openingCents:toCents(f.get('opening')),notes:f.get('notes')}),'Caja abierta.');}
   async function closeCash(event){event.preventDefault();const f=new FormData(event.currentTarget);await perform(()=>service.closeCashSession(state.activeCash.id,{closingCents:toCents(f.get('closing')),expectedCents:Number(f.get('expected')),notes:f.get('notes')}),'Caja cerrada.');}
   async function saveSettings(event){event.preventDefault();const f=Object.fromEntries(new FormData(event.currentTarget));f.defaultTaxRate=Number(f.defaultTaxRate||0);await perform(()=>service.saveSettings(f),'Configuración guardada.');state.settings={...state.settings,...f};}
@@ -147,6 +152,7 @@ export function createApplication({ root, user, service, onLogout, development =
   function openOrder(id){if(!id)return;state.selectedOrderId=id;state.modal='order';renderModal();}
   function openInvoice(id){state.selectedInvoiceId=id;state.modal='invoice';renderModal();}
   function openForm(type,id=''){state.editingId=id;state.modal=type;renderModal();}
+  function openUserForm(id='',source='invite'){state.editingUserSource=source;state.editingUser=id?(source==='profile'?state.users:state.userInvites).find((item)=>item.id===id):{};state.modal='user';renderModal();}
   function closeModal(){state.modal='';state.editingId='';renderModal();}
   function paymentModal(){const invoice=state.invoices.find((item)=>item.id===state.selectedInvoiceId);const balance=invoice.totalCents-invoice.paidCents;return formModal('payment-form','Registrar cobro',`<div class="payment-amount"><span>Balance pendiente</span><strong>${formatMoney(balance)}</strong></div><label>Monto<input name="amount" type="number" min="0.01" max="${balance/100}" step="0.01" value="${balance/100}" required></label>${paymentFields()}`,'Guardar cobro');}
   function chargeModal(){const order=state.orders.find((item)=>item.id===state.selectedOrderId);return formModal('charge-form','Cobrar mesa',`<div class="payment-amount"><span>Total de ${escapeHtml(order.tableName)}</span><strong>${formatMoney(order.totalCents)}</strong></div>${paymentFields()}${ncfField()}`,'Cobrar y cerrar');}

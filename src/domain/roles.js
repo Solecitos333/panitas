@@ -34,7 +34,7 @@ export function allowedNavigation(user) {
     ['dashboard', 'dashboard:view'], ['pos', 'orders:create'], ['tables', 'tables:view'],
     ['kds', 'kds:view'], ['invoices', 'billing:view'], ['clients', 'clients:*'],
     ['products', 'catalog:view'], ['cash', 'cash:*'], ['reports', 'reports:view'],
-    ['settings', '*']
+    ['users', 'users:manage'], ['settings', '*']
   ];
   return entries.filter(([, permission]) => can(user, permission)).map(([id]) => id);
 }
