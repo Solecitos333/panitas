@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = new URL('../', import.meta.url);
 const dist = new URL('../dist/', import.meta.url);
-const required = ['index.html', 'logo.svg', 'manifest.webmanifest', 'sw.js'];
+const required = ['index.html', 'logo.png', 'manifest.webmanifest', 'sw.js'];
 
 for (const name of required) await access(new URL(name, dist));
 

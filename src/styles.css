@@ -40,7 +40,7 @@ svg { width: 19px; height: 19px; stroke-width: 1.8; }
 .app-shell { min-height: 100vh; }
 .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 40; display: flex; width: 268px; flex-direction: column; padding: 26px 18px 20px; border-right: 1px solid var(--line); background: rgba(10,13,13,.94); backdrop-filter: blur(22px); }
 .brand { display: flex; align-items: center; gap: 12px; color: inherit; text-decoration: none; cursor: pointer; }
-.brand img { width: 45px; height: 45px; }
+.brand img { width: 52px; height: 52px; border-radius: 10px; object-fit: contain; }
 .brand strong, .brand span { display: block; }
 .brand strong { font-size: .98rem; }
 .brand span { margin-top: 2px; color: var(--muted); font-size: .72rem; }
@@ -224,7 +224,7 @@ tbody tr:hover { background: rgba(255,255,255,.018); }
 .print-document { padding: 25px; color: #202423; background: #fff; }
 .print-document p, .print-document span { color: #5c6461; }
 .print-brand { display: flex; align-items: center; gap: 14px; padding-bottom: 20px; border-bottom: 1px solid #dfe3e1; }
-.print-brand img { width: 55px; }
+.print-brand img { width: 70px; border-radius: 8px; }
 .print-brand h2, .print-brand p { margin: 0; }
 .invoice-parties { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 20px 0; }
 .invoice-parties span, .invoice-parties strong { display: block; }
@@ -251,9 +251,11 @@ tbody tr:hover { background: rgba(255,255,255,.018); }
 .login-features { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 38px; }
 .login-features span { display: inline-flex; align-items: center; gap: 8px; padding: 10px 13px; border: 1px solid var(--line); border-radius: 999px; color: #cfd5d2; background: rgba(255,255,255,.025); font-size: .76rem; }
 .login-story > small { color: #717a76; }
+.login-story .brand img { width: 64px; height: 64px; }
 .login-panel { display: grid; padding: 30px; place-items: center; border-left: 1px solid var(--line); background: #0c0f0f; }
 .login-card { width: min(410px,100%); padding: clamp(25px,4vw,42px); border: 1px solid var(--line); border-radius: 24px; background: linear-gradient(145deg,#171c1b,#111414); box-shadow: var(--shadow); }
 .login-card > p { margin-bottom: 28px; }
+.login-mobile-brand { display: none; }
 .password-field { position: relative; }
 .password-field input { padding-right: 46px; }
 .password-field button { position: absolute; top: 2px; right: 2px; display: grid; width: 39px; height: 39px; place-items: center; border: 0; color: var(--muted); background: transparent; cursor: pointer; }
@@ -271,7 +273,7 @@ tbody tr:hover { background: rgba(255,255,255,.018); }
 .form-note { display: flex; align-items: flex-start; gap: 9px; padding: 12px; border: 1px solid var(--line); border-radius: 11px; color: var(--muted); background: rgba(255,255,255,.02); font-size: .7rem; line-height: 1.5; }
 .form-note svg { width: 17px; height: 17px; flex: 0 0 auto; color: var(--green); }
 .boot-screen, .fatal-state { display: flex; min-height: 100vh; flex-direction: column; align-items: center; justify-content: center; padding: 30px; text-align: center; }
-.boot-screen img, .fatal-state img { width: 74px; margin-bottom: 25px; }
+.boot-screen img, .fatal-state img { width: 110px; margin-bottom: 25px; border-radius: 18px; }
 .loader { width: 25px; height: 25px; margin: 8px; border: 2px solid var(--line); border-top-color: var(--brand); border-radius: 50%; animation: spin .8s linear infinite; }
 .fatal-state p { max-width: 470px; }
 
@@ -293,7 +295,7 @@ tbody tr:hover { background: rgba(255,255,255,.018); }
   .sidebar.open { transform: translateX(0); }
   .mobile-header { position: sticky; top: 0; z-index: 35; display: flex; height: 64px; align-items: center; justify-content: space-between; padding: 0 15px; border-bottom: 1px solid var(--line); background: rgba(10,13,13,.91); backdrop-filter: blur(18px); }
   .mobile-header .brand { gap: 8px; }
-  .mobile-header .brand img { width: 34px; height: 34px; }
+  .mobile-header .brand img { width: 40px; height: 40px; border-radius: 8px; }
   .connection-status { color: var(--green); }
   .app-shell > main { margin-left: 0; }
   .main-content { padding-top: 25px; }
@@ -302,6 +304,9 @@ tbody tr:hover { background: rgba(255,255,255,.018); }
   .login-page { grid-template-columns: 1fr; }
   .login-story { display: none; }
   .login-panel { min-height: 100vh; border: 0; }
+  .login-mobile-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
+  .login-mobile-brand img { width: 68px; height: 68px; border-radius: 12px; }
+  .login-mobile-brand strong { max-width: 150px; line-height: 1.15; }
   .cash-action, .empty-action { align-items: stretch; flex-direction: column; }
   .inline-form { align-items: stretch; flex-wrap: wrap; }
 }

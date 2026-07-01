@@ -1,5 +1,5 @@
-const CACHE = 'panitas-pos-v1';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/logo.svg'];
+const CACHE = 'panitas-pos-v2';
+const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/logo.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));

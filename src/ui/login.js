@@ -7,7 +7,7 @@ export function renderLogin(root, handlers, message = '') {
   root.innerHTML = `
     <main class="login-page">
       <section class="login-story">
-        <a class="brand"><img src="/logo.svg" alt=""><div><strong>Los Panitas</strong><span>by Nechy</span></div></a>
+        <a class="brand"><img src="/logo.png" alt="Logo de Los Panitas by Nechy"><div><strong>Los Panitas</strong><span>by Nechy</span></div></a>
         <div>
           <span class="eyebrow">Operación conectada</span>
           <h1>Del salón a la cocina, sin perder el ritmo.</h1>
@@ -22,6 +22,7 @@ export function renderLogin(root, handlers, message = '') {
       </section>
       <section class="login-panel">
         <div class="login-card">
+          <div class="login-mobile-brand"><img src="/logo.png" alt="Logo de Los Panitas by Nechy"><strong>Los Panitas by Nechy</strong></div>
           <span class="eyebrow">Bienvenido</span>
           <h2>Inicia tu turno</h2>
           <p>Introduce tu usuario personal y contraseña.</p>
@@ -54,10 +55,10 @@ export function renderLogin(root, handlers, message = '') {
 }
 
 export function renderPending(root, text = 'Preparando tu espacio…') {
-  root.innerHTML = `<div class="boot-screen"><img src="/logo.svg" alt=""><span class="loader"></span><p>${escapeHtml(text)}</p></div>`;
+  root.innerHTML = `<div class="boot-screen"><img src="/logo.png" alt="Logo de Los Panitas by Nechy"><span class="loader"></span><p>${escapeHtml(text)}</p></div>`;
 }
 
 export function renderAccessDenied(root, message, onLogout) {
-  root.innerHTML = `<div class="fatal-state"><img src="/logo.svg" alt=""><span class="eyebrow">Acceso restringido</span><h1>No puedes entrar todavía</h1><p>${escapeHtml(message)}</p><button class="button primary" id="denied-logout">Usar otra cuenta</button></div>`;
+  root.innerHTML = `<div class="fatal-state"><img src="/logo.png" alt="Logo de Los Panitas by Nechy"><span class="eyebrow">Acceso restringido</span><h1>No puedes entrar todavía</h1><p>${escapeHtml(message)}</p><button class="button primary" id="denied-logout">Usar otra cuenta</button></div>`;
   root.querySelector('#denied-logout').addEventListener('click', onLogout);
 }
