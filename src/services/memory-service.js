@@ -5,8 +5,8 @@ export class MemoryDataService {
   constructor(actor) {
     this.actor = actor;
     this.data = {
-      products: [], clients: [], invoices: [], payments: [], cashSessions: [], orders: [], userInvites: [],
-      users: [{ id: actor.uid, email: actor.email, displayName: actor.displayName, roles: actor.roles || ['owner'], active: true }],
+      products: [], clients: [], invoices: [], payments: [], cashSessions: [], orders: [],
+      users: [{ id: actor.uid, username: actor.username, displayName: actor.displayName, roles: actor.roles || ['owner'], active: true }],
       tables: Array.from({ length: 12 }, (_, index) => ({ id: `mesa-${index + 1}`, name: `Mesa ${index + 1}`, sortOrder: index + 1, zone: 'Salón', active: true, status: 'available', currentOrderId: null }))
     };
     this.listeners = {};
@@ -17,7 +17,7 @@ export class MemoryDataService {
   watchAll(callbacks) { this.listeners = callbacks; Object.keys(callbacks).forEach((key) => callbacks[key](this.data[key] || [])); }
   emit(key) { this.listeners[key]?.([...this.data[key]]); }
   async saveSettings(values) { this.settings = { ...this.settings, ...values }; }
-  async saveUserAccess(item) { const id = item.uid || item.email.toLowerCase(); const key = item.uid ? 'users' : 'userInvites'; const payload = { id, email:item.email.toLowerCase(), displayName:item.displayName, roles:[item.role], active:item.active !== false, status:item.uid ? 'active' : 'pending', createdAt:new Date() }; this.data[key] = [...this.data[key].filter((entry)=>entry.id!==id),payload]; this.emit(key); return id; }
+  async saveUserAccess(item) { const id = item.uid || crypto.randomUUID(); const payload = { id, username:item.username.toUpperCase(), displayName:item.displayName, roles:[item.role], active:item.active !== false, createdAt:new Date() }; this.data.users = [...this.data.users.filter((entry)=>entry.id!==id),payload]; this.emit('users'); return id; }
   async saveProduct(item) { const id = item.id || crypto.randomUUID(); const payload = { ...item, id, createdAt: new Date() }; this.data.products = [...this.data.products.filter((entry) => entry.id !== id), payload].sort((a,b)=>a.name.localeCompare(b.name)); this.emit('products'); return id; }
   async saveClient(item) { const id = item.id || crypto.randomUUID(); const payload = { ...item, id, createdAt: new Date() }; this.data.clients = [...this.data.clients.filter((entry) => entry.id !== id), payload].sort((a,b)=>a.name.localeCompare(b.name)); this.emit('clients'); return id; }
   async createOrder(input) { const table = this.data.tables.find((item) => item.id === input.tableId); if (!table || table.currentOrderId) throw new Error('Mesa no disponible.'); const totals = calculateDocument(input.items); const id = crypto.randomUUID(); this.data.orders.unshift({ id, ...input, tableName: table.name, status:'pending', revision:1, ...totals, createdAt:new Date(), createdBy:this.actor.uid }); table.currentOrderId=id; table.status='occupied'; this.emit('orders'); this.emit('tables'); return id; }

@@ -29,8 +29,8 @@ beforeEach(async () => {
     await setDoc(doc(firestore, 'cashSessions', 'shift-cashier'), { status: 'open', openedBy: 'cashier', openingCents: 0 });
     await setDoc(doc(firestore, 'cashSessions', 'shift-invalid'), { status: 'open', openedBy: 'cashier', openingCents: 0 });
     await setDoc(doc(firestore, 'orders', 'o1'), { status: 'pending', revision: 1, updatedBy: 'waiter' });
-    await setDoc(doc(firestore, 'userInvites', 'invitado@example.test'), {
-      email: 'invitado@example.test', displayName: 'Usuario invitado', roles: ['waiter'], active: true
+    await setDoc(doc(firestore, 'users', 'generic'), {
+      username: 'CAJA01', authEmail: 'caja01@users.lospanitas.app', displayName: 'Caja genérica', roles: ['cashier'], active: true
     });
   });
 });
@@ -93,31 +93,25 @@ test('el propietario no puede elevar su propio perfil desde el cliente', async (
   assert.ok(true);
 });
 
-test('solo el propietario puede crear invitaciones', async () => {
-  const invitation = {
-    email: 'nuevo@example.test', displayName: 'Nuevo usuario', roles: ['cashier'], active: true,
-    status: 'pending', createdBy: 'owner', createdAt: serverTimestamp()
-  };
-  await assertSucceeds(setDoc(doc(environment.authenticatedContext('owner', auth('owner')).firestore(), 'userInvites', invitation.email), invitation));
-  await assertFails(setDoc(doc(environment.authenticatedContext('manager', auth('manager')).firestore(), 'userInvites', 'otro@example.test'), { ...invitation, email: 'otro@example.test' }));
-});
-
-test('una cuenta invitada activa únicamente puede adoptar el rol asignado', async () => {
-  const claims = { email: 'invitado@example.test', email_verified: true };
-  const db = environment.authenticatedContext('invited-uid', claims).firestore();
-  await assertSucceeds(getDoc(doc(db, 'userInvites', claims.email)));
+test('solo el propietario puede registrar perfiles de usuarios genéricos', async () => {
   const profile = {
-    email: claims.email, displayName: 'Usuario invitado', roles: ['waiter'], active: true,
-    createdAt: serverTimestamp(), createdBy: 'owner', updatedAt: serverTimestamp(), updatedBy: 'invited-uid'
+    username: 'NUEVO01', authEmail: 'nuevo01@users.lospanitas.app', displayName: 'Nuevo usuario', roles: ['cashier'], active: true,
+    createdBy: 'owner', createdAt: serverTimestamp(), updatedBy: 'owner', updatedAt: serverTimestamp()
   };
-  await assertSucceeds(setDoc(doc(db, 'users', 'invited-uid'), profile));
-  await assertFails(setDoc(doc(db, 'users', 'another-uid'), { ...profile, roles: ['owner'] }));
+  await assertSucceeds(setDoc(doc(environment.authenticatedContext('owner', auth('owner')).firestore(), 'users', 'new-user'), profile));
+  await assertFails(setDoc(doc(environment.authenticatedContext('manager', auth('manager')).firestore(), 'users', 'other-user'), { ...profile, username: 'OTRO01', authEmail: 'otro01@users.lospanitas.app' }));
 });
 
-test('una cuenta sin invitación no puede crear su perfil', async () => {
-  const db = environment.authenticatedContext('unknown-uid', { email: 'unknown@example.test', email_verified: true }).firestore();
+test('un usuario genérico activo opera sin depender de verificación por correo', async () => {
+  const db = environment.authenticatedContext('generic', { email: 'caja01@users.lospanitas.app', email_verified: false }).firestore();
+  await assertSucceeds(getDoc(doc(db, 'settings', 'general')));
+  await assertSucceeds(getDoc(doc(db, 'users', 'generic')));
+});
+
+test('un usuario genérico no puede crear ni elevar su propio perfil', async () => {
+  const db = environment.authenticatedContext('unknown-uid', { email: 'unknown@users.lospanitas.app', email_verified: false }).firestore();
   await assertFails(setDoc(doc(db, 'users', 'unknown-uid'), {
-    email: 'unknown@example.test', displayName: 'Desconocido', roles: ['waiter'], active: true,
+    username: 'UNKNOWN', authEmail: 'unknown@users.lospanitas.app', displayName: 'Desconocido', roles: ['owner'], active: true,
     createdAt: serverTimestamp(), createdBy: 'unknown-uid', updatedAt: serverTimestamp(), updatedBy: 'unknown-uid'
   }));
 });

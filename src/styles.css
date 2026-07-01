@@ -257,14 +257,6 @@ tbody tr:hover { background: rgba(255,255,255,.018); }
 .password-field { position: relative; }
 .password-field input { padding-right: 46px; }
 .password-field button { position: absolute; top: 2px; right: 2px; display: grid; width: 39px; height: 39px; place-items: center; border: 0; color: var(--muted); background: transparent; cursor: pointer; }
-.google-button { display: flex; width: 100%; min-height: 46px; align-items: center; justify-content: center; gap: 12px; padding: 10px 16px; border: 1px solid #3a4240; border-radius: 11px; color: #e9edeb; background: #202523; font: inherit; font-size: .82rem; font-weight: 650; cursor: pointer; transition: border-color .18s ease, background .18s ease, transform .18s ease; }
-.google-button:hover { border-color: #59635f; background: #272d2a; transform: translateY(-1px); }
-.google-button:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
-.google-button:disabled { opacity: .55; cursor: wait; transform: none; }
-.google-button svg { width: 19px; height: 19px; flex: 0 0 auto; }
-.login-divider { display: flex; align-items: center; gap: 12px; margin: 20px 0; color: #77807c; font-size: .67rem; text-transform: uppercase; letter-spacing: .08em; }
-.login-divider::before, .login-divider::after { height: 1px; flex: 1; background: var(--line); content: ''; }
-.reset-button { width: 100%; margin-top: 18px; }
 .login-security-note { display: flex; align-items: flex-start; gap: 8px; margin: 21px 0 0; padding-top: 18px; border-top: 1px solid var(--line); color: #77807c; font-size: .67rem; line-height: 1.55; }
 .login-security-note svg { width: 15px; height: 15px; flex: 0 0 auto; color: var(--green); }
 .login-message { margin-bottom: 18px; padding: 11px 12px; border: 1px solid rgba(239,107,107,.25); border-radius: 10px; color: #f3a1a1; background: rgba(239,107,107,.06); font-size: .76rem; }

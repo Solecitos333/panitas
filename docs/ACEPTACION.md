@@ -1,10 +1,10 @@
 # Pruebas de aceptación
 
 - [ ] Cada rol solo ve sus módulos y acciones.
-- [ ] Usuario anónimo, inactivo o sin correo verificado queda bloqueado.
-- [ ] Google permite elegir una cuenta, pero una identidad sin perfil activo no obtiene acceso operativo.
-- [ ] El propietario puede invitar, cambiar el rol y desactivar a otros usuarios desde la aplicación.
-- [ ] Una cuenta invitada solo puede activar el rol exacto asociado a su correo verificado.
+- [ ] Usuario anónimo, inexistente o inactivo queda bloqueado.
+- [ ] El acceso público solicita únicamente nombre de usuario y contraseña.
+- [ ] El propietario puede crear, cambiar el rol y desactivar a otros usuarios desde la aplicación.
+- [ ] Cada usuario puede cambiar su propia contraseña sin almacenarla en Firestore.
 - [ ] Dos usuarios no pueden abrir simultáneamente la misma mesa.
 - [ ] La secuencia comanda → cocina → servicio → cobro libera la mesa.
 - [ ] Un doble clic o cambio concurrente no duplica cobro, factura ni NCF.

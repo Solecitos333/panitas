@@ -8,8 +8,8 @@
 | `waiter` | Productos en lectura, mesas y comandas; sin finanzas |
 | `kitchen` | Solo KDS y pasos `pending → preparing → ready` |
 
-Requisitos comunes: sesión autenticada por correo/contraseña o Google, correo confirmado, documento `users/{uid}` activo y rol reconocido. Iniciar con Google no crea permisos automáticamente: el propietario debe asignar el perfil antes del primer acceso operativo.
+Requisitos comunes: sesión autenticada con nombre de usuario y contraseña, documento `users/{uid}` activo y rol reconocido. Firebase usa internamente un identificador sintético que nunca se muestra ni corresponde a un correo personal.
 
-Las cuentas no se crean con contraseñas compartidas. El administrador registra cada identidad con su correo real y asigna el perfil correspondiente. Quien use correo/contraseña recibe recuperación de contraseña; quien use Google elige la misma dirección autorizada desde la pantalla de acceso. Un usuario no puede cambiar su propio perfil ni sus roles desde el cliente.
+El propietario crea cada identidad desde **Usuarios**, asigna el rol y define una contraseña inicial. La persona debe cambiarla desde su propia sesión para que nadie más la conozca. Las contraseñas son procesadas por Firebase Authentication y nunca se almacenan en Firestore.
 
-El propietario administra el equipo desde **Usuarios**. Una invitación queda pendiente hasta que la persona accede con la misma cuenta de Google; en ese momento solo puede adoptar el rol exacto guardado en la invitación. Las invitaciones inactivas, correos distintos y cambios de rol hechos por el propio usuario son rechazados por las reglas de Firestore.
+Un usuario no puede modificar su perfil, rol ni estado. El propietario puede administrar a los demás, pero su propia cuenta está protegida contra desactivación o degradación accidental desde el cliente.

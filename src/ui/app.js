@@ -1,7 +1,7 @@
 import {
   createIcons, BadgeCheck, BadgeDollarSign, Banknote, Calculator, ChartNoAxesCombined,
   ChefHat, CircleDollarSign, Clock3, Eye, FileCheck2, FileSpreadsheet, Landmark,
-  LayoutDashboard, LogOut, Menu, MessageSquareWarning, Package, PackageOpen, Pencil,
+  KeyRound, LayoutDashboard, LogOut, Menu, MessageSquareWarning, Package, PackageOpen, Pencil,
   Plus, Printer, Radio, Receipt, ReceiptText, RefreshCw, Save, Search, Send, Settings,
   Sheet, ShieldCheck, ShoppingBasket, ShoppingCart, Trash2, TrendingUp, UserPlus,
   Users, Utensils, Wallet, WalletCards, Wifi, WifiOff, X
@@ -22,17 +22,17 @@ const NAV = [
 
 const icons = {
   BadgeCheck, BadgeDollarSign, Banknote, Calculator, ChartNoAxesCombined, ChefHat,
-  CircleDollarSign, Clock3, Eye, FileCheck2, FileSpreadsheet, Landmark, LayoutDashboard,
+  CircleDollarSign, Clock3, Eye, FileCheck2, FileSpreadsheet, KeyRound, Landmark, LayoutDashboard,
   LogOut, Menu, MessageSquareWarning, Package, PackageOpen, Pencil, Plus, Printer,
   Radio, Receipt, ReceiptText, RefreshCw, Save, Search, Send, Settings, Sheet,
   ShieldCheck, ShoppingBasket, ShoppingCart, Trash2, TrendingUp, UserPlus, Users,
   Utensils, Wallet, WalletCards, Wifi, WifiOff, X
 };
 
-export function createApplication({ root, user, service, onLogout, development = false }) {
+export function createApplication({ root, user, service, onLogout, onChangePassword, development = false }) {
   const state = {
     user, settings: {}, route: initialRoute(user), cart: [], selectedOrderId: '', selectedInvoiceId: '', modal: '',
-    products: [], clients: [], tables: [], orders: [], invoices: [], payments: [], cashSessions: [], users: [], userInvites: [], development,
+    products: [], clients: [], tables: [], orders: [], invoices: [], payments: [], cashSessions: [], users: [], development,
     capabilities: {
       bill: can(user, 'billing:create'), cancelInvoice: can(user, 'billing:cancel'), chargeOrder: can(user, 'orders:charge'),
       createOrder: can(user, 'orders:create'), updateOrder: can(user, 'orders:update'), serveOrder: can(user, 'orders:serve'),
@@ -45,7 +45,7 @@ export function createApplication({ root, user, service, onLogout, development =
     state.settings = await service.loadSettings();
     service.watchAll({
       products: update('products'), clients: update('clients'), tables: update('tables'), orders: update('orders'),
-      invoices: update('invoices'), payments: update('payments'), cashSessions: update('cashSessions'), users: update('users'), userInvites: update('userInvites')
+      invoices: update('invoices'), payments: update('payments'), cashSessions: update('cashSessions'), users: update('users')
     });
     render();
   }
@@ -54,7 +54,7 @@ export function createApplication({ root, user, service, onLogout, development =
   function activeCash() { return state.cashSessions.find((item) => item.status === 'open' && item.openedBy === user.uid) || null; }
 
   function render() {
-    root.innerHTML = `<div class="app-shell"><aside class="sidebar"><a class="brand" href="#dashboard" data-route="dashboard"><img src="/logo.svg" alt=""><div><strong>Los Panitas</strong><span>by Nechy · POS</span></div></a><nav>${allowedNavigation(user).map((id) => { const entry=NAV.find((item)=>item[0]===id); return `<button data-route="${id}" class="${state.route===id?'active':''}"><i data-lucide="${entry[1]}"></i><span>${entry[2]}</span></button>`; }).join('')}</nav><div class="sidebar-footer"><div class="user-card"><span>${escapeHtml((user.displayName||user.email||'?').charAt(0).toUpperCase())}</span><div><strong>${escapeHtml(user.displayName||user.email)}</strong><small>${roleLabel(primaryRole(user))}</small></div></div><button class="logout-button" data-logout><i data-lucide="log-out"></i> Cerrar sesión</button></div></aside><header class="mobile-header"><button class="icon-button" data-menu aria-label="Menú"><i data-lucide="menu"></i></button><a class="brand" data-route="dashboard"><img src="/logo.svg" alt=""><strong>Los Panitas</strong></a><span class="connection-status" id="connection-indicator"><i data-lucide="wifi"></i></span></header><main><div id="offline-banner" class="offline-banner" hidden><i data-lucide="wifi-off"></i> Sin conexión. Puedes consultar datos guardados, pero las operaciones están pausadas.</div><div id="main-content" class="main-content"></div></main><div id="modal-root"></div><div id="toast-root" class="toast-root" aria-live="assertive"></div></div>`;
+    root.innerHTML = `<div class="app-shell"><aside class="sidebar"><a class="brand" href="#dashboard" data-route="dashboard"><img src="/logo.svg" alt=""><div><strong>Los Panitas</strong><span>by Nechy · POS</span></div></a><nav>${allowedNavigation(user).map((id) => { const entry=NAV.find((item)=>item[0]===id); return `<button data-route="${id}" class="${state.route===id?'active':''}"><i data-lucide="${entry[1]}"></i><span>${entry[2]}</span></button>`; }).join('')}</nav><div class="sidebar-footer"><div class="user-card"><span>${escapeHtml((user.displayName||user.username||'?').charAt(0).toUpperCase())}</span><div><strong>${escapeHtml(user.displayName||user.username)}</strong><small>${roleLabel(primaryRole(user))}</small></div></div><button class="logout-button" data-password><i data-lucide="key-round"></i> Cambiar contraseña</button><button class="logout-button" data-logout><i data-lucide="log-out"></i> Cerrar sesión</button></div></aside><header class="mobile-header"><button class="icon-button" data-menu aria-label="Menú"><i data-lucide="menu"></i></button><a class="brand" data-route="dashboard"><img src="/logo.svg" alt=""><strong>Los Panitas</strong></a><span class="connection-status" id="connection-indicator"><i data-lucide="wifi"></i></span></header><main><div id="offline-banner" class="offline-banner" hidden><i data-lucide="wifi-off"></i> Sin conexión. Puedes consultar datos guardados, pero las operaciones están pausadas.</div><div id="main-content" class="main-content"></div></main><div id="modal-root"></div><div id="toast-root" class="toast-root" aria-live="assertive"></div></div>`;
     bindShell(); renderContent(); updateConnection();
   }
 
@@ -76,7 +76,8 @@ export function createApplication({ root, user, service, onLogout, development =
     else if (state.modal === 'invoice') modalRoot.innerHTML = renderInvoiceModal(state.invoices.find((item)=>item.id===state.selectedInvoiceId), state.payments, state.capabilities);
     else if (state.modal === 'payment') modalRoot.innerHTML = paymentModal();
     else if (state.modal === 'charge') modalRoot.innerHTML = chargeModal();
-    else if (state.modal === 'user') modalRoot.innerHTML = renderUserForm(state.editingUser, state.editingUserSource);
+    else if (state.modal === 'user') modalRoot.innerHTML = renderUserForm(state.editingUser);
+    else if (state.modal === 'password') modalRoot.innerHTML = passwordModal();
     else modalRoot.innerHTML = '';
     iconsRefresh(); bindModal();
   }
@@ -84,6 +85,7 @@ export function createApplication({ root, user, service, onLogout, development =
   function bindShell() {
     root.querySelectorAll('[data-route]').forEach((button)=>button.addEventListener('click',()=>route(button.dataset.route)));
     root.querySelector('[data-logout]')?.addEventListener('click', onLogout);
+    root.querySelector('[data-password]')?.addEventListener('click',()=>{state.modal='password';renderModal();});
     root.querySelector('[data-menu]')?.addEventListener('click',()=>root.querySelector('.sidebar').classList.toggle('open'));
     window.addEventListener('online', updateConnection); window.addEventListener('offline', updateConnection);
   }
@@ -106,7 +108,7 @@ export function createApplication({ root, user, service, onLogout, development =
     root.querySelector('[data-product-new]')?.addEventListener('click',()=>openForm('product'));
     root.querySelector('[data-client-new]')?.addEventListener('click',()=>openForm('client'));
     root.querySelector('[data-user-new]')?.addEventListener('click',()=>openUserForm());
-    root.querySelectorAll('[data-user-edit]').forEach((button)=>button.addEventListener('click',()=>openUserForm(button.dataset.userEdit,button.dataset.userSource)));
+    root.querySelectorAll('[data-user-edit]').forEach((button)=>button.addEventListener('click',()=>openUserForm(button.dataset.userEdit)));
     root.querySelectorAll('[data-product-edit]').forEach((button)=>button.addEventListener('click',()=>openForm('product',button.dataset.productEdit)));
     root.querySelectorAll('[data-client-edit]').forEach((button)=>button.addEventListener('click',()=>openForm('client',button.dataset.clientEdit)));
     root.querySelector('#directory-search')?.addEventListener('input',filterDirectory);
@@ -123,6 +125,7 @@ export function createApplication({ root, user, service, onLogout, development =
     modalRoot?.querySelector('#product-form')?.addEventListener('submit',saveProduct);
     modalRoot?.querySelector('#client-form')?.addEventListener('submit',saveClient);
     modalRoot?.querySelector('#user-access-form')?.addEventListener('submit',saveUserAccess);
+    modalRoot?.querySelector('#password-change-form')?.addEventListener('submit',submitPasswordChange);
     modalRoot?.querySelector('[data-order-transition]')?.addEventListener('click',(event)=>perform(()=>service.transitionOrder(state.selectedOrderId,event.currentTarget.dataset.orderTransition),'Comanda actualizada.',closeModal));
     modalRoot?.querySelector('[data-order-charge]')?.addEventListener('click',()=>{state.modal='charge';renderModal();});
     modalRoot?.querySelector('[data-order-cancel]')?.addEventListener('click',cancelOrder);
@@ -140,7 +143,8 @@ export function createApplication({ root, user, service, onLogout, development =
   async function submitPos(event){event.preventDefault();if(!navigator.onLine&&!state.development)return toast('Conéctate para procesar la operación.','warning');if(!state.cart.length)return;const form=new FormData(event.currentTarget);const tableId=form.get('tableId');const documentType=form.get('documentType')||'invoice';if(!tableId&&!state.capabilities.bill)return toast('Selecciona una mesa para enviar la comanda.','danger');const client=state.clients.find((item)=>item.id===form.get('clientId'));const input={items:state.cart.map((item)=>({...item})),clientId:client?.id||'',clientName:form.get('clientName')||client?.name||'Consumidor final',notes:form.get('notes'),priority:form.get('priority')};try{setBusy(event.submitter,true);if(tableId){await service.createOrder({...input,tableId});toast('Comanda enviada a cocina.','success');}else{const totals=calculateDocument(input.items);const method=form.get('paymentMethod');const isCredit=method==='credit';if(documentType==='invoice'&&!isCredit&&!state.activeCash)throw new Error('Abre una caja antes de registrar el cobro.');await service.createDirectDocument({...input,documentType,ncfType:form.get('ncfType'),payment:{amountCents:isCredit?0:totals.totalCents,method,cashSessionId:state.activeCash?.id||''}});toast('Documento creado correctamente.','success');}state.cart=[];renderContent();}catch(error){toast(error.message,'danger');}finally{setBusy(event.submitter,false);}}
   async function saveProduct(event){event.preventDefault();const f=new FormData(event.currentTarget);await perform(()=>service.saveProduct({id:f.get('id'),name:f.get('name'),sku:f.get('sku'),category:f.get('category'),priceCents:toCents(f.get('price')),costCents:toCents(f.get('cost')||0),taxRate:Number(f.get('taxRate')||0),stock:Number(f.get('stock')||0),active:f.get('active')==='on'}),'Producto guardado.',closeModal);}
   async function saveClient(event){event.preventDefault();const f=new FormData(event.currentTarget);await perform(()=>service.saveClient({id:f.get('id'),name:f.get('name'),rnc:f.get('rnc'),phone:f.get('phone'),email:f.get('email'),address:f.get('address'),active:f.get('active')==='on'}),'Cliente guardado.',closeModal);}
-  async function saveUserAccess(event){event.preventDefault();const f=new FormData(event.currentTarget);await perform(()=>service.saveUserAccess({uid:f.get('uid'),displayName:f.get('displayName'),email:f.get('email'),role:f.get('role'),active:f.get('active')==='on'}),f.get('uid')?'Acceso actualizado.':'Invitación creada. La persona ya puede entrar con Google.',closeModal);}
+  async function saveUserAccess(event){event.preventDefault();const f=new FormData(event.currentTarget);if(!f.get('uid')&&f.get('password')!==f.get('passwordConfirm'))return toast('Las contraseñas no coinciden.','danger');await perform(()=>service.saveUserAccess({uid:f.get('uid'),displayName:f.get('displayName'),username:f.get('username'),password:f.get('password'),role:f.get('role'),active:f.get('active')==='on'}),f.get('uid')?'Acceso actualizado.':'Usuario creado correctamente.',closeModal);}
+  async function submitPasswordChange(event){event.preventDefault();const f=new FormData(event.currentTarget);if(f.get('newPassword')!==f.get('newPasswordConfirm'))return toast('Las contraseñas nuevas no coinciden.','danger');await perform(()=>onChangePassword(f.get('currentPassword'),f.get('newPassword')),'Contraseña actualizada.',closeModal);}
   async function openCash(event){event.preventDefault();const f=new FormData(event.currentTarget);await perform(()=>service.openCashSession({openingCents:toCents(f.get('opening')),notes:f.get('notes')}),'Caja abierta.');}
   async function closeCash(event){event.preventDefault();const f=new FormData(event.currentTarget);await perform(()=>service.closeCashSession(state.activeCash.id,{closingCents:toCents(f.get('closing')),expectedCents:Number(f.get('expected')),notes:f.get('notes')}),'Caja cerrada.');}
   async function saveSettings(event){event.preventDefault();const f=Object.fromEntries(new FormData(event.currentTarget));f.defaultTaxRate=Number(f.defaultTaxRate||0);await perform(()=>service.saveSettings(f),'Configuración guardada.');state.settings={...state.settings,...f};}
@@ -152,10 +156,11 @@ export function createApplication({ root, user, service, onLogout, development =
   function openOrder(id){if(!id)return;state.selectedOrderId=id;state.modal='order';renderModal();}
   function openInvoice(id){state.selectedInvoiceId=id;state.modal='invoice';renderModal();}
   function openForm(type,id=''){state.editingId=id;state.modal=type;renderModal();}
-  function openUserForm(id='',source='invite'){state.editingUserSource=source;state.editingUser=id?(source==='profile'?state.users:state.userInvites).find((item)=>item.id===id):{};state.modal='user';renderModal();}
+  function openUserForm(id=''){state.editingUser=id?state.users.find((item)=>item.id===id):{};state.modal='user';renderModal();}
   function closeModal(){state.modal='';state.editingId='';renderModal();}
   function paymentModal(){const invoice=state.invoices.find((item)=>item.id===state.selectedInvoiceId);const balance=invoice.totalCents-invoice.paidCents;return formModal('payment-form','Registrar cobro',`<div class="payment-amount"><span>Balance pendiente</span><strong>${formatMoney(balance)}</strong></div><label>Monto<input name="amount" type="number" min="0.01" max="${balance/100}" step="0.01" value="${balance/100}" required></label>${paymentFields()}`,'Guardar cobro');}
   function chargeModal(){const order=state.orders.find((item)=>item.id===state.selectedOrderId);return formModal('charge-form','Cobrar mesa',`<div class="payment-amount"><span>Total de ${escapeHtml(order.tableName)}</span><strong>${formatMoney(order.totalCents)}</strong></div>${paymentFields()}${ncfField()}`,'Cobrar y cerrar');}
+  function passwordModal(){return formModal('password-change-form','Cambiar mi contraseña','<label>Contraseña actual<input name="currentPassword" type="password" autocomplete="current-password" required></label><label>Nueva contraseña<input name="newPassword" type="password" minlength="8" autocomplete="new-password" required></label><label>Confirmar nueva contraseña<input name="newPasswordConfirm" type="password" minlength="8" autocomplete="new-password" required></label>','Actualizar contraseña');}
   function paymentFields(){return `<div class="form-grid two"><label>Forma de pago<select name="method"><option value="cash">Efectivo</option><option value="card">Tarjeta</option><option value="transfer">Transferencia</option><option value="check">Cheque</option><option value="credit">Crédito</option></select></label><label>Referencia<input name="reference" maxlength="120"></label></div>`;}
   function ncfField(){return `<label>Comprobante fiscal<select name="ncfType"><option value="">Sin NCF</option><option value="B02">Consumidor B02</option><option value="B01">Crédito fiscal B01</option><option value="B14">Régimen especial B14</option><option value="B15">Gubernamental B15</option></select></label>`;}
   function formModal(id,title,body,submit){return `<div class="modal-backdrop" data-modal-close><form id="${id}" class="modal-card form-modal" data-modal-card><header><div><span class="eyebrow">Operación segura</span><h2>${title}</h2></div><button type="button" class="icon-button" data-modal-close><i data-lucide="x"></i></button></header><div class="stack-form">${body}</div><footer class="modal-actions"><button type="button" class="button secondary" data-modal-close>Cancelar</button><button class="button primary" type="submit">${submit}</button></footer></form></div>`;}

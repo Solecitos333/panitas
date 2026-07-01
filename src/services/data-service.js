@@ -6,6 +6,8 @@ import {
   buildDocumentNumber, buildNcf, calculateDocument, canTransitionOrder, paymentStatus, PAYMENT_METHODS
 } from '../domain/billing.js';
 import { can, ROLES } from '../domain/roles.js';
+import { createUsernameIdentity } from './firebase.js';
+import { isValidUsername, normalizeUsername, usernameToEmail } from '../lib/identity.js';
 
 const DEFAULT_SETTINGS = Object.freeze({
   name: 'Los Panitas by Nechy',
@@ -57,7 +59,6 @@ export class DataService {
     this.watchAllowed('billing:view', 'payments', 'createdAt', callbacks.payments);
     this.watchAllowed('cash:*', 'cashSessions', 'openedAt', callbacks.cashSessions);
     this.watchAllowed('users:manage', 'users', 'displayName', callbacks.users, 'asc');
-    this.watchAllowed('users:manage', 'userInvites', 'createdAt', callbacks.userInvites);
   }
 
   watchAllowed(permission, name, sortField, callback, direction) {
@@ -81,12 +82,13 @@ export class DataService {
 
   async saveUserAccess(user) {
     if (!can(this.actor, 'users:manage')) throw new Error('No tienes permiso para administrar usuarios.');
-    const email = String(user.email || '').trim().toLowerCase().slice(0, 160);
+    const username = normalizeUsername(user.username);
     const displayName = String(user.displayName || '').trim().slice(0, 160);
     const roles = [...new Set([String(user.role || '')].filter((role) => ROLES.includes(role)))];
-    if (!email || !email.includes('@') || !displayName || !roles.length) throw new Error('Completa nombre, correo y rol.');
+    if (!isValidUsername(username) || !displayName || !roles.length) throw new Error('Completa un usuario válido, nombre y rol.');
     const payload = {
-      email,
+      username,
+      authEmail: usernameToEmail(username),
       displayName,
       roles,
       active: user.active !== false,
@@ -96,17 +98,19 @@ export class DataService {
     if (user.uid) {
       if (user.uid === this.actor.uid) throw new Error('Tu propia cuenta se protege contra cambios desde la app.');
       await setDoc(doc(this.db, 'users', user.uid), payload, { merge: true });
-      await this.audit('user.updated', `${email} (${roles.join(', ')})`);
+      await this.audit('user.updated', `${username} (${roles.join(', ')})`);
       return user.uid;
     }
-    const ref = doc(this.db, 'userInvites', email);
+    if (String(user.password || '').length < 8) throw new Error('La contraseña inicial debe tener al menos 8 caracteres.');
+    const identity = await createUsernameIdentity({ username, password: user.password, displayName });
+    const ref = doc(this.db, 'users', identity.uid);
     await setDoc(ref, {
       ...payload,
-      status: 'pending',
+      authEmail: identity.authEmail,
       createdAt: serverTimestamp(),
       createdBy: this.actor.uid
-    }, { merge: true });
-    await this.audit('user.invited', `${email} (${roles.join(', ')})`);
+    });
+    await this.audit('user.created', `${username} (${roles.join(', ')})`);
     return ref.id;
   }
 
