@@ -49,8 +49,10 @@ export function renderLogin(root, handlers, message = '') {
   });
   root.querySelector('#login-form').addEventListener('submit', (event) => {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    handlers.signIn(data.get('username'), data.get('password'), event.submitter);
+    const form = event.currentTarget;
+    const button = event.submitter || form.querySelector('button[type="submit"]');
+    const data = new FormData(form);
+    handlers.signIn(data.get('username'), data.get('password'), button);
   });
 }
 

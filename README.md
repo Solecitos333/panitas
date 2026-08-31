@@ -5,6 +5,8 @@
 
 **Demo desplegada:** [los-panitas-by-nechy.web.app](https://los-panitas-by-nechy.web.app)
 
+**Estado:** candidato `v1.4.0-rc.1`. La aplicación web y las reglas están validadas; impresión, gaveta y actualización sobre la APK ya instalada deben completar la [prueba de aceptación en la terminal ELO](docs/ACEPTACION.md) antes de promoverla a versión estable.
+
 Sistema independiente de punto de venta, comandas, cocina, caja y facturación para **Los Panitas by Nechy**. No comparte código, autenticación, Firestore, inventario ni despliegue con Futunet o Creaticos.
 
 ## Módulos
@@ -47,6 +49,8 @@ npm run validate
 
 ## Documentación
 
+- [Historial de cambios](CHANGELOG.md)
+- [Terminal ELO y Hardware POS](docs/TERMINAL-ELO.md)
 - [Arquitectura](docs/ARQUITECTURA.md)
 - [Modelo de datos](docs/MODELO-DE-DATOS.md)
 - [Roles](docs/ROLES.md)

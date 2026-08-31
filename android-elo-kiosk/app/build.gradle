@@ -1,0 +1,32 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.panitas.pos'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.panitas.pos"
+        minSdk 21
+        targetSdk 27 // Orientado a Android 8.1.0 Oreo de la Elo-PP3-15
+        versionCode 9
+        versionName "1.4.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    // Sin dependencias pesadas: ligero, rápido y directo al hardware
+}

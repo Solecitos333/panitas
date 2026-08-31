@@ -1,0 +1,33 @@
+# Historial de cambios
+
+## 1.4.0-rc.1 — 2026-08-31
+
+Primer candidato de entrega integral para la terminal ELO.
+
+### Incorporado
+
+- Flujo táctil de venta, cobro con PIN personal, caja rápida y cuentas por cobrar.
+- Panel móvil con rendimiento por período, productos más vendidos y conteo de inventario.
+- APK ELO con impresión térmica, logo optimizado, gaveta, escáner, visor y diagnósticos.
+- Tickets separados para factura, pre-cuenta, cocina y arqueo.
+- Descargas de APK y paquete de instalación desde la configuración del sistema.
+
+### Corregido y endurecido
+
+- Cobro, pago, inventario, caja, contador, mesa y comanda se enlazan mediante transacciones.
+- Idempotencia contra doble toque y validaciones de reglas para saldos, pagos y secuencias.
+- PIN de cuatro dígitos aislado en un documento privado del propio usuario.
+- Gaveta e impresión desacopladas para no perder la apertura cuando falta papel.
+- Puente local ELO limitado a origen oficial, token efímero, tamaño máximo y concurrencia acotada.
+- Interfaz adaptada a 1280×800 y móvil, con estados de carga y modales accesibles.
+- Service worker con caché inicial y actualización segura.
+
+### Validación pendiente antes de 1.4.0 estable
+
+- Recorrido físico completo en la terminal: venta, PIN, gaveta, ticket, entrada/salida y cierre de caja.
+- Confirmar que la APK se instala como actualización sobre la versión existente sin borrar datos.
+- Aprobación del dueño sobre la lista de aceptación.
+
+### Limitación conocida
+
+Mientras el proyecto permanezca en Firebase Spark, las reglas reducen la manipulación desde clientes modificados, pero la garantía fiscal absoluta de líneas, precios y secuencias NCF requiere trasladar esas operaciones a un backend confiable con Admin SDK.

@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   build: {
-    target: 'es2022',
+    target: 'chrome85',
     sourcemap: false,
     assetsInlineLimit: 4096,
     rollupOptions: {

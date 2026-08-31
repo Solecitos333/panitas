@@ -7,6 +7,7 @@ dist/
 firebase-debug.log*
 firestore-debug.log*
 ui-debug.log*
+/terminal_*.png
 *.local
 *.key.json
 service-account*.json
@@ -16,3 +17,33 @@ coverage/
 test-results/
 # Credenciales efímeras creadas por google-github-actions/auth
 gha-creds-*.json
+
+# Artefactos sensibles o generados de Android / terminal POS
+*.apk
+*.idsig
+*.pem
+*.keystore
+*.jks
+*.p12
+*.pfx
+# Restos de APKs descomprimidas en la raíz. Se anclan con `/` para no
+# excluir código fuente real como src/lib ni los recursos de android-elo-kiosk.
+/AndroidManifest.xml
+/classes*.dex
+/resources.arsc
+/bundle.properties
+/contract.json
+/firebase-*.properties
+/play-services-*.properties
+/transport-*.properties
+/META-INF/
+/assets/
+/fabric/
+/kotlin/
+/lib/
+/okhttp3/
+/org/
+/res/
+android-elo-kiosk/build/
+android-elo-kiosk/build_temp/
+android-elo-kiosk/signing/

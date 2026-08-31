@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Filtros de impresoras térmicas USB estándar y periféricos ELO Touch -->
+    <usb-device class="7" /> <!-- USB_CLASS_PRINTER -->
+    <usb-device vendor-id="3312" /> <!-- 0x0CF0 Elo Touch Solutions -->
+    <usb-device vendor-id="1208" /> <!-- 0x04B8 Seiko Epson -->
+    <usb-device vendor-id="1305" /> <!-- 0x0519 Star Micronics -->
+    <usb-device vendor-id="8137" /> <!-- 0x1FC9 NXP / Custom POS -->
+</resources>

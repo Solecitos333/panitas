@@ -3,6 +3,7 @@ import { createUserWithEmailAndPassword, getAuth, browserLocalPersistence, inMem
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 import { firebaseConfig, hasFirebaseConfig } from '../config/firebase.public.js';
 import { usernameToEmail } from '../lib/identity.js';
+import { createOperationId } from '../lib/id.js';
 
 let services = null;
 
@@ -20,7 +21,7 @@ export async function getFirebaseServices() {
 }
 
 export async function createUsernameIdentity({ username, password, displayName }) {
-  const app = initializeApp(firebaseConfig, `user-provisioning-${crypto.randomUUID()}`);
+  const app = initializeApp(firebaseConfig, createOperationId('user-provisioning'));
   const auth = getAuth(app);
   try {
     await setPersistence(auth, inMemoryPersistence);

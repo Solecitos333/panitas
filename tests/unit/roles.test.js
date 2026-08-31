@@ -24,6 +24,14 @@ test('camarero opera mesas sin facturación', () => {
   assert.deepEqual(allowedNavigation(user('waiter')), ['pos', 'tables', 'products']);
 });
 
+test('caja y gerencia pueden abrir el diagnóstico de terminal y fiaos/cuentas por cobrar', () => {
+  assert.equal(can(user('cashier'), 'terminal:view'), true);
+  assert.equal(can(user('manager'), 'terminal:view'), true);
+  assert.equal(can(user('cashier'), 'receivables:view'), true);
+  assert.equal(allowedNavigation(user('cashier')).includes('receivables'), true);
+  assert.equal(allowedNavigation(user('cashier')).includes('terminal'), true);
+});
+
 test('un usuario inactivo no conserva permisos', () => {
   assert.equal(can({ active: false, roles: ['owner'] }, 'billing:view'), false);
 });

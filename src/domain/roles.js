@@ -2,8 +2,8 @@ export const ROLES = Object.freeze(['owner', 'manager', 'cashier', 'waiter', 'ki
 
 export const PERMISSIONS = Object.freeze({
   owner: ['*'],
-  manager: ['dashboard:view', 'tables:view', 'orders:*', 'kds:view', 'billing:*', 'payments:*', 'cash:*', 'catalog:*', 'clients:*', 'reports:view', 'audit:view'],
-  cashier: ['dashboard:view', 'tables:view', 'orders:view', 'orders:create', 'orders:charge', 'billing:view', 'billing:create', 'payments:create', 'cash:*', 'catalog:view', 'clients:*'],
+  manager: ['dashboard:view', 'tables:view', 'orders:*', 'kds:view', 'billing:*', 'payments:*', 'receivables:*', 'cash:*', 'catalog:*', 'clients:*', 'reports:view', 'audit:view', 'terminal:view'],
+  cashier: ['dashboard:view', 'tables:view', 'orders:view', 'orders:create', 'orders:charge', 'billing:view', 'billing:create', 'payments:create', 'receivables:*', 'cash:*', 'catalog:view', 'clients:*', 'terminal:view'],
   waiter: ['tables:view', 'orders:view', 'orders:create', 'orders:update', 'orders:serve', 'catalog:view'],
   kitchen: ['kds:view', 'orders:view', 'orders:kitchen']
 });
@@ -32,9 +32,9 @@ export function can(user, permission) {
 export function allowedNavigation(user) {
   const entries = [
     ['dashboard', 'dashboard:view'], ['pos', 'orders:create'], ['tables', 'tables:view'],
-    ['kds', 'kds:view'], ['invoices', 'billing:view'], ['clients', 'clients:*'],
+    ['kds', 'kds:view'], ['invoices', 'billing:view'], ['receivables', 'receivables:*'], ['clients', 'clients:*'],
     ['products', 'catalog:view'], ['cash', 'cash:*'], ['reports', 'reports:view'],
-    ['users', 'users:manage'], ['settings', '*']
+    ['users', 'users:manage'], ['audit', 'audit:view'], ['terminal', 'terminal:view'], ['settings', '*']
   ];
   return entries.filter(([, permission]) => can(user, permission)).map(([id]) => id);
 }

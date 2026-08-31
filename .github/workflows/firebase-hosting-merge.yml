@@ -17,17 +17,22 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
       - run: npm ci
       - run: npm run validate
+      - run: npm run test:emulator
       - uses: google-github-actions/auth@v3
         with:
           project_id: los-panitas-by-nechy
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LOS_PANITAS_BY_NECHY }}
-      - name: Desplegar Hosting
+      - name: Desplegar aplicación, reglas e índices
         shell: bash
         run: |
           set +e
-          output=$(npx firebase-tools deploy --only hosting --project los-panitas-by-nechy --non-interactive 2>&1)
+          output=$(npx firebase-tools deploy --only firestore:rules,firestore:indexes,hosting --project los-panitas-by-nechy --non-interactive 2>&1)
           status=$?
           set -e
           printf '%s\n' "$output"

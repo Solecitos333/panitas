@@ -55,9 +55,14 @@ async function bootstrap() {
 function showLogin(auth, message = '') {
   renderLogin(root, {
     async signIn(username, password, button) {
-      try { button.disabled = true; await signInWithEmailAndPassword(auth, usernameToEmail(username), password); }
-      catch (error) { showLogin(auth, loginError(error)); }
-      finally { button.disabled = false; }
+      try {
+        if (button) button.disabled = true;
+        await signInWithEmailAndPassword(auth, usernameToEmail(username), password);
+      } catch (error) {
+        showLogin(auth, loginError(error));
+      } finally {
+        if (button) button.disabled = false;
+      }
     }
   }, message);
 }

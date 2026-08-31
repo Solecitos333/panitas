@@ -40,6 +40,8 @@ service cloud.firestore {
     function canManageCatalog() { return hasAnyRole(['owner', 'manager']); }
     function canManageClients() { return hasAnyRole(['owner', 'manager', 'cashier']); }
 
+    function cashLockId() { return 'cash-' + request.auth.uid; }
+
     function ownsOpenCashSession(sessionId) {
       return sessionId is string
         && sessionId.size() > 0
@@ -52,42 +54,309 @@ service cloud.firestore {
       return value is int && value >= 0 && value <= 100000000000;
     }
 
+    function validPaymentTender(data) {
+      let tendered = data.get('tenderedCents', data.amountCents);
+      let change = data.get('changeCents', 0);
+      return data.method != 'cash'
+        || (validMoney(tendered)
+          && validMoney(change)
+          && tendered >= data.amountCents
+          && change == tendered - data.amountCents);
+    }
+
+    function validFinancialTotals(data) {
+      let subtotal = data.subtotalCents;
+      let discount = data.get('discountCents', 0);
+      let taxable = data.get('taxableSubtotalCents', subtotal - discount);
+      let tax = data.taxCents;
+      let tip = data.get('tipCents', 0);
+      return validMoney(subtotal)
+        && validMoney(discount)
+        && validMoney(taxable)
+        && validMoney(tax)
+        && validMoney(tip)
+        && discount <= subtotal
+        && taxable == subtotal - discount
+        && data.totalCents == taxable + tax + tip
+        && validMoney(data.totalCents);
+    }
+
+    function validDocumentState(data) {
+      return (data.documentType in ['quote', 'proforma']
+          && data.paidCents == 0 && data.status == 'pending')
+        || (data.documentType == 'invoice' && (
+          (data.paidCents == 0 && data.status == 'pending')
+          || (data.paidCents > 0 && data.paidCents < data.totalCents && data.status == 'partial')
+          || (data.paidCents == data.totalCents && data.paidCents > 0 && data.status == 'paid')
+        ));
+    }
+
+    function invoiceHasLinkedInitialPayment(invoiceId, data) {
+      return (data.paidCents == 0 && data.lastPaymentId == '')
+        || (data.paidCents > 0
+          && data.lastPaymentId is string
+          && existsAfter(/databases/$(database)/documents/payments/$(data.lastPaymentId))
+          && getAfter(/databases/$(database)/documents/payments/$(data.lastPaymentId)).data.invoiceId == invoiceId
+          && getAfter(/databases/$(database)/documents/payments/$(data.lastPaymentId)).data.amountCents == data.paidCents
+          && getAfter(/databases/$(database)/documents/payments/$(data.lastPaymentId)).data.createdBy == request.auth.uid);
+    }
+
+    function invoiceUpdateHasLinkedPayment(invoiceId) {
+      let paymentId = request.resource.data.lastPaymentId;
+      return paymentId is string
+        && paymentId != resource.data.get('lastPaymentId', '')
+        && existsAfter(/databases/$(database)/documents/payments/$(paymentId))
+        && getAfter(/databases/$(database)/documents/payments/$(paymentId)).data.invoiceId == invoiceId
+        && getAfter(/databases/$(database)/documents/payments/$(paymentId)).data.amountCents
+          == request.resource.data.paidCents - resource.data.paidCents
+        && getAfter(/databases/$(database)/documents/payments/$(paymentId)).data.createdBy == request.auth.uid;
+    }
+
+    function paymentMatchesInvoice(paymentId, data) {
+      return data.invoiceId is string
+        && existsAfter(/databases/$(database)/documents/invoices/$(data.invoiceId))
+        && getAfter(/databases/$(database)/documents/invoices/$(data.invoiceId)).data.lastPaymentId == paymentId
+        && getAfter(/databases/$(database)/documents/invoices/$(data.invoiceId)).data.invoiceNumber == data.invoiceNumber
+        && getAfter(/databases/$(database)/documents/invoices/$(data.invoiceId)).data.updatedBy == request.auth.uid
+        && (
+          (!exists(/databases/$(database)/documents/invoices/$(data.invoiceId))
+            && getAfter(/databases/$(database)/documents/invoices/$(data.invoiceId)).data.paidCents == data.amountCents)
+          || (exists(/databases/$(database)/documents/invoices/$(data.invoiceId))
+            && getAfter(/databases/$(database)/documents/invoices/$(data.invoiceId)).data.paidCents
+              == get(/databases/$(database)/documents/invoices/$(data.invoiceId)).data.paidCents + data.amountCents)
+        );
+    }
+
+    function cashPaymentIsAccounted(paymentId, data) {
+      return data.method != 'cash'
+        || (existsAfter(/databases/$(database)/documents/cashSessions/$(data.cashSessionId))
+          && getAfter(/databases/$(database)/documents/cashSessions/$(data.cashSessionId)).data.lastCashActivityType == 'payment'
+          && getAfter(/databases/$(database)/documents/cashSessions/$(data.cashSessionId)).data.lastCashActivityId == paymentId);
+    }
+
+    function validBillingCounterBase(data) {
+      return data.keys().hasOnly(['invoice', 'quote', 'proforma', 'ncfB01', 'ncfB02', 'ncfB14', 'ncfB15', 'updatedAt'])
+        && data.invoice is int && data.invoice >= 1
+        && data.quote is int && data.quote >= 1
+        && data.proforma is int && data.proforma >= 1
+        && data.ncfB01 is int && data.ncfB01 >= 1
+        && data.ncfB02 is int && data.ncfB02 >= 1
+        && data.ncfB14 is int && data.ncfB14 >= 1
+        && data.ncfB15 is int && data.ncfB15 >= 1;
+    }
+
+    function validBillingCounterIncrement() {
+      let invoiceDelta = request.resource.data.invoice - resource.data.invoice;
+      let quoteDelta = request.resource.data.quote - resource.data.quote;
+      let proformaDelta = request.resource.data.proforma - resource.data.proforma;
+      let b01Delta = request.resource.data.ncfB01 - resource.data.ncfB01;
+      let b02Delta = request.resource.data.ncfB02 - resource.data.ncfB02;
+      let b14Delta = request.resource.data.ncfB14 - resource.data.ncfB14;
+      let b15Delta = request.resource.data.ncfB15 - resource.data.ncfB15;
+      return validBillingCounterBase(request.resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'invoice', 'quote', 'proforma', 'ncfB01', 'ncfB02', 'ncfB14', 'ncfB15', 'updatedAt'
+        ])
+        && invoiceDelta in [0, 1] && quoteDelta in [0, 1] && proformaDelta in [0, 1]
+        && b01Delta in [0, 1] && b02Delta in [0, 1] && b14Delta in [0, 1] && b15Delta in [0, 1]
+        && invoiceDelta + quoteDelta + proformaDelta == 1
+        && b01Delta + b02Delta + b14Delta + b15Delta <= 1
+        && (b01Delta + b02Delta + b14Delta + b15Delta == 0 || invoiceDelta == 1);
+    }
+
+    function validCashLockCreate(counterId) {
+      return counterId == 'cash-' + request.auth.uid
+        && request.resource.data.keys().hasOnly(['activeSessionId', 'updatedAt', 'updatedBy'])
+        && request.resource.data.activeSessionId is string
+        && request.resource.data.updatedBy == request.auth.uid
+        && existsAfter(/databases/$(database)/documents/cashSessions/$(request.resource.data.activeSessionId))
+        && getAfter(/databases/$(database)/documents/cashSessions/$(request.resource.data.activeSessionId)).data.openedBy == request.auth.uid
+        && getAfter(/databases/$(database)/documents/cashSessions/$(request.resource.data.activeSessionId)).data.status == 'open';
+    }
+
+    function validCashLockUpdate(counterId) {
+      let nextSessionId = request.resource.data.activeSessionId;
+      let previousSessionId = resource.data.get('activeSessionId', '');
+      return counterId == 'cash-' + request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['activeSessionId', 'updatedAt', 'updatedBy'])
+        && request.resource.data.updatedBy == request.auth.uid
+        && (
+          (nextSessionId is string && nextSessionId.size() > 0
+            && existsAfter(/databases/$(database)/documents/cashSessions/$(nextSessionId))
+            && getAfter(/databases/$(database)/documents/cashSessions/$(nextSessionId)).data.openedBy == request.auth.uid
+            && getAfter(/databases/$(database)/documents/cashSessions/$(nextSessionId)).data.status == 'open')
+          || (nextSessionId == null && previousSessionId is string && previousSessionId.size() > 0
+            && existsAfter(/databases/$(database)/documents/cashSessions/$(previousSessionId))
+            && getAfter(/databases/$(database)/documents/cashSessions/$(previousSessionId)).data.status == 'closed')
+        );
+    }
+
+    function validCashActivityUpdate(sessionId) {
+      let previousExpected = resource.data.get('expectedCents', resource.data.get('openingCents', 0));
+      let activityId = request.resource.data.lastCashActivityId;
+      let activityType = request.resource.data.lastCashActivityType;
+      return resource.data.status == 'open'
+        && resource.data.openedBy == request.auth.uid
+        && request.resource.data.status == 'open'
+        && request.resource.data.updatedBy == request.auth.uid
+        && activityId is string && activityId.size() > 0
+        && activityId != resource.data.get('lastCashActivityId', '')
+        && validMoney(request.resource.data.expectedCents)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'expectedCents', 'lastCashActivityId', 'lastCashActivityType', 'updatedAt', 'updatedBy'
+        ])
+        && (
+          (activityType == 'payment'
+            && existsAfter(/databases/$(database)/documents/payments/$(activityId))
+            && getAfter(/databases/$(database)/documents/payments/$(activityId)).data.cashSessionId == sessionId
+            && getAfter(/databases/$(database)/documents/payments/$(activityId)).data.method == 'cash'
+            && getAfter(/databases/$(database)/documents/payments/$(activityId)).data.createdBy == request.auth.uid
+            && request.resource.data.expectedCents == previousExpected
+              + getAfter(/databases/$(database)/documents/payments/$(activityId)).data.amountCents)
+          || (activityType == 'movement'
+            && existsAfter(/databases/$(database)/documents/cashMovements/$(activityId))
+            && getAfter(/databases/$(database)/documents/cashMovements/$(activityId)).data.cashSessionId == sessionId
+            && getAfter(/databases/$(database)/documents/cashMovements/$(activityId)).data.createdBy == request.auth.uid
+            && request.resource.data.expectedCents == previousExpected
+              + (getAfter(/databases/$(database)/documents/cashMovements/$(activityId)).data.type == 'in'
+                ? getAfter(/databases/$(database)/documents/cashMovements/$(activityId)).data.amountCents
+                : 0 - getAfter(/databases/$(database)/documents/cashMovements/$(activityId)).data.amountCents))
+        );
+    }
+
+    function cashMovementIsAccounted(movementId, data) {
+      return existsAfter(/databases/$(database)/documents/cashSessions/$(data.cashSessionId))
+        && getAfter(/databases/$(database)/documents/cashSessions/$(data.cashSessionId)).data.lastCashActivityType == 'movement'
+        && getAfter(/databases/$(database)/documents/cashSessions/$(data.cashSessionId)).data.lastCashActivityId == movementId;
+    }
+
+    function validInvoiceOrderLink(invoiceId, data) {
+      return data.orderId == ''
+        || (data.orderId is string
+          && existsAfter(/databases/$(database)/documents/orders/$(data.orderId))
+          && getAfter(/databases/$(database)/documents/orders/$(data.orderId)).data.status == 'closed'
+          && getAfter(/databases/$(database)/documents/orders/$(data.orderId)).data.linkedInvoiceId == invoiceId);
+    }
+
+    function validClosedOrderLink(orderId) {
+      return request.resource.data.status != 'closed'
+        || (request.resource.data.linkedInvoiceId is string
+          && request.resource.data.tableId is string
+          && existsAfter(/databases/$(database)/documents/invoices/$(request.resource.data.linkedInvoiceId))
+          && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.linkedInvoiceId)).data.orderId == orderId
+          && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.linkedInvoiceId)).data.documentType == 'invoice'
+          && existsAfter(/databases/$(database)/documents/tables/$(request.resource.data.tableId))
+          && getAfter(/databases/$(database)/documents/tables/$(request.resource.data.tableId)).data.currentOrderId == null
+          && getAfter(/databases/$(database)/documents/tables/$(request.resource.data.tableId)).data.status == 'available');
+    }
+
+    function validCreatedOrderLink(orderId, data) {
+      return data.tableId is string
+        && data.tableId.size() > 0
+        && exists(/databases/$(database)/documents/tables/$(data.tableId))
+        && get(/databases/$(database)/documents/tables/$(data.tableId)).data.active == true
+        && get(/databases/$(database)/documents/tables/$(data.tableId)).data.status == 'available'
+        && get(/databases/$(database)/documents/tables/$(data.tableId)).data.currentOrderId == null
+        && existsAfter(/databases/$(database)/documents/tables/$(data.tableId))
+        && getAfter(/databases/$(database)/documents/tables/$(data.tableId)).data.status == 'occupied'
+        && getAfter(/databases/$(database)/documents/tables/$(data.tableId)).data.currentOrderId == orderId;
+    }
+
+    function validCancelledOrderLink() {
+      return request.resource.data.status != 'cancelled'
+        || (request.resource.data.tableId is string
+          && existsAfter(/databases/$(database)/documents/tables/$(request.resource.data.tableId))
+          && getAfter(/databases/$(database)/documents/tables/$(request.resource.data.tableId)).data.status == 'available'
+          && getAfter(/databases/$(database)/documents/tables/$(request.resource.data.tableId)).data.currentOrderId == null);
+    }
+
+    function validTableOrderMutation(tableId) {
+      let previousOrderId = resource.data.currentOrderId;
+      let nextOrderId = request.resource.data.currentOrderId;
+      return (
+          resource.data.active == true
+          && resource.data.status == 'available'
+          && previousOrderId == null
+          && request.resource.data.status == 'occupied'
+          && nextOrderId is string
+          && nextOrderId.size() > 0
+          && existsAfter(/databases/$(database)/documents/orders/$(nextOrderId))
+          && getAfter(/databases/$(database)/documents/orders/$(nextOrderId)).data.tableId == tableId
+          && getAfter(/databases/$(database)/documents/orders/$(nextOrderId)).data.status == 'pending'
+        ) || (
+          resource.data.status == 'occupied'
+          && previousOrderId is string
+          && previousOrderId.size() > 0
+          && request.resource.data.status == 'available'
+          && nextOrderId == null
+          && existsAfter(/databases/$(database)/documents/orders/$(previousOrderId))
+          && getAfter(/databases/$(database)/documents/orders/$(previousOrderId)).data.tableId == tableId
+          && getAfter(/databases/$(database)/documents/orders/$(previousOrderId)).data.status in ['closed', 'cancelled']
+        );
+    }
+
     function validRoles(value) {
       return value is list
         && value.size() > 0
         && value.hasOnly(['owner', 'manager', 'cashier', 'waiter', 'kitchen']);
     }
 
+    function validDrawerPin(value) {
+      return value is string && value.matches('^[0-9]{4}$');
+    }
+
+    function selfLegacyPinRemoval(userId) {
+      return active()
+        && request.auth.uid == userId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['drawerPin', 'updatedAt', 'updatedBy'])
+        && request.resource.data.updatedBy == request.auth.uid
+        && !request.resource.data.keys().hasAny(['drawerPin']);
+    }
+
     function validOrderTransition(before, after) {
       return (before == 'pending' && after in ['preparing', 'cancelled'])
         || (before == 'preparing' && after in ['pending', 'ready', 'cancelled'])
         || (before == 'ready' && after in ['preparing', 'served', 'cancelled'])
-        || (before == 'served' && after in ['pending_payment', 'cancelled'])
+        || (before == 'served' && after in ['pending_payment', 'closed', 'cancelled'])
         || (before == 'pending_payment' && after in ['closed', 'cancelled']);
     }
 
     function orderChangedOnly() {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
         'status', 'revision', 'updatedAt', 'updatedBy', 'statusChangedAt',
-        'cancelledAt', 'cancelledBy', 'linkedInvoiceId', 'closedAt', 'closedBy'
+        'cancelledAt', 'cancelledBy', 'cancellationReason', 'linkedInvoiceId', 'closedAt', 'closedBy'
       ]);
     }
 
     match /users/{userId} {
-      allow get: if verified() && request.auth.uid == userId || isOwner();
+      allow get: if verified() && (request.auth.uid == userId || isOwner());
       allow list: if isOwner();
       allow create: if isOwner()
         && request.resource.data.username is string
         && request.resource.data.authEmail is string
         && request.resource.data.authEmail.matches('^[a-z0-9._-]+@users[.]lospanitas[.]app$')
         && validRoles(request.resource.data.roles)
-        && request.resource.data.active is bool;
-      allow update: if isOwner()
+        && request.resource.data.active is bool
+        && !request.resource.data.keys().hasAny(['drawerPin']);
+      allow update: if (isOwner()
         && request.auth.uid != userId
         && request.resource.data.username is string
         && request.resource.data.authEmail is string
         && validRoles(request.resource.data.roles)
-        && request.resource.data.active is bool;
+        && request.resource.data.active is bool
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['drawerPin']))
+        || selfLegacyPinRemoval(userId);
+      allow delete: if false;
+    }
+
+    match /userSecrets/{userId} {
+      allow get: if active() && request.auth.uid == userId;
+      allow list: if false;
+      allow create, update: if active()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['drawerPin', 'updatedAt', 'updatedBy'])
+        && validDrawerPin(request.resource.data.drawerPin)
+        && request.resource.data.updatedBy == request.auth.uid;
       allow delete: if false;
     }
 
@@ -98,7 +367,11 @@ service cloud.firestore {
     }
 
     match /counters/{counterId} {
-      allow read, create, update: if canBill();
+      allow read: if canBill();
+      allow create: if (counterId == 'billing' && isOwner() && validBillingCounterBase(request.resource.data))
+        || (canBill() && validCashLockCreate(counterId));
+      allow update: if (counterId == 'billing' && canBill() && validBillingCounterIncrement())
+        || (canBill() && validCashLockUpdate(counterId));
       allow delete: if false;
     }
 
@@ -121,6 +394,36 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /inventoryMovements/{movementId} {
+      allow read: if canManageCatalog();
+      allow create: if canManageCatalog()
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.productId is string
+        && request.resource.data.productName is string
+        && request.resource.data.type in ['increase', 'decrease']
+        && request.resource.data.operation == 'count'
+        && request.resource.data.quantity is number
+        && request.resource.data.quantity > 0
+        && request.resource.data.delta is number
+        && request.resource.data.previousStock is number
+        && request.resource.data.resultingStock is number
+        && request.resource.data.resultingStock >= 0
+        && request.resource.data.resultingStock == request.resource.data.previousStock + request.resource.data.delta
+        && ((request.resource.data.type == 'increase'
+            && request.resource.data.delta > 0
+            && request.resource.data.quantity == request.resource.data.delta)
+          || (request.resource.data.type == 'decrease'
+            && request.resource.data.delta < 0
+            && request.resource.data.quantity == 0 - request.resource.data.delta))
+        && exists(/databases/$(database)/documents/products/$(request.resource.data.productId))
+        && existsAfter(/databases/$(database)/documents/products/$(request.resource.data.productId))
+        && get(/databases/$(database)/documents/products/$(request.resource.data.productId)).data.stock == request.resource.data.previousStock
+        && getAfter(/databases/$(database)/documents/products/$(request.resource.data.productId)).data.stock == request.resource.data.resultingStock
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() <= 300;
+      allow update, delete: if false;
+    }
+
     match /clients/{clientId} {
       allow read, create, update: if canManageClients();
       allow delete: if false;
@@ -131,7 +434,8 @@ service cloud.firestore {
       allow create: if isOwner();
       allow update: if canCreateOrders()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['currentOrderId', 'status', 'updatedAt'])
-        && request.resource.data.status in ['available', 'occupied'];
+        && request.resource.data.status in ['available', 'occupied']
+        && validTableOrderMutation(tableId);
       allow delete: if false;
     }
 
@@ -145,12 +449,19 @@ service cloud.firestore {
         && request.resource.data.items.size() > 0
         && validMoney(request.resource.data.subtotalCents)
         && validMoney(request.resource.data.taxCents)
-        && validMoney(request.resource.data.totalCents);
+        && validMoney(request.resource.data.totalCents)
+        && validCreatedOrderLink(orderId, request.resource.data);
       allow update: if canOperateOrders()
         && orderChangedOnly()
         && request.resource.data.revision == resource.data.revision + 1
         && request.resource.data.updatedBy == request.auth.uid
         && validOrderTransition(resource.data.status, request.resource.data.status)
+        && validClosedOrderLink(orderId)
+        && validCancelledOrderLink()
+        && (request.resource.data.status != 'cancelled'
+          || (request.resource.data.cancellationReason is string
+            && request.resource.data.cancellationReason.size() >= 3
+            && request.resource.data.cancellationReason.size() <= 500))
         && (
           isOwner() || isManager()
           || (hasRole('kitchen') && (
@@ -175,21 +486,28 @@ service cloud.firestore {
       allow read: if canBill();
       allow create: if canBill()
         && request.resource.data.documentType in ['invoice', 'quote', 'proforma']
+        && request.resource.data.requestId == invoiceId
         && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.cashierId == request.auth.uid
+        && request.resource.data.invoiceNumber is string
+        && request.resource.data.invoiceNumber.matches('^[A-Z0-9-]{1,18}[0-9]{6}$')
         && request.resource.data.items is list
-        && request.resource.data.items.size() > 0
-        && validMoney(request.resource.data.subtotalCents)
-        && validMoney(request.resource.data.taxCents)
-        && validMoney(request.resource.data.totalCents)
+        && request.resource.data.items.size() > 0 && request.resource.data.items.size() <= 250
+        && validFinancialTotals(request.resource.data)
         && validMoney(request.resource.data.paidCents)
-        && request.resource.data.paidCents <= request.resource.data.totalCents;
+        && request.resource.data.paidCents <= request.resource.data.totalCents
+        && validDocumentState(request.resource.data)
+        && invoiceHasLinkedInitialPayment(invoiceId, request.resource.data)
+        && validInvoiceOrderLink(invoiceId, request.resource.data);
       allow update: if (
         canBill()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paidCents', 'status', 'updatedAt', 'updatedBy'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paidCents', 'status', 'lastPaymentId', 'updatedAt', 'updatedBy'])
         && request.resource.data.paidCents >= resource.data.paidCents
         && request.resource.data.paidCents <= resource.data.totalCents
-        && request.resource.data.status in ['partial', 'paid']
         && request.resource.data.updatedBy == request.auth.uid
+        && validDocumentState(request.resource.data)
+        && invoiceUpdateHasLinkedPayment(invoiceId)
       ) || (
         (isOwner() || isManager())
         && resource.data.status != 'cancelled'
@@ -212,7 +530,10 @@ service cloud.firestore {
         && request.resource.data.amountCents > 0
         && request.resource.data.createdBy == request.auth.uid
         && ownsOpenCashSession(request.resource.data.cashSessionId)
-        && request.resource.data.method in ['cash', 'card', 'transfer', 'check', 'credit'];
+        && request.resource.data.method in ['cash', 'card', 'transfer', 'check', 'credit']
+        && validPaymentTender(request.resource.data)
+        && paymentMatchesInvoice(paymentId, request.resource.data)
+        && cashPaymentIsAccounted(paymentId, request.resource.data);
       allow update, delete: if false;
     }
 
@@ -221,20 +542,43 @@ service cloud.firestore {
       allow create: if canBill()
         && request.resource.data.openedBy == request.auth.uid
         && request.resource.data.status == 'open'
-        && validMoney(request.resource.data.openingCents);
-      allow update: if canBill()
+        && validMoney(request.resource.data.openingCents)
+        && request.resource.data.expectedCents == request.resource.data.openingCents
+        && request.resource.data.lastCashActivityId == ''
+        && request.resource.data.lastCashActivityType == ''
+        && existsAfter(/databases/$(database)/documents/counters/$(cashLockId()))
+        && getAfter(/databases/$(database)/documents/counters/$(cashLockId())).data.activeSessionId == sessionId;
+      allow update: if (canBill() && validCashActivityUpdate(sessionId)) || (canBill()
         && resource.data.status == 'open'
         && request.resource.data.status == 'closed'
-        && (resource.data.openedBy == request.auth.uid || isOwner() || isManager())
+        && resource.data.openedBy == request.auth.uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'status', 'expectedCents', 'closingCents', 'varianceCents', 'closingNotes', 'closedAt', 'closedBy'
         ])
         && validMoney(request.resource.data.expectedCents)
+        && request.resource.data.expectedCents == resource.data.get('expectedCents', resource.data.get('openingCents', 0))
         && request.resource.data.closingCents is int
         && request.resource.data.closingCents >= 0
         && request.resource.data.varianceCents == request.resource.data.closingCents - request.resource.data.expectedCents
-        && request.resource.data.closedBy == request.auth.uid;
+        && request.resource.data.closedBy == request.auth.uid
+        && existsAfter(/databases/$(database)/documents/counters/$(cashLockId()))
+        && getAfter(/databases/$(database)/documents/counters/$(cashLockId())).data.activeSessionId == null);
       allow delete: if false;
+    }
+
+    match /cashMovements/{movementId} {
+      allow read: if canBill();
+      allow create: if canBill()
+        && ownsOpenCashSession(request.resource.data.cashSessionId)
+        && request.resource.data.type in ['in', 'out']
+        && validMoney(request.resource.data.amountCents)
+        && request.resource.data.amountCents > 0
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() >= 3
+        && request.resource.data.reason.size() <= 300
+        && request.resource.data.createdBy == request.auth.uid
+        && cashMovementIsAccounted(movementId, request.resource.data);
+      allow update, delete: if false;
     }
 
     match /auditLogs/{logId} {
