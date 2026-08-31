@@ -25,7 +25,9 @@ El script solo crea configuración, contadores y doce mesas; no fabrica ventas, 
 
 ## GitHub Actions
 
-Los pull requests validan código, reglas y build, y generan un canal preview `pr-{número}` por 14 días. `main` despliega producción. Se requiere el secret `FIREBASE_SERVICE_ACCOUNT_LOS_PANITAS_BY_NECHY`; el JSON nunca se guarda en el repositorio. La autenticación de Google crea un archivo efímero durante el job y lo elimina al finalizar.
+Los pull requests validan código, reglas y build, y generan un canal preview `pr-{número}` por 14 días. `main` vuelve a ejecutar las pruebas y despliega únicamente Hosting. Auth, reglas e índices se publican de forma deliberada con `npm run deploy` desde una sesión administrativa; así, el secret de GitHub no necesita permisos amplios sobre el proyecto. Se requiere el secret `FIREBASE_SERVICE_ACCOUNT_LOS_PANITAS_BY_NECHY`; el JSON nunca se guarda en el repositorio. La autenticación de Google crea un archivo efímero durante el job y lo elimina al finalizar.
+
+Los previews utilizan actualmente la configuración pública del proyecto productivo. Deben probarse sin cuentas ni datos comerciales reales hasta disponer de un proyecto Firebase separado para staging.
 
 El proyecto asignado es `los-panitas-by-nechy`.
 

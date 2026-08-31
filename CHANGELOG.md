@@ -1,5 +1,10 @@
 # Historial de cambios
 
+## 1.4.0-rc.2 — 2026-08-31
+
+- El despliegue automático conserva permisos mínimos y publica únicamente Hosting.
+- CI continúa validando reglas y transacciones con el emulador; Auth, reglas e índices se publican mediante `npm run deploy` desde una sesión administrativa autorizada.
+
 ## 1.4.0-rc.1 — 2026-08-31
 
 Primer candidato de entrega integral para la terminal ELO.
