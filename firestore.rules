@@ -252,33 +252,26 @@ service cloud.firestore {
     }
 
     function validInvoiceOrderLink(invoiceId, data) {
-      let order = data.orderId is string && data.orderId.size() > 0
-        ? getAfter(/databases/$(database)/documents/orders/$(data.orderId)).data
-        : null;
       return data.orderId == ''
         || (data.orderId is string
           && existsAfter(/databases/$(database)/documents/orders/$(data.orderId))
-          && order.status == 'closed'
-          && order.linkedInvoiceId == invoiceId
-          && data.tableId == order.tableId
-          && data.items == order.items
-          && data.totalCents == order.totalCents);
+          && getAfter(/databases/$(database)/documents/orders/$(data.orderId)).data.status == 'closed'
+          && getAfter(/databases/$(database)/documents/orders/$(data.orderId)).data.linkedInvoiceId == invoiceId
+          && data.tableId == getAfter(/databases/$(database)/documents/orders/$(data.orderId)).data.tableId
+          && data.items == getAfter(/databases/$(database)/documents/orders/$(data.orderId)).data.items
+          && data.totalCents == getAfter(/databases/$(database)/documents/orders/$(data.orderId)).data.totalCents);
     }
 
     function validClosedOrderLink(orderId) {
-      let invoiceId = request.resource.data.get('linkedInvoiceId', '');
-      let invoice = invoiceId is string && invoiceId.size() > 0
-        ? getAfter(/databases/$(database)/documents/invoices/$(invoiceId)).data
-        : null;
       return request.resource.data.status != 'closed'
-        || (invoiceId is string
+        || (request.resource.data.linkedInvoiceId is string
           && request.resource.data.tableId is string
-          && existsAfter(/databases/$(database)/documents/invoices/$(invoiceId))
-          && invoice.orderId == orderId
-          && invoice.documentType == 'invoice'
-          && invoice.tableId == request.resource.data.tableId
-          && invoice.items == request.resource.data.items
-          && invoice.totalCents == request.resource.data.totalCents
+          && existsAfter(/databases/$(database)/documents/invoices/$(request.resource.data.linkedInvoiceId))
+          && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.linkedInvoiceId)).data.orderId == orderId
+          && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.linkedInvoiceId)).data.documentType == 'invoice'
+          && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.linkedInvoiceId)).data.tableId == request.resource.data.tableId
+          && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.linkedInvoiceId)).data.items == request.resource.data.items
+          && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.linkedInvoiceId)).data.totalCents == request.resource.data.totalCents
           && existsAfter(/databases/$(database)/documents/tables/$(request.resource.data.tableId))
           && getAfter(/databases/$(database)/documents/tables/$(request.resource.data.tableId)).data.currentOrderId == null
           && getAfter(/databases/$(database)/documents/tables/$(request.resource.data.tableId)).data.status == 'available');
