@@ -294,10 +294,13 @@ public class LocalCommandServer implements Runnable {
                     boolean paperOut = printerManager.isPaperOut();
                     boolean paperLow = printerManager.isPaperLow();
                     boolean coverOpen = printerManager.isCoverOpen();
+                    boolean paperStatusSupported = printerManager.isPaperStatusSupported();
                     info.put("paperOut", paperOut);
                     info.put("paperLow", paperLow);
                     info.put("coverOpen", coverOpen);
-                    info.put("paperStatus", paperOut ? "out" : (paperLow ? "near_end" : "ok"));
+                    info.put("paperStatusSupported", paperStatusSupported);
+                    info.put("paperStatus", !printerManager.isConnected() ? "unavailable"
+                            : (!paperStatusSupported ? "unsupported" : (paperOut ? "out" : (paperLow ? "near_end" : "ok"))));
 
                     info.put("model", android.os.Build.MODEL);
                     info.put("device", android.os.Build.DEVICE);
@@ -373,7 +376,10 @@ public class LocalCommandServer implements Runnable {
                     res.put("paperOut", printerManager.isPaperOut());
                     res.put("paperLow", printerManager.isPaperLow());
                     res.put("coverOpen", printerManager.isCoverOpen());
-                    res.put("paperStatus", printerManager.isPaperOut() ? "out" : (printerManager.isPaperLow() ? "near_end" : "ok"));
+                    boolean paperStatusSupported = printerManager.isPaperStatusSupported();
+                    res.put("paperStatusSupported", paperStatusSupported);
+                    res.put("paperStatus", !printerManager.isConnected() ? "unavailable"
+                            : (!paperStatusSupported ? "unsupported" : (printerManager.isPaperOut() ? "out" : (printerManager.isPaperLow() ? "near_end" : "ok"))));
                     return res.toString();
                 }
 

@@ -10,8 +10,8 @@ android {
         applicationId "com.panitas.pos"
         minSdk 21
         targetSdk 27 // Orientado a Android 8.1.0 Oreo de la Elo-PP3-15
-        versionCode 9
-        versionName "1.4.0"
+        versionCode 10
+        versionName "1.4.0-rc.3"
     }
 
     buildTypes {

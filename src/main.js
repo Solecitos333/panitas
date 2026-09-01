@@ -20,7 +20,22 @@ const root = document.getElementById('app');
 let application = null;
 let unsubscribeProfile = null;
 
-if ('serviceWorker' in navigator && import.meta.env.PROD) navigator.serviceWorker.register('/sw.js').catch(console.warn);
+if ('serviceWorker' in navigator) {
+  if (import.meta.env.PROD) {
+    navigator.serviceWorker.register('/sw.js').catch(console.warn);
+  } else {
+    // Una compilación anterior registraba el SW también durante desarrollo.
+    // Retirarlo evita que módulos viejos queden mezclados con el código actual.
+    navigator.serviceWorker.getRegistrations()
+      .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+      .catch(console.warn);
+    if ('caches' in window) {
+      caches.keys()
+        .then((keys) => Promise.all(keys.filter((key) => key.startsWith('panitas-pos-')).map((key) => caches.delete(key))))
+        .catch(console.warn);
+    }
+  }
+}
 
 bootstrap().catch((error) => renderAccessDenied(root, error.message, () => location.reload()));
 

@@ -41,8 +41,8 @@ $PlatformJar = Get-ChildItem (Join-Path $SdkDir "platforms") -Filter "android.ja
 if (-not $BuildTools -or -not $PlatformJar) {
     throw "Faltan Build Tools o una plataforma Android instalados en $SdkDir."
 }
-$VersionCode = 9
-$VersionName = "1.4.0"
+$VersionCode = 10
+$VersionName = "1.4.0-rc.3"
 $Javac = "$JavaHome\bin\javac.exe"
 
 $ProjectDir = Join-Path $RepoRoot "android-elo-kiosk"

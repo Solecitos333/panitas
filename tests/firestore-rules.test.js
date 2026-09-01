@@ -102,7 +102,9 @@ test('crear y cancelar una comanda exige actualizar su mesa en la misma transacc
 test('caja solo cierra una comanda servida junto con su factura y liberación de mesa', async () => {
   await environment.withSecurityRulesDisabled(async (context) => {
     await setDoc(doc(context.firestore(), 'orders', 'served-order'), {
-      status: 'served', revision: 4, updatedBy: 'waiter', tableId: 'mesa-1'
+      status: 'served', revision: 4, updatedBy: 'waiter', tableId: 'mesa-1', clientName: 'Consumidor',
+      items: [{ productId: 'p1', name: 'Producto', unitPriceCents: 10000, taxRate: 0, quantity: 1 }],
+      subtotalCents: 10000, discountCents: 0, taxableSubtotalCents: 10000, taxCents: 0, tipCents: 0, totalCents: 10000
     });
     await updateDoc(doc(context.firestore(), 'tables', 'mesa-1'), { status: 'occupied', currentOrderId: 'served-order' });
   });
@@ -114,8 +116,7 @@ test('caja solo cierra una comanda servida junto con su factura y liberación de
   };
   await assertFails(updateDoc(doc(db, 'orders', 'served-order'), orderUpdate));
 
-  const batch = writeBatch(db);
-  batch.set(doc(db, 'invoices', 'invoice-served'), {
+  const invoicePayload = {
     requestId: 'invoice-served', documentType: 'invoice', invoiceNumber: 'PAN-001001', ncf: '', ncfType: '',
     items: [{ productId: 'p1', name: 'Producto', unitPriceCents: 10000, taxRate: 0, quantity: 1 }],
     subtotalCents: 10000, discountCents: 0, taxableSubtotalCents: 10000, taxCents: 0, tipCents: 0,
@@ -123,7 +124,20 @@ test('caja solo cierra una comanda servida junto con su factura y liberación de
     orderId: 'served-order', tableId: 'mesa-1', clientName: 'Consumidor', clientId: '', clientRnc: '', notes: '',
     cashierId: 'cashier', cashierName: 'Caja', createdAt: serverTimestamp(), createdBy: 'cashier',
     updatedAt: serverTimestamp(), updatedBy: 'cashier'
+  };
+
+  const mismatchedBatch = writeBatch(db);
+  mismatchedBatch.set(doc(db, 'invoices', 'invoice-served'), {
+    ...invoicePayload,
+    items: [{ productId: 'p1', name: 'Producto', unitPriceCents: 10000, taxRate: 0, quantity: 2 }],
+    subtotalCents: 20000, taxableSubtotalCents: 20000, totalCents: 20000
   });
+  mismatchedBatch.update(doc(db, 'orders', 'served-order'), orderUpdate);
+  mismatchedBatch.update(doc(db, 'tables', 'mesa-1'), { status: 'available', currentOrderId: null, updatedAt: serverTimestamp() });
+  await assertFails(mismatchedBatch.commit());
+
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'invoices', 'invoice-served'), invoicePayload);
   batch.update(doc(db, 'orders', 'served-order'), orderUpdate);
   batch.update(doc(db, 'tables', 'mesa-1'), { status: 'available', currentOrderId: null, updatedAt: serverTimestamp() });
   await assertSucceeds(batch.commit());
@@ -165,12 +179,25 @@ test('la apertura de caja crea sesión y bloqueo de usuario de forma atómica', 
   await assertSucceeds(batch.commit());
 });
 
+test('una caja abierta no puede ser sustituida por otra sesión', async () => {
+  const db = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'cashSessions', 'shift-cashier-2'), {
+    openingCents: 0, expectedCents: 0, lastCashActivityId: '', lastCashActivityType: '',
+    notes: '', status: 'open', openedAt: serverTimestamp(), openedBy: 'cashier', openedByName: 'Caja'
+  });
+  batch.update(doc(db, 'counters', 'cash-cashier'), {
+    activeSessionId: 'shift-cashier-2', updatedAt: serverTimestamp(), updatedBy: 'cashier'
+  });
+  await assertFails(batch.commit());
+});
+
 test('un cobro exige factura, actualización de saldo y caja propia en la misma transacción', async () => {
   const db = environment.authenticatedContext('cashier', auth('cashier')).firestore();
   const payment = {
     invoiceId: 'i1', invoiceNumber: 'PAN-001001', amountCents: 1000,
     method: 'cash', reference: '', tenderedCents: 2000, changeCents: 1000, cashSessionId: 'shift-cashier',
-    createdBy: 'cashier', createdAt: serverTimestamp()
+    cashierId: 'cashier', cashierName: 'Caja', createdBy: 'cashier', createdAt: serverTimestamp()
   };
   await assertFails(setDoc(doc(db, 'payments', 'orphan-payment'), payment));
 
@@ -191,6 +218,22 @@ test('un cobro exige factura, actualización de saldo y caja propia en la misma 
     method: 'cash', reference: '', cashSessionId: '',
     createdBy: 'cashier', createdAt: serverTimestamp()
   }));
+});
+
+test('un pago de crédito no puede simular dinero cobrado', async () => {
+  const db = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'invoices', 'i1'), {
+    paidCents: 1000, status: 'partial', lastPaymentId: 'credit-as-payment',
+    updatedAt: serverTimestamp(), updatedBy: 'cashier'
+  });
+  batch.set(doc(db, 'payments', 'credit-as-payment'), {
+    invoiceId: 'i1', invoiceNumber: 'PAN-001001', amountCents: 1000,
+    method: 'credit', reference: '', tenderedCents: 0, changeCents: 0,
+    cashSessionId: 'shift-cashier', cashierId: 'cashier', cashierName: 'Caja',
+    createdBy: 'cashier', createdAt: serverTimestamp()
+  });
+  await assertFails(batch.commit());
 });
 
 test('el servicio real completa factura, pago, inventario, contador y caja atómicamente', async () => {

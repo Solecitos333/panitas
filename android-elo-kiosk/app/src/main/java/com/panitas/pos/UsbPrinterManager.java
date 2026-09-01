@@ -229,7 +229,7 @@ public class UsbPrinterManager {
         // Enviarle ese comando genérico deja el canal USB inestable en algunos firmwares ELO.
         // Conservamos el estado por defecto y dejamos que el error real de impresión sea el
         // aviso operativo hasta implementar el protocolo de estado específico de Star.
-        if (printerDevice != null && (printerDevice.getVendorId() == 1305 || printerDevice.getVendorId() == 0x0519)) {
+        if (isStarPrinter()) {
             paperOut = false;
             paperLow = false;
             coverOpen = false;
@@ -269,6 +269,21 @@ public class UsbPrinterManager {
 
     public synchronized boolean isCoverOpen() {
         return coverOpen;
+    }
+
+    /**
+     * La Star TSP143IIIU usa StarPRNT/ASB y no responde de forma fiable al
+     * DLE EOT genérico. Hasta implementar ASB, la interfaz debe mostrar que el
+     * sensor no está verificado en vez de anunciar un falso "papel listo".
+     */
+    public synchronized boolean isPaperStatusSupported() {
+        return isConnected() && !isStarPrinter() && inEndpoint != null;
+    }
+
+    private boolean isStarPrinter() {
+        if (printerDevice == null) return false;
+        int vendorId = printerDevice.getVendorId();
+        return vendorId == 1305 || vendorId == 0x0519;
     }
 
     public synchronized void setPaperStatusManual(boolean out, boolean low) {

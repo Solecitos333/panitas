@@ -106,6 +106,18 @@ test('el ticket raster omite RNC sin configurar e incluye datos fiscales y balan
   assert.ok(text.includes('BALANCE PENDIENTE:'));
 });
 
+test('el ticket raster identifica una proforma sin llamarla factura de venta', () => {
+  const text = buildInvoicePlainText({
+    id: 'proforma_1', invoiceNumber: 'PROF-001001', documentType: 'proforma',
+    clientName: 'Cliente de muestra', subtotalCents: 5000, discountCents: 0,
+    taxCents: 0, tipCents: 0, totalCents: 5000, paidCents: 0,
+    createdAt: new Date(), items: [{ name: 'Producto', quantity: 1, unitPriceCents: 5000 }]
+  }, { name: 'Los Panitas' });
+
+  assert.ok(text.includes('PROFORMA: PROF-001001'));
+  assert.equal(text.includes('FACTURA DE VENTA:'), false);
+});
+
 test('el QR prioriza menú, luego WhatsApp y finalmente el sitio oficial', () => {
   assert.equal(resolveReceiptQrUrl({ menuUrl: 'https://menu.example/panitas', whatsapp: '8095550000' }), 'https://menu.example/panitas');
   assert.equal(resolveReceiptQrUrl({ whatsapp: '+1 (809) 555-0000' }), 'https://wa.me/18095550000');

@@ -224,7 +224,7 @@ export function renderSettings(state) {
             <h4 style="margin: 0; font-size: .92rem; color: #f5f5f5;">Instalador y Paquete de Recursos ELO</h4>
           </div>
           <p style="margin: 0 0 14px; font-size: .78rem; color: var(--muted); line-height: 1.45;">
-            Descarga la aplicación nativa <strong>v1.4.0 (código 9)</strong> para la terminal <strong>Elo PayPoint Plus 15" (Android 8.1.0)</strong>. Incluye el controlador directo para la impresora térmica y gaveta de dinero por hardware.
+            Descarga la aplicación nativa <strong>v1.4.0-rc.3 (código 10)</strong> para la terminal <strong>Elo PayPoint Plus 15" (Android 8.1.0)</strong>. Incluye el controlador directo para la impresora térmica y gaveta de dinero por hardware.
           </p>
           <div style="display: flex; flex-wrap: wrap; gap: 10px;">
             <a href="/downloads/LosPanitas-Elo-POS-APK.zip" download class="button primary compact" style="text-decoration: none;">

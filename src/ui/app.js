@@ -1,7 +1,7 @@
 import {
   createIcons, BadgeCheck, BadgeDollarSign, Banknote, Barcode, BookOpen, Calculator, Calendar, ChartNoAxesCombined, CreditCard,
   ChefHat, ChevronDown, CircleDollarSign, Clock3, Cpu, Download, Eye, FileCheck2, FileSpreadsheet, Globe, Landmark,
-  KeyRound, LayoutDashboard, LogOut, Menu, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Package, PackageOpen, Pencil,
+  KeyRound, LayoutDashboard, Lock, LogOut, Menu, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Package, PackageOpen, Pencil,
   Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, Save, ScanBarcode, Search, Send, Settings,
   Sheet, ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, SlidersHorizontal, Smartphone, Sparkles, Trash2, TrendingDown, TrendingUp, Usb, UserPlus,
   Users, Utensils, Volume2, Wallet, WalletCards, Wifi, WifiOff, X
@@ -32,7 +32,7 @@ const NAV = [
 const icons = {
   BadgeCheck, BadgeDollarSign, Banknote, Barcode, BookOpen, Calculator, Calendar, ChartNoAxesCombined, ChefHat,
   ChevronDown, CircleDollarSign, Clock3, Cpu, CreditCard, Download, Eye, FileCheck2, FileSpreadsheet, Globe, KeyRound, Landmark, LayoutDashboard,
-  LogOut, Menu, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Package, PackageOpen, Pencil, Plus, Printer,
+  Lock, LogOut, Menu, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Package, PackageOpen, Pencil, Plus, Printer,
   QrCode, Radio, Receipt, ReceiptText, RefreshCw, Save, ScanBarcode, Search, Send, Settings, Sheet,
   ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, SlidersHorizontal, Smartphone, Sparkles, Trash2, TrendingDown, TrendingUp, Usb, UserPlus, Users,
   Utensils, Volume2, Wallet, WalletCards, Wifi, WifiOff, X
@@ -367,7 +367,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         btn.disabled = false;
         if (res && res.ok) {
           state.hardwareStatus = { ...(state.hardwareStatus || {}), ...res };
-          if (res.paperOut) {
+          if (res.paperStatus === 'unsupported') {
+            toast('La impresora está conectada, pero este modelo no permite confirmar el papel por sensor. Revisa el rollo visualmente.', 'warning');
+          } else if (res.paperOut) {
             toast('⚠️ El sensor aún detecta que la impresora no tiene papel.', 'danger');
             beepHardware('error');
           } else {
@@ -1602,7 +1604,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         setVal('#diag-printer-val', statusRes.printerConnected ? 'Conectada ✓' : 'Sin detectar', statusRes.printerConnected);
 
         // Sensor de Papel
-        if (statusRes.paperOut) {
+        if (statusRes.paperStatus === 'unsupported') {
+          setVal('#diag-paper-val', 'Sensor no compatible · revisión manual', null);
+        } else if (statusRes.paperOut) {
           setVal('#diag-paper-val', '¡SIN PAPEL! Reemplazar', false);
         } else if (statusRes.paperLow) {
           setVal('#diag-paper-val', 'Poco papel restante', null);
@@ -1620,14 +1624,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         setVal('#diag-ip-val', statusRes.wifiIp || 'No reportada', Boolean(statusRes.wifiIp));
         setAdbHint(statusRes);
 
-        // Listar dispositivos USB
-        const usbWs = new WebSocket(`ws://127.0.0.1:${eloPort}`);
-        const usbRes = await new Promise((resolve) => {
-          const t = setTimeout(() => resolve(null), 700);
-          usbWs.onopen = () => usbWs.send(JSON.stringify({ cmd: 'listUsb' }));
-          usbWs.onmessage = (e) => { clearTimeout(t); try { resolve(JSON.parse(e.data)); } catch { resolve(null); } usbWs.close(); };
-          usbWs.onerror = () => { clearTimeout(t); resolve(null); };
-        });
+        // Listar dispositivos USB mediante el mismo canal autenticado que usa
+        // el resto de los comandos nativos.
+        const usbRes = await sendEloCommand({ cmd: 'listUsb' }, 1200);
         const usbList = root.querySelector('#diag-usb-list');
         if (usbList && usbRes && usbRes.devices) {
           if (usbRes.devices.length === 0) {
@@ -1667,7 +1666,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           const paperRes = await checkPaperStatus();
           if (paperRes && paperRes.ok) {
             state.hardwareStatus = { ...(state.hardwareStatus || {}), ...paperRes };
-            if (paperRes.paperOut) {
+            if (paperRes.paperStatus === 'unsupported') {
+              toast('Impresora conectada; el sensor de papel no es compatible con este modelo. Comprueba el rollo manualmente.', 'warning');
+            } else if (paperRes.paperOut) {
               toast('⚠️ La impresora no tiene papel térmico. Reemplaza el rollo de 80mm.', 'danger');
               beepHardware('error');
             } else if (paperRes.paperLow) {

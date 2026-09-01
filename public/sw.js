@@ -1,7 +1,12 @@
-const CACHE = 'panitas-pos-v5';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/logo.png'];
+const CACHE = 'panitas-pos-v6';
+const SHELL = ['/', '/index.html', '/compat.js', '/manifest.webmanifest', '/logo.png'];
+const LOCAL_DEVELOPMENT = self.location.hostname === 'localhost' || self.location.hostname === '127.0.0.1';
 
 self.addEventListener('install', (event) => {
+  if (LOCAL_DEVELOPMENT) {
+    event.waitUntil(self.skipWaiting());
+    return;
+  }
   event.waitUntil(
     caches.open(CACHE)
       .then((cache) => cache.addAll(SHELL))
@@ -10,6 +15,15 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
+  if (LOCAL_DEVELOPMENT) {
+    event.waitUntil(
+      caches.keys()
+        .then((keys) => Promise.all(keys.filter((key) => key.startsWith('panitas-pos-')).map((key) => caches.delete(key))))
+        .then(() => self.registration.unregister())
+        .then(() => self.clients.claim())
+    );
+    return;
+  }
   event.waitUntil(
     caches.keys()
       .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
@@ -18,6 +32,7 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  if (LOCAL_DEVELOPMENT) return;
   if (event.request.method !== 'GET' || new URL(event.request.url).origin !== self.location.origin) return;
 
   // Estrategia Network-First para la página HTML principal

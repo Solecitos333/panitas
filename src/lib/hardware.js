@@ -349,8 +349,12 @@ export function buildInvoicePlainText(invoice, settings = {}, payments = [], cha
   if (settings.address) lines.push(`[C]${settings.address}`);
   lines.push('[SEP]');
 
-  const docLabel = invoice.documentType === 'quote' ? 'COTIZACIÓN' :
-                   invoice.documentType === 'delivery' ? 'CONDUCE DE ENTREGA' : 'FACTURA DE VENTA';
+  const docLabel = ({
+    invoice: 'FACTURA DE VENTA',
+    quote: 'COTIZACIÓN',
+    proforma: 'PROFORMA',
+    delivery: 'CONDUCE DE ENTREGA'
+  })[invoice.documentType] || 'DOCUMENTO';
   lines.push(`${docLabel}: ${invoice.invoiceNumber || invoice.id || 'N/A'}`);
   if (invoice.ncf) lines.push(`NCF: ${invoice.ncf}`);
   lines.push(`Fecha: ${formatDate(invoice.createdAt || new Date(), true)}`);

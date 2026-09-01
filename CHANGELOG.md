@@ -1,5 +1,14 @@
 # Historial de cambios
 
+## 1.4.0-rc.3 — 2026-09-01
+
+- Validado en navegador el recorrido producto → PIN → cobro → caja, comanda → cocina → servicio → cobro, fiao → cobro, inventario móvil y cierre cuadrado.
+- Endurecidos el bloqueo de sesión de caja, los vínculos comanda/factura, la atribución y hora de escrituras, y el rechazo de crédito como pago efectivo.
+- Corregidos la caché obsoleta en desarrollo, el icono de cierre de caja, el diagnóstico USB autenticado y la etiqueta térmica de proformas.
+- Añadida compatibilidad de sintaxis y polyfills para WebView antiguo de Android 8.1.
+- El estado de papel de la Star ya no presenta un falso positivo: se identifica como sensor no compatible hasta implementar Star ASB.
+- APK recompilada como código 10 para que Android pueda instalarla como actualización trazable.
+
 ## 1.4.0-rc.2 — 2026-08-31
 
 - El despliegue automático conserva permisos mínimos y publica únicamente Hosting.
