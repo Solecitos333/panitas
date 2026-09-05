@@ -5,7 +5,7 @@
 
 **Demo desplegada:** [los-panitas-by-nechy.web.app](https://los-panitas-by-nechy.web.app)
 
-**Estado:** candidato `v1.4.0-rc.4`. La aplicación web, los flujos, las reglas y el paquete Android están validados; impresión, gaveta y el recorrido físico de actualización `código 11 → 12` deben completar la [prueba de aceptación en la terminal ELO](docs/ACEPTACION.md) antes de promoverla a versión estable.
+**Estado:** candidato `v1.4.0-rc.5`. La aplicación web, los flujos, las reglas y el paquete Android están validados; impresión, gaveta y el recorrido físico de actualización `código 11 → 12` deben completar la [prueba de aceptación en la terminal ELO](docs/ACEPTACION.md) antes de promoverla a versión estable.
 
 Sistema independiente de punto de venta, comandas, cocina, caja y facturación para **Los Panitas by Nechy**. No comparte código, autenticación, Firestore, inventario ni despliegue con Futunet o Creaticos.
 

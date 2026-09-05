@@ -187,7 +187,7 @@ $UpdateManifest = [ordered]@{
     releaseNotes = @($ReleaseInfo.releaseNotes)
 }
 $UpdateManifestFile = Join-Path $OutDir "update.json"
-$UpdateManifestJson = $UpdateManifest | ConvertTo-Json -Depth 6
+$UpdateManifestJson = ($UpdateManifest | ConvertTo-Json -Depth 6) -replace "`r`n", "`n"
 [System.IO.File]::WriteAllText($UpdateManifestFile, $UpdateManifestJson + "`n", [System.Text.UTF8Encoding]::new($false))
 
 $ChecksumFile = Join-Path $OutDir "SHA256SUMS.txt"

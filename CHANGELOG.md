@@ -1,5 +1,11 @@
 # Historial de cambios
 
+## 1.4.0-rc.5 — 2026-09-05
+
+- Normalizados los saltos de línea del manifiesto de actualización para conservar su SHA-256 entre Windows y GitHub Actions/Linux.
+- Publicado el código 12 para comprobar el recorrido completo de actualización desde el código 11 en la terminal física.
+- Confirmada la instalación inicial del código 11 sobre la ELO con código 7, conservando la firma y los datos de la aplicación.
+
 ## 1.4.0-rc.4 — 2026-09-05
 
 - Añadido actualizador nativo para detectar una APK con `versionCode` superior al iniciar y cada seis horas.

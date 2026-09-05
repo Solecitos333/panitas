@@ -2,26 +2,26 @@
   "schemaVersion": 1,
   "channel": "release-candidate",
   "packageName": "com.panitas.pos",
-  "versionCode": 11,
-  "versionName": "1.4.0-rc.4",
-  "publishedAt": "2026-09-05T17:20:48Z",
+  "versionCode": 12,
+  "versionName": "1.4.0-rc.5",
+  "publishedAt": "2026-09-05T17:30:20Z",
   "minimumSupportedVersionCode": 10,
   "mandatory": false,
   "artifact": {
-    "url": "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.4.0-rc.4-code11.zip",
-    "filename": "LosPanitas-Elo-POS-v1.4.0-rc.4-code11.zip",
-    "size": 269853,
-    "sha256": "C1424CEF1D59A598FE58B84C7D974C55DA49DEEE1B045C907FBE2B95CC7FC1F2"
+    "url": "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.4.0-rc.5-code12.zip",
+    "filename": "LosPanitas-Elo-POS-v1.4.0-rc.5-code12.zip",
+    "size": 269858,
+    "sha256": "F10D5A6C9587A19B01B679B1FDE37FEC71A1403F28E7FEFDE8A842DC19962050"
   },
   "apk": {
     "entry": "LosPanitas-Elo-POS.apk",
-    "size": 275060,
-    "sha256": "DDBF598B38D8465DCD7A66FEE600FB68083AE29B917374366AAFDB73375C4083",
+    "size": 275063,
+    "sha256": "D4EA83A996EF7E56355AE0E3A4B3747B418433F8E03CB4BE7205FE3883A7949B",
     "signingCertificateSha256": "42DE27571244F0A23E533BF1C97D5D8587F4F12C3C34EA3209EDFBC67B8B3395"
   },
   "releaseNotes": [
-    "Actualizador seguro para la aplicación nativa ELO.",
-    "Descarga y verificación automáticas sin bloquear ventas ni periféricos.",
-    "Instalación silenciosa en terminales administradas y confirmación guiada en Android estándar."
+    "Actualizaciones automáticas con protección de ventas y cambios sin guardar.",
+    "Publicación e integridad verificadas en Windows y Linux.",
+    "Instalación guiada en Android y recuperación al cancelar."
   ]
 }
