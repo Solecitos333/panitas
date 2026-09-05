@@ -1,4 +1,5 @@
 import { escapeHtml, formatDate, formatMoney } from '../lib/format.js';
+import releaseInfo from '../../release.json' with { type: 'json' };
 
 export function renderTerminalDiag() {
   return `
@@ -175,6 +176,21 @@ export function renderCash(state) {
 
 export function renderSettings(state) {
   const item = state.settings || {};
+  const update = state.updateStatus || {};
+  const eloNative = update.supported === true || (typeof window !== 'undefined' && window._ELO_NATIVE === true);
+  const legacyNative = eloNative && update.supported !== true;
+  const installedName = update.installedVersionName || (typeof window !== 'undefined' && window._ELO_APP_VERSION) || '';
+  const installedCode = Number(update.installedVersionCode || (typeof window !== 'undefined' && window._ELO_APP_VERSION_CODE) || 0);
+  const updateState = update.state || (eloNative ? 'idle' : 'unsupported');
+  const stateLabels = {
+    idle: 'Preparado', checking: 'Buscando…', up_to_date: 'Al día', available: 'Nueva versión',
+    downloading: 'Descargando…', verifying: 'Verificando…', ready: 'Lista para instalar',
+    waiting_for_idle: 'Esperando fin de venta', permission_required: 'Permiso requerido',
+    installing: 'Instalando…', awaiting_confirmation: 'Confirmación de Android', installed: 'Instalada',
+    error: 'Requiere atención', unsupported: legacyNative ? 'Instalación inicial requerida' : 'Solo navegador'
+  };
+  const updateBusy = ['checking', 'downloading', 'verifying', 'installing', 'awaiting_confirmation'].includes(updateState);
+  const updateProgress = Number(update.progressPercent || 0);
   return `
     <section class="panel-heading"><div><span class="eyebrow">Configuración</span><h2>Identidad, facturación y terminal ELO</h2><p>Solo el propietario puede modificar estos valores.</p></div></section>
     <form id="settings-form" class="surface-card settings-form stack-form">
@@ -218,26 +234,41 @@ export function renderSettings(state) {
           <button type="button" class="button secondary compact" data-test-drawer><i data-lucide="wallet"></i> Probar pulso de apertura de gaveta</button>
         </div>
 
-        <div style="margin-top: 20px; padding: 18px; border: 1px solid rgba(215,154,60,.28); border-radius: 14px; background: rgba(215,154,60,.04);">
-          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
-            <i data-lucide="package" style="color: var(--brand-2); width: 22px; height: 22px;"></i>
-            <h4 style="margin: 0; font-size: .92rem; color: #f5f5f5;">Instalador y Paquete de Recursos ELO</h4>
+        <section class="elo-update-card" data-update-state="${escapeHtml(updateState)}">
+          <header>
+            <div class="elo-update-title">
+              <i data-lucide="refresh-cw"></i>
+              <div><span class="eyebrow">Actualizaciones seguras</span><h4>Aplicación nativa ELO</h4></div>
+            </div>
+            <span class="elo-update-badge">${escapeHtml(stateLabels[updateState] || 'Preparado')}</span>
+          </header>
+          <div class="elo-update-version">
+            <div><span>Versión instalada</span><strong>${eloNative ? (installedName && installedCode ? `v${escapeHtml(installedName)} · código ${installedCode}` : 'Versión anterior sin actualizador') : 'App nativa no detectada'}</strong></div>
+            ${Number(update.availableVersionCode || 0) > installedCode ? `<div><span>Versión disponible</span><strong>v${escapeHtml(update.availableVersionName || '')} · código ${Number(update.availableVersionCode)}</strong></div>` : ''}
           </div>
-          <p style="margin: 0 0 14px; font-size: .78rem; color: var(--muted); line-height: 1.45;">
-            Descarga la aplicación nativa <strong>v1.4.0-rc.3 (código 10)</strong> para la terminal <strong>Elo PayPoint Plus 15" (Android 8.1.0)</strong>. Incluye el controlador directo para la impresora térmica y gaveta de dinero por hardware.
-          </p>
-          <div style="display: flex; flex-wrap: wrap; gap: 10px;">
-            <a href="/downloads/LosPanitas-Elo-POS-APK.zip" download class="button primary compact" style="text-decoration: none;">
-              <i data-lucide="download"></i> Descargar App Nativa (.zip con APK)
-            </a>
-            <a href="/downloads/Paquete-Recursos-Terminal-ELO.zip" download class="button secondary compact" style="text-decoration: none;">
-              <i data-lucide="sheet"></i> Descargar Paquete Completo (.zip)
-            </a>
-            <a href="/downloads/SHA256SUMS.txt" download class="button secondary compact" style="text-decoration: none;">
-              <i data-lucide="file-check-2"></i> Verificar integridad (SHA-256)
-            </a>
+          <p class="elo-update-message">${escapeHtml(legacyNative ? 'Instala una vez el paquete disponible en Recuperación e instalación manual para habilitar las próximas actualizaciones automáticas.' : update.message || (eloNative
+            ? 'La terminal buscará versiones nuevas al iniciar y cada seis horas.'
+            : 'La interfaz web se actualiza sola. Instala la app nativa para controlar impresora, gaveta y actualizaciones APK.'))}</p>
+          ${['downloading', 'verifying', 'ready'].includes(updateState) ? `<div class="elo-update-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${updateProgress}"><span style="width:${Math.max(2, Math.min(100, updateProgress))}%"></span></div>` : ''}
+          ${Array.isArray(update.releaseNotes) && update.releaseNotes.length ? `<ul class="elo-update-notes">${update.releaseNotes.map((note) => `<li>${escapeHtml(note)}</li>`).join('')}</ul>` : ''}
+          <div class="elo-update-actions">
+            ${update.supported === true && updateState !== 'error' ? `<button type="button" class="button secondary compact" data-update-check ${updateBusy ? 'disabled' : ''}><i data-lucide="refresh-cw"></i> Buscar actualización</button>` : ''}
+            ${['ready', 'waiting_for_idle'].includes(updateState) ? '<button type="button" class="button primary compact" data-update-install><i data-lucide="download"></i> Instalar ahora</button>' : ''}
+            ${updateState === 'permission_required' ? '<button type="button" class="button primary compact" data-update-permission><i data-lucide="shield-check"></i> Permitir instalación</button>' : ''}
+            ${updateState === 'error' ? '<button type="button" class="button primary compact" data-update-check><i data-lucide="refresh-cw"></i> Reintentar</button>' : ''}
           </div>
-        </div>
+          ${eloNative && !update.fullyManaged ? '<small>Android puede solicitar una confirmación. En una ELO aprovisionada como dispositivo empresarial, la instalación se completa de forma silenciosa.</small>' : ''}
+        </section>
+
+        <details class="elo-manual-package">
+          <summary>Recuperación e instalación manual</summary>
+          <p>Paquete de respaldo <strong>v${escapeHtml(releaseInfo.versionName)} (código ${releaseInfo.versionCode})</strong> para Elo PayPoint Plus 15" con Android 8.1.</p>
+          <div class="elo-update-actions">
+            <a href="/downloads/LosPanitas-Elo-POS-APK.zip" download class="button secondary compact"><i data-lucide="download"></i> Descargar APK (.zip)</a>
+            <a href="/downloads/Paquete-Recursos-Terminal-ELO.zip" download class="button secondary compact"><i data-lucide="sheet"></i> Paquete completo</a>
+            <a href="/downloads/SHA256SUMS.txt" download class="button secondary compact"><i data-lucide="file-check-2"></i> SHA-256</a>
+          </div>
+        </details>
 
         <div class="form-note" style="margin-top: 14px;">
           <i data-lucide="badge-check"></i>

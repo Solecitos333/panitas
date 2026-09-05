@@ -19,8 +19,10 @@ import {
   openCashDrawerHardware, buildInvoiceEscPos, buildInvoicePlainText, buildKitchenEscPos, buildKitchenPlainText,
   buildCashReportEscPos, buildCashReportPlainText, buildPrebillEscPos, buildPrebillPlainText, sendEscPosToPrinter, EscPosBuilder, checkEloNativeServer,
   startEloScanner, stopEloScanner, setVFDMessage, clearVFD, vfdWelcome,
-  beepHardware, getHardwareStatus, checkPaperStatus, sendEloCommand
+  beepHardware, getHardwareStatus, checkPaperStatus, sendEloCommand,
+  getEloUpdateStatus, checkEloAppUpdate, installEloAppUpdate, openEloUpdatePermission
 } from '../lib/hardware.js';
+import { updateForms, updateSafety } from '../lib/update-safety.js';
 
 const NAV = [
   ['dashboard','layout-dashboard','Resumen'], ['pos','shopping-cart','Punto de venta'], ['tables','utensils','Mesas'],
@@ -41,7 +43,7 @@ const icons = {
 export function createApplication({ root, user, service, onLogout, onChangePassword, development = false }) {
   const state = {
     user, settings: {}, route: initialRoute(user), cart: [], selectedOrderId: '', selectedInvoiceId: '', preselectedTableId: '', modal: '',
-    hardwareStatus: null, scannerActive: false, checkoutOpening: false, saleInProgress: false, pendingLiveRender: false, pendingPinDestination: '', mobileReportPeriod: 'day', posDiscountState: { discount: 0, discountType: 'amount', includeLegalTip: false }, posDraft: {}, posSearch: '', posCategory: 'Todos',
+    hardwareStatus: null, updateStatus: getEloUpdateStatus(), scannerActive: false, checkoutOpening: false, saleInProgress: false, pendingLiveRender: false, pendingPinDestination: '', mobileReportPeriod: 'day', posDiscountState: { discount: 0, discountType: 'amount', includeLegalTip: false }, posDraft: {}, posSearch: '', posCategory: 'Todos',
     products: [], clients: [], tables: [], orders: [], invoices: [], payments: [], cashSessions: [], cashMovements: [], users: [], auditLogs: [], development,
     capabilities: {
       bill: can(user, 'billing:create'), cancelInvoice: can(user, 'billing:cancel'), chargeOrder: can(user, 'orders:charge'),
@@ -54,6 +56,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   let previousKdsOrders = new Set();
   let hardwarePollId = null;
   let hardwarePollInFlight = false;
+  const busyButtons = new Map();
+  updateSafety.setBlocker('application', true);
 
   async function start() {
     state.settings = await service.loadSettings();
@@ -65,11 +69,12 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       cashMovements: update('cashMovements'), users: update('users'), auditLogs: update('auditLogs')
     });
     render();
+    syncNativeUpdateState();
     getHardwareStatus().then((status) => {
       if (!destroyed && status?.ok) {
         state.hardwareStatus = status;
         state.scannerActive = Boolean(status.scannerActive);
-        renderContent();
+        requestLiveRender();
       }
     }).catch(() => {});
 
@@ -86,7 +91,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
             beepHardware('error').catch(() => {});
           }
           if (state.route === 'pos' && (st.paperOut !== prevOut)) {
-            renderContent();
+            requestLiveRender();
           }
         }
       } catch {} finally {
@@ -102,7 +107,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const active = document.activeElement;
     const editingField = active && root.contains(active) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName);
     const modalFormOpen = Boolean(root.querySelector('#modal-root form'));
-    if (state.saleInProgress || editingField || modalFormOpen) {
+    if (state.saleInProgress || editingField || modalFormOpen || updateForms.isDirty(root)) {
       state.pendingLiveRender = true;
       return;
     }
@@ -115,7 +120,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       if (!state.pendingLiveRender || destroyed) return;
       const active = document.activeElement;
       const stillEditing = active && root.contains(active) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName);
-      if (!stillEditing && !root.querySelector('#modal-root form')) requestLiveRender();
+      if (!stillEditing && !root.querySelector('#modal-root form') && !updateForms.isDirty(root)) requestLiveRender();
     }, 0);
   }
 
@@ -167,12 +172,16 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       </header>
       <main>
         <div id="offline-banner" class="offline-banner" hidden><i data-lucide="wifi-off"></i> Sin conexión. Puedes consultar datos guardados, pero las operaciones están pausadas.</div>
+        <div id="app-update-banner" class="app-update-banner" hidden>
+          <i data-lucide="refresh-cw"></i><span data-update-banner-message></span>
+          <button type="button" class="button compact" data-update-banner-action></button>
+        </div>
         <div id="main-content" class="main-content"></div>
       </main>
       <div id="modal-root"></div>
       <div id="toast-root" class="toast-root" aria-live="assertive"></div>
     </div>`;
-    bindShell(); renderContent(); updateConnection();
+    bindShell(); renderContent(); updateConnection(); refreshUpdateBanner();
   }
 
   function renderContent() {
@@ -186,7 +195,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     };
     const renderer = renderers[state.route] || renderDashboard;
     root.querySelector('#main-content').innerHTML = renderer(state);
-    renderModal(); bindContent(); iconsRefresh();
+    renderModal(); bindContent(); iconsRefresh(); syncNativeUpdateState();
     if (state.route === 'terminal') initTerminalDiag();
   }
 
@@ -212,7 +221,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     else if (state.modal === 'cancelOrder') modalRoot.innerHTML = cancellationModal('order');
     else if (state.modal === 'cancelInvoice') modalRoot.innerHTML = cancellationModal('invoice');
     else modalRoot.innerHTML = '';
-    iconsRefresh(); bindModal();
+    iconsRefresh(); bindModal(); syncNativeUpdateState();
   }
 
   function bindShell() {
@@ -222,6 +231,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelector('[data-menu]')?.addEventListener('click',()=>root.querySelector('.sidebar').classList.toggle('open'));
     root.querySelectorAll('[data-drawer-kick]').forEach((btn)=>btn.addEventListener('click', promptDrawerPin));
     root.querySelectorAll('[data-quick-open-cash]').forEach((btn)=>btn.addEventListener('click', () => { state.modal = 'quickCash'; renderModal(); }));
+    root.querySelector('[data-update-banner-action]')?.addEventListener('click', handleUpdateBannerAction);
     window.addEventListener('online', updateConnection); window.addEventListener('offline', updateConnection);
     root.removeEventListener('focusout', flushPendingLiveRender);
     root.addEventListener('focusout', flushPendingLiveRender);
@@ -230,8 +240,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     // cada navegación duplique un escaneo o una lectura de tarjeta.
     window.removeEventListener('elo-scan', handleEloScanEvent);
     window.removeEventListener('elo-msr', handleEloMsrEvent);
+    window.removeEventListener('elo-update-status', handleEloUpdateStatus);
     window.addEventListener('elo-scan', handleEloScanEvent);
     window.addEventListener('elo-msr', handleEloMsrEvent);
+    window.addEventListener('elo-update-status', handleEloUpdateStatus);
   }
 
   function handleEloScanEvent(event) {
@@ -486,11 +498,111 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelectorAll('[data-quick-open-cash]').forEach((btn)=>btn.addEventListener('click', () => { state.modal = 'quickCash'; renderModal(); }));
     root.querySelectorAll('[data-test-drawer]').forEach((btn)=>btn.addEventListener('click', promptDrawerPin));
     root.querySelectorAll('[data-test-print]').forEach((btn)=>btn.addEventListener('click', testPrint));
+    bindUpdateActions(root);
     root.querySelectorAll('[data-cash-corte-x]').forEach((btn)=>btn.addEventListener('click',()=>printCashSession(btn.dataset.cashCorteX, 'X')));
     root.querySelectorAll('[data-cash-report-print]').forEach((btn)=>btn.addEventListener('click',()=>printCashSession(btn.dataset.cashReportPrint, 'Z')));
     root.querySelectorAll('[data-export]').forEach((button)=>button.addEventListener('click',()=>exportReport(button.dataset.export,state)));
     updatePosFields();
     if (searchInput) filterCards({ target: searchInput });
+  }
+
+  function updateIsBusy() {
+    return Boolean(state.saleInProgress || state.checkoutOpening || state.cart.length
+      || state.modal || state.pendingPosSubmit || state.pendingPinDestination
+      || busyButtons.size);
+  }
+
+  function syncNativeUpdateState() {
+    updateForms.remember(root);
+    updateSafety.setBlocker('application', !destroyed && updateIsBusy());
+    window.dispatchEvent(new Event('panitas-update-safety-check'));
+    // Android owns automatic installation and its idle grace period. Only an
+    // explicit user action calls installEloAppUpdate (including a cancelled retry).
+  }
+
+  function bindUpdateActions(target) {
+    target.querySelectorAll('[data-update-check]').forEach((btn)=>btn.addEventListener('click', checkNativeUpdate));
+    target.querySelectorAll('[data-update-install]').forEach((btn)=>btn.addEventListener('click', installNativeUpdate));
+    target.querySelectorAll('[data-update-permission]').forEach((btn)=>btn.addEventListener('click', requestUpdatePermission));
+  }
+
+  function refreshUpdateCard() {
+    const current = root.querySelector('.elo-update-card');
+    if (!current) return;
+    const template = document.createElement('template');
+    template.innerHTML = renderSettings(state);
+    const replacement = template.content.querySelector('.elo-update-card');
+    if (!replacement) return;
+    current.replaceWith(replacement);
+    bindUpdateActions(replacement);
+    iconsRefresh();
+  }
+
+  function handleEloUpdateStatus(event) {
+    const detail = event.detail;
+    if (!detail || detail.supported === false) return;
+    const previousState = state.updateStatus?.state;
+    const previousError = state.updateStatus?.errorCode;
+    state.updateStatus = detail;
+    refreshUpdateBanner();
+    if (state.route === 'settings') refreshUpdateCard();
+    syncNativeUpdateState();
+
+    if (detail.state === 'error' && (previousState !== 'error' || previousError !== detail.errorCode)) {
+      toast(detail.message || 'No se pudo completar la actualización.', 'warning', 8000);
+    } else if (detail.state === 'awaiting_confirmation' && previousState !== detail.state) {
+      toast('Confirma la actualización en la ventana segura de Android.', 'info', 8000);
+    }
+  }
+
+  function refreshUpdateBanner() {
+    const banner = root.querySelector('#app-update-banner');
+    if (!banner) return;
+    const update = state.updateStatus || {};
+    const visible = ['waiting_for_idle', 'permission_required', 'error'].includes(update.state);
+    banner.hidden = !visible;
+    banner.dataset.state = update.state || '';
+    const message = banner.querySelector('[data-update-banner-message]');
+    if (message) message.textContent = update.message || '';
+    const action = banner.querySelector('[data-update-banner-action]');
+    if (!action) return;
+    action.hidden = !visible;
+    action.textContent = update.state === 'permission_required'
+      ? 'Permitir instalación'
+      : update.state === 'error' ? 'Reintentar' : 'Instalar al terminar';
+    action.disabled = update.state === 'waiting_for_idle';
+  }
+
+  function handleUpdateBannerAction() {
+    if (state.updateStatus?.state === 'permission_required') requestUpdatePermission();
+    else if (state.updateStatus?.state === 'error') checkNativeUpdate();
+  }
+
+  async function checkNativeUpdate(event) {
+    if (state.updateStatus?.state === 'error'
+        && String(state.updateStatus.errorCode || '').startsWith('INSTALL_')
+        && Number(state.updateStatus.availableVersionCode || 0) > 0) return installNativeUpdate();
+    const button = event?.currentTarget;
+    if (button) button.disabled = true;
+    if (!checkEloAppUpdate()) {
+      if (button) button.disabled = false;
+      return toast('La actualización APK solo está disponible dentro de la app nativa ELO.', 'warning');
+    }
+    toast('Buscando una versión nueva en el servidor oficial…', 'info');
+  }
+
+  function installNativeUpdate() {
+    if (updateIsBusy() || updateSafety.hasBlockers()) {
+      return toast('Guarda los cambios y termina las operaciones pendientes antes de instalar.', 'warning');
+    }
+    if (!installEloAppUpdate()) toast('Abre esta opción desde la app nativa ELO.', 'warning');
+  }
+
+  function requestUpdatePermission() {
+    if (updateIsBusy() || updateSafety.hasBlockers()) {
+      return toast('Guarda los cambios y termina las operaciones pendientes antes de abrir los permisos.', 'warning');
+    }
+    openEloUpdatePermission();
   }
 
   function bindModal() {
@@ -1322,8 +1434,12 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     f.autoPrintInvoice = event.currentTarget.elements.autoPrintInvoice?.checked ?? false;
     f.autoPrintKitchen = event.currentTarget.elements.autoPrintKitchen?.checked ?? false;
     f.enableEloScanner = event.currentTarget.elements.enableEloScanner?.checked ?? false;
-    await perform(()=>service.saveSettings(f),'Configuración guardada.');
+    const form = event.currentTarget;
+    const outcome = await perform(()=>service.saveSettings(f),'Configuración guardada.');
+    if (!outcome.ok) return;
     state.settings={...state.settings,...f};
+    updateForms.markSaved(form);
+    syncNativeUpdateState();
     if (!f.enableEloScanner && state.scannerActive) {
       state.scannerActive = false;
       await stopEloScanner();
@@ -2103,9 +2219,20 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   function paymentFields(allowCredit=false){return `<div class="form-grid two"><label>Forma de pago<select name="method"><option value="cash">Efectivo</option><option value="card">Tarjeta</option><option value="transfer">Transferencia</option><option value="check">Cheque</option>${allowCredit?'<option value="credit">Fiao / pendiente de pago</option>':''}</select></label><label>Referencia<input name="reference" maxlength="120"></label></div>`;}
   function ncfField(){return `<label>Comprobante fiscal<select name="ncfType"><option value="">Sin NCF</option><option value="B02">Consumidor B02</option><option value="B01">Crédito fiscal B01</option><option value="B14">Régimen especial B14</option><option value="B15">Gubernamental B15</option></select></label>`;}
   function formModal(id,title,body,submit){return `<div class="modal-backdrop" data-modal-close><form id="${id}" class="modal-card form-modal" data-modal-card><header><div><span class="eyebrow">Operación segura</span><h2>${title}</h2></div><button type="button" class="icon-button" data-modal-close><i data-lucide="x"></i></button></header><div class="stack-form">${body}</div><footer class="modal-actions"><button type="button" class="button secondary" data-modal-close>Cancelar</button><button class="button primary" type="submit">${submit}</button></footer></form></div>`;}
-  async function perform(task,success,after){try{const result=await task();toast(success,'success');after?.(result);return {ok:true,result};}catch(error){console.error(error);toast(error.message||'No se pudo completar la operación.','danger');return {ok:false,error};}}
+  async function perform(task,success,after){
+    return updateSafety.run(async () => {
+      try { const result=await task(); toast(success,'success'); after?.(result); return {ok:true,result}; }
+      catch(error){ console.error(error); toast(error.message||'No se pudo completar la operación.','danger'); return {ok:false,error}; }
+    });
+  }
   function toast(message,tone='info'){const target=root.querySelector('#toast-root');if(!target)return;const item=document.createElement('div');item.className=`toast ${tone}`;item.textContent=message;target.appendChild(item);setTimeout(()=>item.remove(),4000);}
-  function setBusy(button,busy){if(!button)return;button.disabled=busy;button.classList.toggle('loading',busy);button.setAttribute('aria-busy',String(busy));}
+  function setBusy(button,busy){
+    if(!button)return;
+    if (busy && !busyButtons.has(button)) busyButtons.set(button, updateSafety.beginOperation());
+    if (!busy) { busyButtons.get(button)?.(); busyButtons.delete(button); }
+    button.disabled=busy;button.classList.toggle('loading',busy);button.setAttribute('aria-busy',String(busy));
+    syncNativeUpdateState();
+  }
   function capturePosDraft(){
     const form=root.querySelector('#pos-checkout-form');
     if(!form)return;
@@ -2153,15 +2280,20 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   function iconsRefresh(){createIcons({icons,attrs:{'aria-hidden':'true'}});}
   function destroy(){
     destroyed=true;
+    for (const finish of busyButtons.values()) finish();
+    busyButtons.clear();
+    updateSafety.setBlocker('application', false);
     if (hardwarePollId) clearInterval(hardwarePollId);
     service.destroy();
     window.removeEventListener('online',updateConnection);
     window.removeEventListener('offline',updateConnection);
     window.removeEventListener('elo-scan',handleEloScanEvent);
     window.removeEventListener('elo-msr',handleEloMsrEvent);
+    window.removeEventListener('elo-update-status',handleEloUpdateStatus);
     root.innerHTML='';
   }
   start().catch((error)=>{
+    updateSafety.setBlocker('application', false);
     root.innerHTML=`<div class="fatal-state"><h1>No pudimos iniciar el sistema</h1><p>${escapeHtml(error.message)}</p><button class="button primary" data-retry-start>Reintentar</button></div>`;
     root.querySelector('[data-retry-start]')?.addEventListener('click',()=>location.reload());
   });

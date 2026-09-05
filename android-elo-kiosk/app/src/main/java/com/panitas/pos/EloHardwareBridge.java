@@ -16,15 +16,18 @@ public class EloHardwareBridge {
     private final Context context;
     private final UsbPrinterManager printerManager;
     private final LocalCommandServer commandServer;
+    private final AppUpdateManager updateManager;
     private final String hardwareToken;
     private final WebView webView;
     private final ExecutorService hardwareQueue = Executors.newSingleThreadExecutor();
 
     public EloHardwareBridge(Context context, UsbPrinterManager printerManager,
-                             LocalCommandServer commandServer, String hardwareToken, WebView webView) {
+                             LocalCommandServer commandServer, AppUpdateManager updateManager,
+                             String hardwareToken, WebView webView) {
         this.context = context;
         this.printerManager = printerManager;
         this.commandServer = commandServer;
+        this.updateManager = updateManager;
         this.hardwareToken = hardwareToken;
         this.webView = webView;
     }
@@ -96,6 +99,36 @@ public class EloHardwareBridge {
         });
     }
 
+    /** Devuelve un snapshot pequeño; nunca realiza red ni disco en el hilo JavaScript. */
+    @JavascriptInterface
+    public String getUpdateStatus() {
+        return updateManager == null ? "{\"supported\":false}" : updateManager.getStatusJson();
+    }
+
+    /** Inicia la comprobación en el executor exclusivo del actualizador. */
+    @JavascriptInterface
+    public void checkForUpdates() {
+        if (updateManager != null) updateManager.checkForUpdates(true);
+    }
+
+    /** Solicita instalar el APK ya descargado; respeta una venta marcada como ocupada. */
+    @JavascriptInterface
+    public void installUpdate() {
+        if (updateManager != null) updateManager.installPendingIfSafe();
+    }
+
+    /** Abre el permiso por-aplicación requerido por Android 8.1. */
+    @JavascriptInterface
+    public void openUpdatePermission() {
+        if (updateManager != null) updateManager.openInstallPermissionSettings();
+    }
+
+    /** Evita reemplazar la aplicación en mitad de un carrito, PIN o cobro. */
+    @JavascriptInterface
+    public void setUpdateBusy(boolean busy) {
+        if (updateManager != null) updateManager.setUiBusy(busy);
+    }
+
     private void notifyResult(String requestId, String operation, boolean success, String error) {
         try {
             JSONObject detail = new JSONObject();
@@ -110,6 +143,20 @@ public class EloHardwareBridge {
     private void notifyJsonResult(JSONObject detail) {
         String script = "window.dispatchEvent(new CustomEvent('elo-hardware-result',{detail:" + detail.toString() + "}));";
         webView.post(() -> webView.evaluateJavascript(script, null));
+    }
+
+    public void notifyUpdateState(JSONObject detail) {
+        String payload = detail == null ? "{}" : detail.toString();
+        String script = "(function(){try{var d=JSON.parse(" + JSONObject.quote(payload)
+                + ");window.dispatchEvent(new CustomEvent('elo-update-status',{detail:d}));}catch(e){}})();";
+        webView.post(() -> webView.evaluateJavascript(script, null));
+    }
+
+    public void pushUpdateState() {
+        if (updateManager == null) return;
+        try {
+            notifyUpdateState(new JSONObject(updateManager.getStatusJson()));
+        } catch (Exception ignored) { }
     }
 
     public void destroy() {

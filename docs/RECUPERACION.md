@@ -4,6 +4,8 @@
 
 Los releases aprobados deben llevar tags. Para revisar un punto estable, crea una rama desde el tag; no reescribas `main` ni uses un reset destructivo sobre trabajo no guardado.
 
+Android rechaza una APK con `versionCode` menor al instalado. Para recuperar una implementación anterior, restaura su código desde el tag, asígnale un código nuevo y superior en `release.json`, vuelve a firmar con la llave original y publícala mediante el mismo flujo verificado. Nunca reemplaces la llave para intentar forzar una reversión.
+
 ## Firestore
 
 En Spark no hay exportación administrada ni respaldo programado. La recuperación se limita al historial inmutable de la aplicación y a correcciones administrativas. Tras aprobar el producto, activa Blaze, presupuesto y alertas; luego configura exportaciones programadas a un bucket con retención.

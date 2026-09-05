@@ -1,5 +1,18 @@
 # Historial de cambios
 
+## 1.4.0-rc.4 — 2026-09-05
+
+- Añadido actualizador nativo para detectar una APK con `versionCode` superior al iniciar y cada seis horas.
+- La descarga ocurre en una cola independiente y la instalación se pospone si hay carrito, PIN, modal, impresión, formulario modificado o cobro en curso.
+- Cada actualización exige HTTPS en el Hosting oficial, tamaño exacto, SHA-256 del ZIP y APK, paquete `com.panitas.pos`, versión esperada y el mismo certificado de firma.
+- Incorporada instalación mediante `PackageInstaller`: silenciosa en una ELO totalmente administrada y con la confirmación oficial mínima en Android estándar.
+- Añadidos manifiesto `update.json`, artefacto versionado, hashes verificables y validaciones Android/release en CI.
+- Centralizada la versión nativa en `release.json` y excluidas las descargas de la caché del Service Worker.
+- Añadida tarjeta de estado, progreso, permiso, instalación y recuperación manual en Configuración.
+- Las actualizaciones de la interfaz web se detectan por contenido y se aplican cuando no hay trabajo pendiente. El progreso del actualizador conserva los cambios sin guardar en los formularios.
+
+La APK código 10 no podía descubrir esta función. Es necesario instalar manualmente el código 11 una sola vez; las versiones posteriores ya se detectarán desde la propia aplicación.
+
 ## 1.4.0-rc.3 — 2026-09-01
 
 - Validado en navegador el recorrido producto → PIN → cobro → caja, comanda → cocina → servicio → cobro, fiao → cobro, inventario móvil y cierre cuadrado.

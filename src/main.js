@@ -15,14 +15,98 @@ import { ROLES } from './domain/roles.js';
 import { createApplication } from './ui/app.js';
 import { renderAccessDenied, renderLogin, renderPending } from './ui/login.js';
 import { emailToUsername, isUsernameAccount, usernameToEmail } from './lib/identity.js';
+import { getEloUpdateStatus, setEloUpdateBusy } from './lib/hardware.js';
+import { createDeferredRefresh, updateForms, updateSafety } from './lib/update-safety.js';
 
 const root = document.getElementById('app');
 let application = null;
 let unsubscribeProfile = null;
+let nativeInstallInProgress = false;
+let lastNativeBusy = null;
+const afterCurrentEvent = (callback) => Promise.resolve().then(callback);
+
+function refreshDomUpdateSafety() {
+  updateForms.remember(document);
+  const active = document.activeElement;
+  updateSafety.setBlocker('editing-field', Boolean(active?.matches?.('input, textarea, select, [contenteditable="true"]')));
+  updateSafety.setBlocker('unsaved-form', updateForms.isDirty(document));
+  updateSafety.setBlocker('dialog', Boolean(document.querySelector('.modal-backdrop:not([data-update-install-lock])')));
+}
+
+function sendNativeBusy(busy) {
+  if (busy !== lastNativeBusy && setEloUpdateBusy(busy)) lastNativeBusy = busy;
+}
+
+function handleUserActivity(event) {
+  if (nativeInstallInProgress) {
+    if (root.contains(event.target)) { event.preventDefault(); event.stopImmediatePropagation(); }
+    return;
+  }
+  updateSafety.touch();
+  refreshDomUpdateSafety();
+  afterCurrentEvent(refreshDomUpdateSafety);
+}
+
+for (const name of ['pointerdown', 'keydown', 'input', 'change', 'click', 'submit']) {
+  document.addEventListener(name, handleUserActivity, true);
+}
+for (const name of ['focusin', 'focusout', 'reset']) {
+  document.addEventListener(name, () => afterCurrentEvent(refreshDomUpdateSafety), true);
+}
+window.addEventListener('panitas-update-safety-check', refreshDomUpdateSafety);
+new MutationObserver(refreshDomUpdateSafety).observe(root, { childList: true, subtree: true });
+window.addEventListener('beforeprint', () => updateSafety.setBlocker('browser-print', true));
+window.addEventListener('afterprint', () => updateSafety.setBlocker('browser-print', false));
+updateSafety.subscribe(sendNativeBusy);
+
+function receiveNativeUpdate(event) {
+  const status = event?.detail || getEloUpdateStatus();
+  nativeInstallInProgress = ['installing', 'awaiting_confirmation'].includes(status.state);
+  let overlay = document.querySelector('[data-update-install-lock]');
+  if (nativeInstallInProgress) {
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.className = 'modal-backdrop';
+      overlay.dataset.updateInstallLock = '';
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:100000';
+      overlay.innerHTML = '<article class="modal-card" role="dialog" aria-modal="true" aria-labelledby="update-install-title" tabindex="-1"><h2 id="update-install-title">Actualizando la aplicación</h2><p role="status" data-install-message></p></article>';
+      document.body.appendChild(overlay);
+      overlay.querySelector('[role="dialog"]').focus();
+    }
+    overlay.querySelector('[data-install-message]').textContent = status.state === 'awaiting_confirmation'
+      ? 'Confirma la instalación en la ventana de Android. Tus operaciones guardadas se conservarán.'
+      : 'La nueva versión se está instalando. Espera a que termine para continuar trabajando.';
+    root.setAttribute('aria-busy', 'true');
+  } else {
+    overlay?.remove();
+    root.removeAttribute('aria-busy');
+  }
+  refreshDomUpdateSafety();
+  sendNativeBusy(updateSafety.isBusy());
+  webRefresh.attempt();
+}
+
+const webRefresh = createDeferredRefresh({
+  safety: updateSafety,
+  canRefresh: () => navigator.onLine && !nativeInstallInProgress,
+  refresh: () => location.reload()
+});
+window.addEventListener('elo-update-status', receiveNativeUpdate);
+receiveNativeUpdate();
 
 if ('serviceWorker' in navigator) {
   if (import.meta.env.PROD) {
-    navigator.serviceWorker.register('/sw.js').catch(console.warn);
+    let hadController = Boolean(navigator.serviceWorker.controller);
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController) webRefresh.request();
+      hadController = true;
+    });
+    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).then((registration) => {
+      const check = () => { if (navigator.onLine) registration.update().catch(console.warn); webRefresh.attempt(); };
+      window.addEventListener('online', check);
+      window.addEventListener('focus', check);
+      setInterval(check, 30 * 60 * 1000);
+    }).catch(console.warn);
   } else {
     // Una compilación anterior registraba el SW también durante desarrollo.
     // Retirarlo evita que módulos viejos queden mezclados con el código actual.
@@ -70,6 +154,7 @@ async function bootstrap() {
 function showLogin(auth, message = '') {
   renderLogin(root, {
     async signIn(username, password, button) {
+      const finish = updateSafety.beginOperation();
       try {
         if (button) button.disabled = true;
         await signInWithEmailAndPassword(auth, usernameToEmail(username), password);
@@ -77,6 +162,7 @@ function showLogin(auth, message = '') {
         showLogin(auth, loginError(error));
       } finally {
         if (button) button.disabled = false;
+        finish();
       }
     }
   }, message);

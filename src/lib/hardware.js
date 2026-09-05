@@ -5,6 +5,7 @@
 
 import { formatDate, formatMoney } from './format.js';
 import { createOperationId } from './id.js';
+import { updateSafety } from './update-safety.js';
 
 function callEloNativeAsync(method, args = [], timeoutMs = 20000) {
   if (typeof window === 'undefined' || typeof window.EloPOS?.[method] !== 'function') return Promise.resolve(null);
@@ -714,7 +715,11 @@ const ELO_LOCAL_PORT = typeof window !== 'undefined' && window._ELO_PORT ? windo
  *  2. RawBT WebSocket (ws://127.0.0.1:40213, base64)
  *  3. Diálogo del navegador con renderizado 80mm (fallback)
  */
-export async function sendEscPosToPrinter(builder, options = {}) {
+export function sendEscPosToPrinter(builder, options = {}) {
+  return updateSafety.run(() => sendEscPosToPrinterInternal(builder, options));
+}
+
+async function sendEscPosToPrinterInternal(builder, options = {}) {
   const hasEloNativeBridge = typeof window !== 'undefined'
     && Boolean(window.EloPOS || window._ELO_PORT);
   // -1. Si se proporciona texto estructurado para Star Raster, enviar prioritariamente
@@ -852,6 +857,11 @@ function tryLocalCommandServer(port, cmd, timeoutMs = 600) {
  * @returns {Promise<object|null>}
  */
 export function sendEloCommand(cmd, timeoutMs = 1000) {
+  if (['status', 'checkPaper', 'ping'].includes(cmd?.cmd)) return sendEloCommandInternal(cmd, timeoutMs);
+  return updateSafety.run(() => sendEloCommandInternal(cmd, timeoutMs));
+}
+
+function sendEloCommandInternal(cmd, timeoutMs = 1000) {
   if (typeof window !== 'undefined' && typeof window.EloPOS?.commandAsync === 'function') {
     return callEloNativeAsync('commandAsync', [JSON.stringify(cmd)], Math.max(timeoutMs, 3000))
       .then((result) => result || null);
@@ -878,6 +888,46 @@ export function sendEloCommand(cmd, timeoutMs = 1000) {
       finish(null);
     }
   });
+}
+
+/**
+ * Lee el estado del actualizador nativo sin tocar la cola de impresora/gaveta.
+ * En navegador o PWA devuelve un estado explícitamente no compatible.
+ */
+export function getEloUpdateStatus() {
+  if (typeof window === 'undefined' || typeof window.EloPOS?.getUpdateStatus !== 'function') {
+    return { supported: false, state: 'unsupported', message: 'Disponible únicamente en la app nativa ELO.' };
+  }
+  try {
+    const value = JSON.parse(window.EloPOS.getUpdateStatus() || '{}');
+    return { supported: true, ...value };
+  } catch {
+    return { supported: true, state: 'error', errorCode: 'STATUS_INVALID', message: 'No se pudo leer el estado del actualizador.' };
+  }
+}
+
+export function checkEloAppUpdate() {
+  if (typeof window === 'undefined' || typeof window.EloPOS?.checkForUpdates !== 'function') return false;
+  window.EloPOS.checkForUpdates();
+  return true;
+}
+
+export function installEloAppUpdate() {
+  if (typeof window === 'undefined' || typeof window.EloPOS?.installUpdate !== 'function') return false;
+  window.EloPOS.installUpdate();
+  return true;
+}
+
+export function openEloUpdatePermission() {
+  if (typeof window === 'undefined' || typeof window.EloPOS?.openUpdatePermission !== 'function') return false;
+  window.EloPOS.openUpdatePermission();
+  return true;
+}
+
+export function setEloUpdateBusy(busy) {
+  if (typeof window === 'undefined' || typeof window.EloPOS?.setUpdateBusy !== 'function') return false;
+  window.EloPOS.setUpdateBusy(Boolean(busy));
+  return true;
 }
 
 /**
@@ -915,7 +965,11 @@ function tryWebSocket(url, message, timeoutMs = 800) {
  * Abre la gaveta de dinero.
  * Prioriza el puente nativo dentro de la APK para evitar pulsos duplicados.
  */
-export async function openCashDrawerHardware() {
+export function openCashDrawerHardware() {
+  return updateSafety.run(openCashDrawerHardwareInternal);
+}
+
+async function openCashDrawerHardwareInternal() {
   const eloPort = (typeof window !== 'undefined' && window._ELO_PORT) ? window._ELO_PORT : ELO_LOCAL_PORT;
 
   // 1. Puente JavascriptInterface nativo

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="device_admin_description">Permite administrar esta terminal dedicada y aplicar actualizaciones verificadas de Los Panitas POS.</string>
+</resources>

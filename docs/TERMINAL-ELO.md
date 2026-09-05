@@ -69,6 +69,31 @@ El proyecto incluye el código de la aplicación nativa Android en la carpeta `a
 * **Controlador USB Directo:** conecta la impresora de 80 mm y la gaveta sin aplicaciones de terceros. El puente local solo acepta órdenes autenticadas desde la aplicación oficial.
 * **Impresión rasterizada:** facturas, pre-cuentas, comandas y cortes se preparan para la impresora Star con formato legible y logo optimizado.
 * **Cola de periféricos:** la venta se guarda primero; después la gaveta y la impresión se ejecutan de forma independiente para que un fallo de papel no pierda el cobro.
+* **Actualizaciones verificadas:** la APK consulta el Hosting oficial al iniciar y cada seis horas; si la consulta falla, reintenta quince minutos después. Descarga en una cola separada, verifica hashes, paquete, versión y firma, y espera si existen ventas, impresiones o formularios sin guardar.
+
+#### Primera instalación del actualizador
+
+La APK código 10 no puede actualizarse a sí misma porque todavía no contiene esta función. Instala manualmente `v1.4.0-rc.4` (código 11) una vez desde **Configuración → Recuperación e instalación manual**. A partir del código 11, la aplicación detecta las siguientes versiones automáticamente.
+
+En una terminal Android común, cuando exista una versión futura:
+
+1. La descarga y la verificación son automáticas.
+2. Android puede abrir una vez **Permitir desde esta fuente** para Los Panitas.
+3. Activa el permiso y vuelve a la app.
+4. Confirma el instalador oficial si Android lo solicita.
+5. La app conserva caja y datos remotos; solo reemplaza su contenedor nativo.
+
+Si cancelas el instalador, puedes seguir trabajando y volver a intentar desde **Configuración → Actualizaciones seguras**. El progreso de la descarga no borra los campos que estés editando. Las mejoras que solo afectan a la interfaz web se detectan sin reinstalar la APK y se aplican cuando no hay trabajo pendiente.
+
+#### Instalación silenciosa opcional
+
+Android 8.1 solo garantiza una instalación sin interacción cuando la app es administradora de un dispositivo totalmente gestionado. Esto requiere aprovisionar la ELO como equipo dedicado antes de ponerla en producción, normalmente después de un restablecimiento y sin cuentas configuradas:
+
+```bash
+adb shell dpm set-device-owner com.panitas.pos/.PanitasDeviceAdminReceiver
+```
+
+No ejecutes un restablecimiento en una terminal operativa sin respaldo y autorización del dueño. Si la ELO ya está configurada, conserva el modo estándar con la confirmación de Android; sigue siendo seguro y no afecta los datos.
 
 ### Opción B: Progressive Web App (PWA) con Chrome + RawBT
 1. Abre Google Chrome en la ELO e ingresa a `https://los-panitas-by-nechy.web.app`.

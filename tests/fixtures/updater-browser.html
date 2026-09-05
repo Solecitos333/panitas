@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="es">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Prueba local del actualizador</title></head>
+  <body>
+    <div id="app"></div>
+    <aside aria-label="Simulador del actualizador" style="position:fixed;bottom:0;left:0;right:0;z-index:999999;background:white;color:black;padding:8px;display:flex;gap:8px;align-items:center;font:14px sans-serif">
+      <button id="simulate-progress">Simular descarga</button>
+      <button id="simulate-install">Simular instalación</button>
+      <button id="simulate-cancel">Simular cancelación</button>
+      <output id="native-busy">Esperando interfaz</output>
+      <output id="native-action">Ninguna acción solicitada</output>
+    </aside>
+    <script type="module" src="./updater-browser.js"></script>
+  </body>
+</html>

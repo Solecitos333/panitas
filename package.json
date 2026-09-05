@@ -1,6 +1,6 @@
 {
   "name": "los-panitas-by-nechy",
-  "version": "1.4.0-rc.3",
+  "version": "1.4.0-rc.4",
   "private": true,
   "type": "module",
   "description": "POS, facturación y cocina para Los Panitas by Nechy.",
@@ -9,10 +9,12 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --test tests/unit/*.test.js",
+    "test:android": "node tools/validate-android-source.mjs",
     "test:rules": "node --test tests/firestore-rules.test.js",
     "test:emulator": "firebase emulators:exec --only firestore \"npm run test:rules\"",
     "seed:foundation": "node tools/seed-foundation.mjs",
-    "validate": "npm test && npm run build && node tools/validate-build.mjs",
+    "validate:release": "node tools/validate-release.mjs",
+    "validate": "npm test && npm run test:android && npm run build && node tools/validate-build.mjs && npm run validate:release",
     "deploy": "npm run validate && npm run test:emulator && firebase deploy --only auth,firestore:rules,firestore:indexes,hosting",
     "deploy:preview": "npm run validate && firebase hosting:channel:deploy owner-review --expires 30d"
   },

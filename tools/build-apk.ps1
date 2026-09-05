@@ -41,8 +41,18 @@ $PlatformJar = Get-ChildItem (Join-Path $SdkDir "platforms") -Filter "android.ja
 if (-not $BuildTools -or -not $PlatformJar) {
     throw "Faltan Build Tools o una plataforma Android instalados en $SdkDir."
 }
-$VersionCode = 10
-$VersionName = "1.4.0-rc.3"
+$ReleaseFile = Join-Path $RepoRoot "release.json"
+if (-not (Test-Path $ReleaseFile)) { throw "Falta release.json, la fuente única de versión." }
+$ReleaseInfo = Get-Content -Raw $ReleaseFile | ConvertFrom-Json
+$VersionCode = [int]$ReleaseInfo.versionCode
+$VersionName = [string]$ReleaseInfo.versionName
+$PackageVersion = [string](Get-Content -Raw (Join-Path $RepoRoot "package.json") | ConvertFrom-Json).version
+if ($VersionCode -le 0 -or [string]::IsNullOrWhiteSpace($VersionName)) {
+    throw "release.json contiene una versión inválida."
+}
+if ($PackageVersion -ne $VersionName) {
+    throw "package.json ($PackageVersion) y release.json ($VersionName) no coinciden."
+}
 $Javac = "$JavaHome\bin\javac.exe"
 
 $ProjectDir = Join-Path $RepoRoot "android-elo-kiosk"
@@ -64,7 +74,17 @@ New-Item -ItemType Directory -Force -Path $SigningDir | Out-Null
 if (-not (Test-Path $Keystore)) {
     throw "Falta la llave de firma $Keystore. Restaura la llave original; no generes otra o Android rechazará las actualizaciones."
 }
-if (Test-Path $WorkDir) { Remove-Item -Recurse -Force $WorkDir }
+$ExpectedWorkDir = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot 'android-elo-kiosk\build_temp'))
+$ResolvedWorkDir = [System.IO.Path]::GetFullPath($WorkDir)
+if ($ResolvedWorkDir -ne $ExpectedWorkDir -or -not $ResolvedWorkDir.StartsWith([System.IO.Path]::GetFullPath($RepoRoot) + [System.IO.Path]::DirectorySeparatorChar)) {
+    throw 'El directorio temporal de compilación no está dentro del repositorio esperado.'
+}
+if (Test-Path -LiteralPath $ResolvedWorkDir) {
+    if ((Get-Item -LiteralPath $ResolvedWorkDir).Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw 'El directorio temporal de compilación no puede ser un enlace.'
+    }
+    Remove-Item -LiteralPath $ResolvedWorkDir -Recurse -Force
+}
 New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
@@ -86,12 +106,12 @@ if (Test-Path "$WorkDir\gen") {
 }
 $ClassesDir = "$WorkDir\classes"
 New-Item -ItemType Directory -Force -Path $ClassesDir | Out-Null
-& $Javac -cp $PlatformJar -d $ClassesDir $JavaSrc
+& $Javac -encoding UTF-8 -source 8 -target 8 -cp $PlatformJar -d $ClassesDir $JavaSrc
 Assert-NativeCommand "La compilación Java"
 
 Write-Host "4. Convirtiendo a DEX con d8..."
 $ClassFiles = Get-ChildItem $ClassesDir -Filter "*.class" -Recurse | Select-Object -ExpandProperty FullName
-& "$BuildTools\d8.bat" --lib $PlatformJar --output $WorkDir $ClassFiles
+& "$BuildTools\d8.bat" --min-api 21 --lib $PlatformJar --output $WorkDir $ClassFiles
 Assert-NativeCommand "La conversión DEX"
 
 Write-Host "5. Agregando classes.dex al APK con jar.exe..."
@@ -118,21 +138,60 @@ if ($Badging -notmatch "versionCode='$VersionCode'" -or $Badging -notmatch "vers
 }
 & "$BuildTools\apksigner.bat" verify --verbose $FinalApk | Out-Null
 Assert-NativeCommand "La verificación de firma del APK"
+$SignerOutput = (& "$BuildTools\apksigner.bat" verify --print-certs $FinalApk) -join "`n"
+Assert-NativeCommand "La lectura del certificado de firma"
+if ($SignerOutput -notmatch 'certificate SHA-256 digest:\s*([0-9a-fA-F]{64})') {
+    throw "No se pudo obtener la huella SHA-256 del certificado de la APK."
+}
+$SigningCertificateSha256 = $Matches[1].ToUpperInvariant()
 
 Write-Host "8. Creando paquetes ZIP para descarga..."
 # Limpiar ejecutables directos no permitidos en Firebase Spark
 Get-ChildItem $OutDir -Filter "*.apk*" | Remove-Item -Force -ErrorAction SilentlyContinue
 
 $ApkZip = "$OutDir\LosPanitas-Elo-POS-APK.zip"
+$VersionSlug = ($VersionName -replace '[^0-9A-Za-z._-]', '-')
+$VersionedApkZip = "$OutDir\LosPanitas-Elo-POS-v$VersionSlug-code$VersionCode.zip"
 if (Test-Path $ApkZip) { Remove-Item -Force $ApkZip }
-Compress-Archive -Path "$FinalApk", "$ProjectDir\README.md" -DestinationPath $ApkZip
+if (Test-Path $VersionedApkZip) { Remove-Item -Force $VersionedApkZip }
+Compress-Archive -Path "$FinalApk", "$ProjectDir\README.md" -DestinationPath $VersionedApkZip
+Copy-Item -LiteralPath $VersionedApkZip -Destination $ApkZip -Force
 
 $ZipFile = "$OutDir\Paquete-Recursos-Terminal-ELO.zip"
 if (Test-Path $ZipFile) { Remove-Item -Force $ZipFile }
 Compress-Archive -Path "$FinalApk", "$ProjectDir\README.md", (Join-Path $RepoRoot "docs\TERMINAL-ELO.md") -DestinationPath $ZipFile
 
+$ApkHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $FinalApk).Hash.ToUpperInvariant()
+$ArchiveHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $VersionedApkZip).Hash.ToUpperInvariant()
+$UpdateManifest = [ordered]@{
+    schemaVersion = 1
+    channel = [string]$ReleaseInfo.channel
+    packageName = "com.panitas.pos"
+    versionCode = $VersionCode
+    versionName = $VersionName
+    publishedAt = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+    minimumSupportedVersionCode = [int]$ReleaseInfo.minimumSupportedVersionCode
+    mandatory = [bool]$ReleaseInfo.mandatory
+    artifact = [ordered]@{
+        url = "https://los-panitas-by-nechy.web.app/downloads/$([System.IO.Path]::GetFileName($VersionedApkZip))"
+        filename = [System.IO.Path]::GetFileName($VersionedApkZip)
+        size = [long](Get-Item -LiteralPath $VersionedApkZip).Length
+        sha256 = $ArchiveHash
+    }
+    apk = [ordered]@{
+        entry = "LosPanitas-Elo-POS.apk"
+        size = [long](Get-Item -LiteralPath $FinalApk).Length
+        sha256 = $ApkHash
+        signingCertificateSha256 = $SigningCertificateSha256
+    }
+    releaseNotes = @($ReleaseInfo.releaseNotes)
+}
+$UpdateManifestFile = Join-Path $OutDir "update.json"
+$UpdateManifestJson = $UpdateManifest | ConvertTo-Json -Depth 6
+[System.IO.File]::WriteAllText($UpdateManifestFile, $UpdateManifestJson + "`n", [System.Text.UTF8Encoding]::new($false))
+
 $ChecksumFile = Join-Path $OutDir "SHA256SUMS.txt"
-@($FinalApk, $ApkZip, $ZipFile) |
+@($FinalApk, $ApkZip, $VersionedApkZip, $ZipFile, $UpdateManifestFile) |
     Get-FileHash -Algorithm SHA256 |
     ForEach-Object { "$($_.Hash)  $([System.IO.Path]::GetFileName($_.Path))" } |
     Set-Content -LiteralPath $ChecksumFile -Encoding ascii

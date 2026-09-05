@@ -1,0 +1,12 @@
+{
+  "versionName": "1.4.0-rc.4",
+  "versionCode": 11,
+  "channel": "release-candidate",
+  "minimumSupportedVersionCode": 10,
+  "mandatory": false,
+  "releaseNotes": [
+    "Actualizador seguro para la aplicación nativa ELO.",
+    "Descarga y verificación automáticas sin bloquear ventas ni periféricos.",
+    "Instalación silenciosa en terminales administradas y confirmación guiada en Android estándar."
+  ]
+}

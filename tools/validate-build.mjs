@@ -4,7 +4,10 @@ import { fileURLToPath } from 'node:url';
 
 const root = new URL('../', import.meta.url);
 const dist = new URL('../dist/', import.meta.url);
-const required = ['index.html', 'logo.png', 'manifest.webmanifest', 'sw.js'];
+const required = [
+  'index.html', 'logo.png', 'manifest.webmanifest', 'sw.js',
+  'downloads/update.json', 'downloads/LosPanitas-Elo-POS-APK.zip', 'downloads/SHA256SUMS.txt'
+];
 
 for (const name of required) await access(new URL(name, dist));
 
@@ -28,6 +31,10 @@ for (const file of files) {
 
 const html = await readFile(new URL('index.html', dist), 'utf8');
 if (!html.includes('manifest.webmanifest')) throw new Error('Falta el manifiesto PWA.');
+const worker = await readFile(new URL('sw.js', dist), 'utf8');
+if (worker.includes('__BUILD_ID__') || !/panitas-pos-[0-9a-f]{20}/.test(worker)) {
+  throw new Error('El Service Worker no contiene la versión de contenido generada para esta entrega.');
+}
 console.log(`Build validado: ${files.length} archivos, sin secretos detectados.`);
 
 async function walk(folder) {

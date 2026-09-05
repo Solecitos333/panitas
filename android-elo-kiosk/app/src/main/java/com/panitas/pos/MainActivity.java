@@ -3,6 +3,7 @@ package com.panitas.pos;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.pm.ApplicationInfo;
+import android.graphics.Bitmap;
 import android.os.Build;
 import android.os.Bundle;
 import android.net.Uri;
@@ -28,6 +29,7 @@ public class MainActivity extends Activity {
     private WebView webView;
     private UsbPrinterManager printerManager;
     private EloHardwareBridge hardwareBridge;
+    private AppUpdateManager updateManager;
     private LocalCommandServer commandServer;
     private ScannerManager scannerManager;
     private CustomerDisplayManager vfdManager;
@@ -46,6 +48,9 @@ public class MainActivity extends Activity {
 
         // 1. Inicializar impresora USB (Star TSP143IIIU)
         printerManager = new UsbPrinterManager(this);
+
+        // El actualizador tiene su propia cola para no bloquear impresión o gaveta.
+        updateManager = new AppUpdateManager(this);
 
         // 2. Inicializar servidor WebSocket local en hilo de fondo
         hardwareToken = UUID.randomUUID().toString().replace("-", "");
@@ -85,10 +90,18 @@ public class MainActivity extends Activity {
         settings.setDisplayZoomControls(false);
 
         // 4. Puente nativo ELO para acceso directo desde JavaScript
-        hardwareBridge = new EloHardwareBridge(this, printerManager, commandServer, hardwareToken, webView);
+        hardwareBridge = new EloHardwareBridge(this, printerManager, commandServer, updateManager,
+                hardwareToken, webView);
+        updateManager.setListener(hardwareBridge::notifyUpdateState);
         webView.addJavascriptInterface(hardwareBridge, "EloPOS");
 
         webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                updateManager.onPageLoading();
+                super.onPageStarted(view, url, favicon);
+            }
+
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
@@ -98,9 +111,12 @@ public class MainActivity extends Activity {
                 view.evaluateJavascript(
                         "window._ELO_NATIVE = true;" +
                         "window._ELO_PORT = " + LocalCommandServer.PORT + ";" +
-                        "window._ELO_TOKEN = " + JSONObject.quote(hardwareToken) + ";",
+                        "window._ELO_TOKEN = " + JSONObject.quote(hardwareToken) + ";" +
+                        "window._ELO_APP_VERSION = " + JSONObject.quote(updateManager.getInstalledVersionName()) + ";" +
+                        "window._ELO_APP_VERSION_CODE = " + updateManager.getInstalledVersionCode() + ";",
                         null
                 );
+                hardwareBridge.pushUpdateState();
                 // Mostrar mensaje de bienvenida en el VFD
                 if (vfdManager != null) {
                     vfdManager.showWelcome("Los Panitas");
@@ -121,6 +137,7 @@ public class MainActivity extends Activity {
 
         // 6. Cargar el sistema de facturacion
         webView.loadUrl(POS_URL);
+        updateManager.startAutomaticChecks();
     }
 
     private boolean isTrustedUrl(String url) {
@@ -173,10 +190,12 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         hideSystemUI();
+        if (updateManager != null) updateManager.onResume();
     }
 
     @Override
     protected void onPause() {
+        if (updateManager != null) updateManager.onPause();
         super.onPause();
     }
 
@@ -186,6 +205,7 @@ public class MainActivity extends Activity {
         if (vfdManager != null) { vfdManager.clear(); vfdManager.disconnect(); }
         if (msrManager != null) msrManager.stop();
         if (commandServer != null) commandServer.stop();
+        if (updateManager != null) updateManager.destroy();
         if (hardwareBridge != null) hardwareBridge.destroy();
         if (printerManager != null) printerManager.destroy();
         if (webView != null) {
