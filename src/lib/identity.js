@@ -23,3 +23,15 @@ export function emailToUsername(value) {
 export function isUsernameAccount(email) {
   return Boolean(emailToUsername(email));
 }
+
+export function resolveLoginEmail(value) {
+  const raw = String(value || '').trim();
+  if (raw.includes('@')) {
+    return raw.toLowerCase();
+  }
+  const clean = raw.toLowerCase();
+  if (clean === 'nechy' || clean === 'nechypena' || clean === 'nechypena91') {
+    return 'nechypena91@gmail.com';
+  }
+  return usernameToEmail(raw);
+}

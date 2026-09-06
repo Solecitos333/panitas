@@ -14,7 +14,7 @@ import { MemoryDataService } from './services/memory-service.js';
 import { ROLES } from './domain/roles.js';
 import { createApplication } from './ui/app.js';
 import { renderAccessDenied, renderLogin, renderPending } from './ui/login.js';
-import { emailToUsername, isUsernameAccount, usernameToEmail } from './lib/identity.js';
+import { emailToUsername, isUsernameAccount, resolveLoginEmail, usernameToEmail } from './lib/identity.js';
 import { getEloUpdateStatus, setEloUpdateBusy } from './lib/hardware.js';
 import { createDeferredRefresh, updateForms, updateSafety } from './lib/update-safety.js';
 
@@ -157,7 +157,7 @@ function showLogin(auth, message = '') {
       const finish = updateSafety.beginOperation();
       try {
         if (button) button.disabled = true;
-        await signInWithEmailAndPassword(auth, usernameToEmail(username), password);
+        await signInWithEmailAndPassword(auth, resolveLoginEmail(username), password);
       } catch (error) {
         showLogin(auth, loginError(error));
       } finally {

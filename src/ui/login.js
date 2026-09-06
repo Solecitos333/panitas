@@ -28,7 +28,7 @@ export function renderLogin(root, handlers, message = '') {
           <p>Introduce tu usuario personal y contraseña.</p>
           ${message ? `<div class="login-message">${escapeHtml(message)}</div>` : ''}
           <form id="login-form" class="stack-form">
-            <label>Usuario<input name="username" type="text" autocomplete="username" autocapitalize="characters" minlength="3" maxlength="32" pattern="[A-Za-z0-9._-]+" required></label>
+            <label>Usuario o Correo<input name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" minlength="3" maxlength="80" required placeholder="ej. nechypena91@gmail.com o ADMIN"></label>
             <label>Contraseña
               <div class="password-field">
                 <input name="password" type="password" autocomplete="current-password" minlength="6" required>
