@@ -43,10 +43,10 @@ if (-not $BuildTools -or -not $PlatformJar) {
 }
 $ReleaseFile = Join-Path $RepoRoot "release.json"
 if (-not (Test-Path $ReleaseFile)) { throw "Falta release.json, la fuente única de versión." }
-$ReleaseInfo = Get-Content -Raw $ReleaseFile | ConvertFrom-Json
+$ReleaseInfo = Get-Content -Raw $ReleaseFile -Encoding UTF8 | ConvertFrom-Json
 $VersionCode = [int]$ReleaseInfo.versionCode
 $VersionName = [string]$ReleaseInfo.versionName
-$PackageVersion = [string](Get-Content -Raw (Join-Path $RepoRoot "package.json") | ConvertFrom-Json).version
+$PackageVersion = [string](Get-Content -Raw (Join-Path $RepoRoot "package.json") -Encoding UTF8 | ConvertFrom-Json).version
 if ($VersionCode -le 0 -or [string]::IsNullOrWhiteSpace($VersionName)) {
     throw "release.json contiene una versión inválida."
 }
@@ -131,7 +131,8 @@ $FinalApk = "$WorkDir\LosPanitas-Elo-POS.apk"
 & "$BuildTools\apksigner.bat" sign --ks $Keystore --ks-pass env:PANITAS_KEYSTORE_PASSWORD --ks-key-alias $KeyAlias --key-pass env:PANITAS_KEY_PASSWORD --out $FinalApk $AlignedApk
 Assert-NativeCommand "La firma del APK"
 
-$Badging = (& "$BuildTools\aapt2.exe" dump badging $FinalApk | Select-Object -First 1) -join ''
+$AaptDumpExe = if (Test-Path "$BuildTools\aapt.exe") { "$BuildTools\aapt.exe" } else { "$BuildTools\aapt2.exe" }
+$Badging = (& $AaptDumpExe dump badging $FinalApk | Select-Object -First 1) -join ''
 Assert-NativeCommand "La lectura de versión del APK"
 if ($Badging -notmatch "versionCode='$VersionCode'" -or $Badging -notmatch "versionName='$([regex]::Escape($VersionName))'") {
     throw "La APK no contiene la versión esperada $VersionName ($VersionCode). Resultado: $Badging"
@@ -192,7 +193,7 @@ $UpdateManifestJson = ($UpdateManifest | ConvertTo-Json -Depth 6) -replace "`r`n
 
 $ChecksumFile = Join-Path $OutDir "SHA256SUMS.txt"
 @($FinalApk, $ApkZip, $VersionedApkZip, $ZipFile, $UpdateManifestFile) |
-    Get-FileHash -Algorithm SHA256 |
+    ForEach-Object { Get-FileHash -Algorithm SHA256 -LiteralPath $_ } |
     ForEach-Object { "$($_.Hash)  $([System.IO.Path]::GetFileName($_.Path))" } |
     Set-Content -LiteralPath $ChecksumFile -Encoding ascii
 

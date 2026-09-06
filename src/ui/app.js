@@ -8,7 +8,7 @@ import {
 } from 'lucide';
 import { can, allowedNavigation, primaryRole } from '../domain/roles.js';
 import { calculateDocument, toCents } from '../domain/billing.js';
-import { renderCartTotals, renderDashboard, renderKds, renderOrderDrawer, renderPos, renderTables } from '../modules/operations.js';
+import { renderCartLines, renderCartTotals, renderDashboard, renderKds, renderOrderDrawer, renderPos, renderTables } from '../modules/operations.js';
 import { exportReport, renderInvoiceModal, renderInvoices, renderReports } from '../modules/billing.js';
 import { renderReceivables, renderFiaoPayModal } from '../modules/receivables.js';
 import { renderClientForm, renderClients, renderProductForm, renderProducts } from '../modules/directory.js';
@@ -22,6 +22,7 @@ import {
   beepHardware, getHardwareStatus, checkPaperStatus, sendEloCommand,
   getEloUpdateStatus, checkEloAppUpdate, installEloAppUpdate, openEloUpdatePermission
 } from '../lib/hardware.js';
+import { bindPinPad } from '../lib/pin-pad.js';
 import { updateForms, updateSafety } from '../lib/update-safety.js';
 
 const NAV = [
@@ -53,10 +54,14 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     }
   };
   let destroyed = false;
+  let disposePinPad = () => {};
+  let drawerInProgress = false;
   let previousKdsOrders = new Set();
   let hardwarePollId = null;
   let hardwarePollInFlight = false;
   const busyButtons = new Map();
+  let cashFormInProgress = false;
+  let movementAttempt = null;
   updateSafety.setBlocker('application', true);
 
   async function start() {
@@ -158,7 +163,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         <div class="sidebar-footer">
           <div class="user-card"><span>${escapeHtml((user.displayName||user.username||'?').charAt(0).toUpperCase())}</span><div><strong>${escapeHtml(user.displayName||user.username)}</strong><small>${roleLabel(primaryRole(user))}</small></div></div>
           ${state.capabilities.cashDrawer ? `<button class="drawer-kick-btn" style="width:100%;justify-content:center;" data-drawer-kick><i data-lucide="wallet"></i> Abrir gaveta</button>` : ''}
-          <button class="logout-button" data-password><i data-lucide="key-round"></i> Cambiar contraseña</button>
+          <button class="logout-button" data-password><i data-lucide="key-round"></i> Contraseña y PIN</button>
           <button class="logout-button" data-logout><i data-lucide="log-out"></i> Cerrar sesión</button>
         </div>
       </aside>
@@ -200,6 +205,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   }
 
   function renderModal() {
+    disposePinPad();
+    disposePinPad = () => {};
     const modalRoot = root.querySelector('#modal-root');
     if (!modalRoot) return;
     if (state.modal === 'product') modalRoot.innerHTML = renderProductForm(state.products.find((item)=>item.id===state.editingId));
@@ -405,11 +412,25 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelector('#pos-ncf-type')?.addEventListener('change',updatePosNcf);
     root.querySelector('#audit-search')?.addEventListener('input',filterAuditRows);
     root.querySelector('#pos-checkout-form')?.addEventListener('submit', submitPos);
+    root.querySelectorAll('#pos-submit-btn, .mobile-pos-charge').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const form = root.querySelector('#pos-checkout-form');
+        if (form) submitPos({ preventDefault: () => {}, currentTarget: form, submitter: e.currentTarget });
+      });
+    });
     root.querySelector('#pos-checkout-form')?.addEventListener('input', capturePosDraft);
     root.querySelector('#pos-checkout-form')?.addEventListener('change', capturePosDraft);
     root.querySelectorAll('#pos-checkout-form details').forEach((details) => details.addEventListener('toggle', capturePosDraft));
     root.querySelector('#pos-checkout-form [name=tableId], #pos-table-select')?.addEventListener('change', updatePosFields);
     root.querySelector('#pos-cash-received')?.addEventListener('input', updatePosChange);
+    root.querySelector('#pos-cash-received')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const submitBtn = root.querySelector('#pos-submit-btn');
+        if (submitBtn && !submitBtn.disabled) submitBtn.click();
+      }
+    });
     root.querySelectorAll('.pos-bill-btn, .quick-cash-btn').forEach((btn) => btn.addEventListener('click', () => handleQuickCash(btn.dataset.cashVal)));
 
     // Selector de método de pago — nuevos paneles rediseñados
@@ -432,11 +453,6 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         const panelMap = { cash: '#pos-cash-panel', card: '#pos-card-panel', transfer: '#pos-transfer-panel', credit: '#pos-fiao-panel' };
         const targetPanel = root.querySelector(panelMap[method]);
         if (targetPanel) targetPanel.classList.add('visible');
-
-        // Auto-focus en el campo de efectivo
-        if (method === 'cash') {
-          setTimeout(() => root.querySelector('#pos-cash-received')?.focus(), 80);
-        }
 
         updatePosSubmitLabel();
         capturePosDraft();
@@ -612,6 +628,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     modalRoot.querySelectorAll('button[data-modal-close], [data-modal-close]:not(.modal-backdrop)').forEach((item) => {
       item.addEventListener('click', (event) => {
         event.stopPropagation();
+        if (drawerInProgress || state.saleInProgress || cashFormInProgress) return toast('Espera a que termine la operación.', 'warning');
         closeModal();
       });
     });
@@ -622,6 +639,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       backdrop.addEventListener('click', (event) => {
         if (Date.now() - openedAt < 250) return;
         if (event.target === backdrop) {
+          if (drawerInProgress || state.saleInProgress || cashFormInProgress) return;
           closeModal();
         }
       });
@@ -670,29 +688,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       if(qtyInput)qtyInput.value=qtyInput.value.slice(0,-1);
     });
     modalRoot?.querySelector('[data-order-prebill]')?.addEventListener('click',()=>printOrderPrebill(state.selectedOrderId));
-    modalRoot?.querySelector('#quick-cash-form')?.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const f = new FormData(event.currentTarget);
-      const openingAmount = toCents(f.get('opening') || 0);
-      const outcome = await perform(
-        () => service.openCashSession({ openingCents: openingAmount, notes: f.get('notes') }),
-        'Caja abierta con éxito.',
-        closeModal
-      );
-      if (!outcome.ok) return;
-      // La sincronización de Firestore es asíncrona. Mantener la sesión local evita que el
-      // siguiente cobro sea rechazado mientras llega el listener en tiempo real.
-      state.activeCash = {
-        id: outcome.result,
-        status: 'open',
-        openingCents: openingAmount,
-        openedBy: user.uid,
-        openedByName: user.displayName || user.username || 'Cajero',
-        optimistic: true
-      };
-      if (state.settings?.autoOpenDrawer !== false) void kickDrawer();
-      resumePendingPosSubmit();
-    });
+    modalRoot?.querySelector('#quick-cash-form')?.addEventListener('submit', openCash);
     modalRoot?.querySelectorAll('[data-set-opening]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const input = modalRoot.querySelector('#quick-cash-form [name=opening]');
@@ -723,51 +719,50 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     if (drawerPinForm) {
       const pinInput = modalRoot.querySelector('#drawer-pin-input');
       const errBox = modalRoot.querySelector('#drawer-pin-error');
+      const submitBtn = modalRoot.querySelector('#drawer-pin-submit');
 
-      modalRoot.querySelectorAll('.pin-num-btn').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          if (pinInput && pinInput.value.length < 4) {
-            pinInput.value += btn.dataset.pinNum;
-            if (errBox) errBox.textContent = '';
-          }
+      const updateDrawerPinSlots = () => {
+        const len = (pinInput?.value || '').length;
+        modalRoot.querySelectorAll('#drawer-pin-slots .pin-slot').forEach((slot, idx) => {
+          slot.classList.toggle('filled', idx < len);
         });
-      });
+      };
 
-      modalRoot.querySelector('.pin-clear-btn')?.addEventListener('click', () => {
-        if (pinInput) pinInput.value = '';
-        if (errBox) errBox.textContent = '';
-      });
-
-      modalRoot.querySelector('.pin-del-btn')?.addEventListener('click', () => {
-        if (pinInput) pinInput.value = pinInput.value.slice(0, -1);
-        if (errBox) errBox.textContent = '';
+      disposePinPad = bindPinPad({
+        form: drawerPinForm, input: pinInput,
+        slots: [...modalRoot.querySelectorAll('#drawer-pin-slots .pin-slot')],
+        digits: [...modalRoot.querySelectorAll('.pin-num-btn')],
+        clear: modalRoot.querySelector('.pin-clear-btn'), backspace: modalRoot.querySelector('.pin-del-btn'),
+        submit: submitBtn, error: errBox, isBusy: () => drawerInProgress
       });
 
       drawerPinForm.addEventListener('submit', async (e) => {
         e.preventDefault();
+        if (drawerInProgress) return;
         const pin = (pinInput?.value || '').trim();
         const reason = modalRoot.querySelector('#drawer-pin-reason')?.value || 'Apertura manual';
-        const submitBtn = modalRoot.querySelector('#drawer-pin-submit');
         if (!/^\d{4}$/.test(pin)) {
           if (errBox) errBox.textContent = 'Ingresa tu PIN de 4 dígitos.';
           return;
         }
         try {
+          drawerInProgress = true;
           setBusy(submitBtn, true);
           const result = await service.verifyDrawerPin(pin, reason);
-          const hardwareResult = await openCashDrawerHardware();
+          const hardwareResult = await auditedDrawerPulse(reason);
           if (!hardwareResult?.success) throw new Error('PIN correcto, pero la gaveta no respondió. Revisa la conexión de la impresora Star.');
           beepHardware('ok');
-          toast(`Gaveta abierta por ${result.user.displayName}.`, 'success');
+          toast(`Pulso de apertura enviado por ${result.user.displayName}. Comprueba la gaveta.`, 'success');
           closeModal();
         } catch (err) {
           beepHardware('error');
           if (errBox) errBox.textContent = err.message || 'PIN incorrecto.';
           if (pinInput) {
             pinInput.value = '';
-            pinInput.focus();
+            updateDrawerPinSlots();
           }
         } finally {
+          drawerInProgress = false;
           setBusy(submitBtn, false);
         }
       });
@@ -780,23 +775,19 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       const chkErrBox = modalRoot.querySelector('#checkout-pin-error');
       const submitBtn = modalRoot.querySelector('#checkout-pin-submit');
 
-      modalRoot.querySelectorAll('[data-chk-pin]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          if (chkPinInput && chkPinInput.value.length < 4) {
-            chkPinInput.value += btn.dataset.chkPin;
-            if (chkErrBox) chkErrBox.textContent = '';
-          }
+      const updatePinSlots = () => {
+        const len = (chkPinInput?.value || '').length;
+        modalRoot.querySelectorAll('#chk-pin-slots .pin-slot').forEach((slot, idx) => {
+          slot.classList.toggle('filled', idx < len);
         });
-      });
+      };
 
-      modalRoot.querySelector('#chk-pin-clear')?.addEventListener('click', () => {
-        if (chkPinInput) chkPinInput.value = '';
-        if (chkErrBox) chkErrBox.textContent = '';
-      });
-
-      modalRoot.querySelector('#chk-pin-del')?.addEventListener('click', () => {
-        if (chkPinInput) chkPinInput.value = chkPinInput.value.slice(0, -1);
-        if (chkErrBox) chkErrBox.textContent = '';
+      disposePinPad = bindPinPad({
+        form: checkoutPinForm, input: chkPinInput,
+        slots: [...modalRoot.querySelectorAll('#chk-pin-slots .pin-slot')],
+        digits: [...modalRoot.querySelectorAll('[data-chk-pin]')],
+        clear: modalRoot.querySelector('#chk-pin-clear'), backspace: modalRoot.querySelector('#chk-pin-del'),
+        submit: submitBtn, error: chkErrBox, isBusy: () => state.saleInProgress
       });
 
       checkoutPinForm.addEventListener('submit', async (e) => {
@@ -805,6 +796,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         const pin = (chkPinInput?.value || '').trim();
         if (!/^\d{4}$/.test(pin)) {
           if (chkErrBox) chkErrBox.textContent = 'Digita tu PIN de 4 dígitos.';
+          updatePinSlots();
           return;
         }
         try {
@@ -832,13 +824,14 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           if (!outcome.ok) {
             if (chkErrBox) chkErrBox.textContent = outcome.error?.message || 'No se pudo registrar la venta.';
             if (chkPinInput) chkPinInput.value = '';
+            updatePinSlots();
           }
         } catch (err) {
           beepHardware('error');
           if (chkErrBox) chkErrBox.textContent = err.message || 'PIN incorrecto.';
           if (chkPinInput) {
             chkPinInput.value = '';
-            chkPinInput.focus();
+            updatePinSlots();
           }
         } finally {
           state.saleInProgress = false;
@@ -990,6 +983,58 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     }
   }
 
+  function renderPosCartOnly() {
+    if (state.route !== 'pos' || !root.querySelector('#main-content .pos-fast-cart')) {
+      renderContent();
+      return;
+    }
+    const cartPanel = root.querySelector('#main-content .pos-fast-cart');
+    const heading = cartPanel.querySelector('#pos-cart-heading');
+    if (heading) {
+      heading.textContent = state.cart.length ? `${state.cart.length} producto${state.cart.length === 1 ? '' : 's'}` : 'Vacía';
+    }
+
+    const linesEl = cartPanel.querySelector('.cart-lines');
+    if (linesEl) {
+      linesEl.innerHTML = renderCartLines(state.cart);
+      linesEl.querySelectorAll('[data-cart-qty]').forEach((button) =>
+        button.addEventListener('click', () => changeQuantity(Number(button.dataset.cartQty), Number(button.dataset.delta)))
+      );
+      linesEl.querySelectorAll('[data-cart-item-note]').forEach((btn) =>
+        btn.addEventListener('click', () => openItemNoteModal(Number(btn.dataset.cartItemNote)))
+      );
+      linesEl.querySelectorAll('[data-cart-set-qty]').forEach((btn) =>
+        btn.addEventListener('click', () => openQuantityModal(Number(btn.dataset.cartSetQty)))
+      );
+    }
+
+    const totalsEl = cartPanel.querySelector('.cart-totals-block');
+    if (totalsEl) {
+      totalsEl.innerHTML = renderCartTotals(state.cart, state.posDiscountState);
+    }
+
+    const submitBtn = root.querySelector('#pos-submit-btn');
+    if (submitBtn) {
+      submitBtn.disabled = !state.cart.length;
+    }
+    updatePosSubmitLabel();
+
+    const mobileBtn = root.querySelector('.mobile-pos-charge');
+    if (mobileBtn) {
+      mobileBtn.disabled = !state.cart.length;
+    }
+
+    const prebillBtn = root.querySelector('[data-print-cart-prebill]');
+    if (prebillBtn) {
+      prebillBtn.style.display = state.cart.length ? '' : 'none';
+    }
+
+    updatePosChange();
+
+    iconsRefresh();
+    syncNativeUpdateState();
+  }
+
   function addProduct(id){
     capturePosDraft();
     const product=state.products.find((item)=>item.id===id);
@@ -1002,7 +1047,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       line.quantity+=1;
     }
     else state.cart.push({productId:id,name:product.name,quantity:1,unitPriceCents:product.priceCents,taxRate:product.taxRate||0,notes:''});
-    renderContent();
+    renderPosCartOnly();
     const totals = calculateDocument(state.cart);
     setVFDMessage(product.name.slice(0, 20), `TOT: ${formatMoney(totals.totalCents)}`);
   }
@@ -1016,7 +1061,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     if (delta > 0 && line.quantity >= maximum) return toast(`No hay más existencia disponible de ${line.name}.`, 'warning');
     line.quantity+=delta;
     if(state.cart[index].quantity<=0)state.cart.splice(index,1);
-    renderContent();
+    renderPosCartOnly();
     const totals = calculateDocument(state.cart);
     if (state.cart.length) {
       setVFDMessage('TOTAL CUENTA:', formatMoney(totals.totalCents));
@@ -1046,6 +1091,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     if (state.saleInProgress || state.checkoutOpening) return toast('El cobro anterior todavía se está procesando.', 'warning');
     if(!state.cart.length)return toast('Agrega al menos un producto a la cuenta.', 'warning');
     const formElement = root.querySelector('#pos-checkout-form');
+    if (formElement && !formElement.reportValidity()) return;
     const form = formElement ? new FormData(formElement) : new FormData();
     const tableId = form.get('tableId') || root.querySelector('#pos-table-select')?.value || '';
     const documentType = form.get('documentType') || 'invoice';
@@ -1068,10 +1114,13 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       return toast('Escribe el nombre de la persona que se lleva el fiao.', 'warning');
     }
 
-    const rawCashReceived = root.querySelector('#pos-cash-received')?.value;
-    let cashReceivedCents = rawCashReceived ? Math.round(Number(rawCashReceived) * 100) : totals.totalCents;
+    const isDevueltaOpen = Boolean(root.querySelector('#pos-cash-panel details')?.open);
+    const rawCashReceived = root.querySelector('#pos-cash-received')?.value?.trim();
+    let cashReceivedCents = (isDevueltaOpen && rawCashReceived && Number(rawCashReceived) > 0)
+      ? Math.round(Number(rawCashReceived) * 100)
+      : totals.totalCents;
 
-    if (!tableId && method === 'cash' && cashReceivedCents < totals.totalCents) {
+    if (!tableId && method === 'cash' && isDevueltaOpen && rawCashReceived && cashReceivedCents < totals.totalCents) {
       return toast('El efectivo recibido es menor que el total de la cuenta.', 'danger');
     }
 
@@ -1265,9 +1314,13 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
             <p style="margin:8px 0 6px; font-size:.82rem; color:var(--muted);text-align:center;">
               ${isCredit ? 'Digita tu PIN de 4 dígitos para registrar la cuenta por cobrar.' : 'Digita tu PIN de 4 dígitos. Si no hay una sesión de caja, este mismo paso la inicia y registra el cobro.'}
             </p>
-            <label style="margin-bottom:6px;">
-              <input id="checkout-pin-input" name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="••••" required autofocus style="letter-spacing:10px;font-size:1.7rem;text-align:center;font-weight:800;">
-            </label>
+            <input id="checkout-pin-input" name="pin" type="password" inputmode="none" pattern="[0-9]{4}" maxlength="4" placeholder="" required readonly style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;">
+            <div class="pin-slots-container" id="chk-pin-slots">
+              <span class="pin-slot" data-slot="0"></span>
+              <span class="pin-slot" data-slot="1"></span>
+              <span class="pin-slot" data-slot="2"></span>
+              <span class="pin-slot" data-slot="3"></span>
+            </div>
             <div class="pin-pad" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;margin:6px 0 10px;">
               ${[1,2,3,4,5,6,7,8,9].map((n) => `<button type="button" class="button secondary pin-num-btn" data-chk-pin="${n}" style="font-size:1.35rem;font-weight:700;padding:12px 0;">${n}</button>`).join('')}
               <button type="button" class="button secondary pin-clear-btn" id="chk-pin-clear" style="font-size:.85rem;font-weight:600;padding:12px 0;color:#f85149;">Borrar</button>
@@ -1394,7 +1447,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   async function openCash(event){
     event.preventDefault();
     const f=new FormData(event.currentTarget);
-    const outcome = await perform(()=>service.openCashSession({openingCents:toCents(f.get('opening')),notes:f.get('notes')}),'Caja abierta.', closeModal);
+    const outcome = await authorizeCashForm(event, 'Apertura de turno', () => service.openCashSession({openingCents:toCents(f.get('opening')),notes:f.get('notes')}), 'Caja abierta.', closeModal);
     if (!outcome.ok) return;
     state.activeCash = { id: typeof outcome.result === 'string' ? outcome.result : outcome.result.id, status:'open', openingCents:toCents(f.get('opening')), openedBy:user.uid, openedByName:user.displayName || user.username || 'Cajero', optimistic:true };
     if (state.settings?.autoOpenDrawer !== false) kickDrawer();
@@ -1406,7 +1459,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const f=new FormData(event.currentTarget);
     const sessionId = state.activeCash?.id;
     if (!sessionId) return toast('No hay caja activa para cerrar.', 'warning');
-    const outcome = await perform(()=>service.closeCashSession(sessionId,{closingCents:toCents(f.get('closing')),expectedCents:Number(f.get('expected')),notes:f.get('notes')}),'Caja cerrada.', closeModal);
+    const outcome = await authorizeCashForm(event, 'Cierre de turno', () => service.closeCashSession(sessionId,{closingCents:toCents(f.get('closing')),expectedCents:Number(f.get('expected')),notes:f.get('notes')}), 'Caja cerrada.', closeModal);
     if (!outcome.ok) return;
     state.activeCash = null;
     if (state.settings?.autoOpenDrawer !== false) kickDrawer();
@@ -1418,12 +1471,33 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     if(!state.activeCash)return toast('Abre una caja antes de registrar movimientos.','danger');
     const form=event.currentTarget;
     const f=new FormData(form);
-    await perform(()=>service.createCashMovement({
-      cashSessionId:state.activeCash.id,
-      type:f.get('type'),
-      amountCents:toCents(f.get('amount')),
-      reason:f.get('reason')
-    }),'Movimiento de caja registrado.',()=>form.reset());
+    const payload = { cashSessionId: state.activeCash.id, type: f.get('type'), amountCents: toCents(f.get('amount')), reason: String(f.get('reason') || '').trim() };
+    const fingerprint = JSON.stringify(payload);
+    if (movementAttempt?.fingerprint !== fingerprint) movementAttempt = { fingerprint, requestId: createOperationId('cash-movement') };
+    const outcome = await authorizeCashForm(event, 'Registro de entrada/salida', () => service.createCashMovement({
+      ...payload, requestId: movementAttempt.requestId
+    }), 'Movimiento de caja registrado.', () => { movementAttempt = null; form.reset(); });
+    if (outcome.ok && state.settings?.autoOpenDrawer !== false) void kickDrawer();
+  }
+
+  async function authorizeCashForm(event, reason, task, success, after) {
+    const form = event.currentTarget;
+    if (cashFormInProgress || !form.reportValidity()) return { ok: false };
+    cashFormInProgress = true;
+    const button = form.querySelector('button[type="submit"]');
+    const pinInput = form.querySelector('[name=pin]');
+    const pin = pinInput?.value || '';
+    setBusy(button, true);
+    try {
+      return await perform(async () => {
+        await service.verifyDrawerPin(pin, reason);
+        return task();
+      }, success, after);
+    } finally {
+      if (pinInput) pinInput.value = '';
+      cashFormInProgress = false;
+      setBusy(button, false);
+    }
   }
 
   async function saveSettings(event){
@@ -1561,11 +1635,27 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     }
   }
 
+  async function auditedDrawerPulse(reason) {
+    const operationId = createOperationId('drawer');
+    const context = `${operationId} · sesión ${state.activeCash?.id || 'sin sesión'} · ${reason}`;
+    // If the request cannot be recorded, do not send an untraceable pulse.
+    await service.audit('cash.drawer_requested', context);
+    let result;
+    try { result = await openCashDrawerHardware(); }
+    catch (error) { result = { success: false, message: error.message }; }
+    try {
+      await service.audit(result?.success ? 'cash.drawer_pulse_sent' : 'cash.drawer_hardware_failed', context);
+    } catch {
+      toast('La solicitud quedó registrada, pero falta confirmar su resultado en auditoría. No repitas la apertura sin revisar la gaveta.', 'warning');
+    }
+    return result;
+  }
+
   async function kickDrawer({ silentFailure = false } = {}) {
     try {
-      const result = await openCashDrawerHardware();
+      const result = await auditedDrawerPulse('Apertura posterior a operación de caja');
       if (result.success) {
-        toast(`Gaveta activada (${result.method}).`, 'success');
+        toast('Pulso enviado. Comprueba que la gaveta abrió.', 'success');
       } else {
         if (silentFailure) {
           toast('Venta guardada, pero la gaveta no respondió. Revisa la terminal y reintenta desde “Abrir gaveta”.', 'warning');
@@ -1910,6 +2000,11 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   function handleQuickCash(val) {
     const input = root.querySelector('#pos-cash-received');
     if (!input) return;
+    if (val === 'clear') {
+      input.value = '';
+      updatePosChange();
+      return;
+    }
     const totals = calculateDocument(state.cart, state.posDiscountState || {});
     const total = totals.totalCents / 100;
     if (val === 'exact') {
@@ -2156,6 +2251,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
               <button type="button" class="quick-cash-btn" data-set-opening="1000">RD$ 1,000</button>
               <button type="button" class="quick-cash-btn" data-set-opening="2000">RD$ 2,000</button>
             </div>
+            <label>PIN personal<input name="pin" type="password" inputmode="numeric" autocomplete="off" pattern="[0-9]{4}" maxlength="4" required></label>
             <label>Notas de apertura (opcional)
               <input name="notes" placeholder="Turno de la tarde, cambio inicial…">
             </label>
@@ -2197,9 +2293,13 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
                 <option value="Apertura manual por revisión">Apertura manual por revisión</option>
               </select>
             </label>
-            <label style="margin-bottom:8px;">PIN numérico (4 dígitos)
-              <input id="drawer-pin-input" name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="••••" required autofocus style="letter-spacing:8px;font-size:1.5rem;text-align:center;font-weight:700;">
-            </label>
+            <input id="drawer-pin-input" name="pin" type="password" inputmode="none" pattern="[0-9]{4}" maxlength="4" placeholder="" required readonly style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;">
+            <div class="pin-slots-container" id="drawer-pin-slots">
+              <span class="pin-slot" data-slot="0"></span>
+              <span class="pin-slot" data-slot="1"></span>
+              <span class="pin-slot" data-slot="2"></span>
+              <span class="pin-slot" data-slot="3"></span>
+            </div>
             <div class="pin-pad" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;margin:8px 0 12px;">
               ${[1,2,3,4,5,6,7,8,9].map((n) => `<button type="button" class="button secondary pin-num-btn" data-pin-num="${n}" style="font-size:1.3rem;font-weight:700;padding:12px 0;">${n}</button>`).join('')}
               <button type="button" class="button secondary pin-clear-btn" style="font-size:.85rem;font-weight:600;padding:12px 0;color:#f85149;">Borrar</button>
@@ -2280,6 +2380,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   function iconsRefresh(){createIcons({icons,attrs:{'aria-hidden':'true'}});}
   function destroy(){
     destroyed=true;
+    disposePinPad();
     for (const finish of busyButtons.values()) finish();
     busyButtons.clear();
     updateSafety.setBlocker('application', false);

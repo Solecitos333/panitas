@@ -1,5 +1,6 @@
 import { formatMoney, escapeHtml, formatDate } from '../lib/format.js';
 import { calculateDocument } from '../domain/billing.js';
+import { businessDateKey, inBusinessPeriod } from '../lib/business-time.js';
 
 const STATUS_LABELS = {
   pending: 'Pendiente', preparing: 'Preparando', ready: 'Lista', served: 'Servida',
@@ -7,8 +8,8 @@ const STATUS_LABELS = {
 };
 
 export function renderDashboard(state) {
-  const today = dateKey(new Date());
-  const todayInvoices = state.invoices.filter((item) => dateKey(item.createdAt) === today && item.status !== 'cancelled');
+  const today = businessDateKey(new Date());
+  const todayInvoices = state.invoices.filter((item) => businessDateKey(item.createdAt) === today && item.status !== 'cancelled' && item.documentType === 'invoice');
   const todaySales = todayInvoices.reduce((sum, item) => sum + Number(item.totalCents || 0), 0);
   const pending = state.orders.filter((item) => !['closed', 'cancelled'].includes(item.status));
   const openCash = state.cashSessions.find((item) => item.status === 'open' && item.openedBy === state.user.uid);
@@ -91,19 +92,7 @@ function isSaleInPeriod(invoice, period) {
 }
 
 function isDateInPeriod(value, period) {
-  const date = asDate(value);
-  if (!date) return false;
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (period === 'week') {
-    const mondayOffset = (start.getDay() + 6) % 7;
-    start.setDate(start.getDate() - mondayOffset);
-  } else if (period === 'month') {
-    start.setDate(1);
-  } else if (period === 'year') {
-    start.setMonth(0, 1);
-  }
-  return date >= start && date <= now;
+  return inBusinessPeriod(value, period);
 }
 
 function topSellingProducts(invoices) {
@@ -117,13 +106,6 @@ function topSellingProducts(invoices) {
     products.set(key, item);
   }));
   return [...products.values()].sort((a, b) => b.quantity - a.quantity || b.totalCents - a.totalCents);
-}
-
-function asDate(value) {
-  if (!value) return null;
-  if (value?.toDate) return value.toDate();
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function formatQuantity(value) {
@@ -222,7 +204,8 @@ export function renderPos(state) {
           </div>
         </header>
 
-        <div class="cart-lines">${state.cart.length ? state.cart.map(cartLine).join('') : empty('shopping-basket', 'Cuenta vacía', 'Toca un producto del menú para agregarlo.')}</div>
+        <div class="pos-cart-scroll-area">
+        <div class="cart-lines">${renderCartLines(state.cart)}</div>
 
         <div class="cart-totals-block">
           ${renderCartTotals(state.cart, state.posDiscountState)}
@@ -323,6 +306,7 @@ export function renderPos(state) {
               <button type="button" class="pos-bill-btn" data-cash-val="500">$500</button>
               <button type="button" class="pos-bill-btn" data-cash-val="1000">$1,000</button>
               <button type="button" class="pos-bill-btn" data-cash-val="2000">$2,000</button>
+              <button type="button" class="pos-bill-btn clear" data-cash-val="clear" style="color:#f85149;">Borrar</button>
             </div>
             <div id="pos-change-display" class="pos-change-display">
               <span>Devuelta / Cambio:</span>
@@ -379,20 +363,20 @@ export function renderPos(state) {
             </div>
           </div>
           </div>
+          </div>
 
+          <!-- El cobro queda fijo al fondo del formulario para que nunca tape
+               productos, métodos de pago ni campos de la venta. -->
+          <button
+            class="pos-cobrar-btn"
+            type="submit"
+            id="pos-submit-btn"
+            ${cart.length ? '' : 'disabled'}
+          >
+            <i data-lucide="key-round"></i>
+            <span id="pos-submit-label">Cobrar ${formatMoney(totals.totalCents)}</span>
+          </button>
         </form>
-        <!-- El cobro queda fuera del área desplazable para que nunca tape
-             productos, métodos de pago ni campos de la venta. -->
-        <button
-          class="pos-cobrar-btn"
-          type="submit"
-          form="pos-checkout-form"
-          id="pos-submit-btn"
-          ${cart.length ? '' : 'disabled'}
-        >
-          <i data-lucide="key-round"></i>
-          <span id="pos-submit-label">Cobrar ${formatMoney(totals.totalCents)}</span>
-        </button>
       </aside>
     </div>`;
 }
@@ -435,14 +419,6 @@ export function renderOrderDrawer(order, capabilities = {}) {
 
 function metric(label, value, icon, tone = '') { return `<article class="metric-card ${tone}"><i data-lucide="${icon}"></i><div><span>${label}</span><strong>${value}</strong></div></article>`; }
 function empty(icon, title, copy) { return `<div class="empty-state"><i data-lucide="${icon}"></i><strong>${title}</strong><p>${copy}</p></div>`; }
-function dateKey(value) {
-  const date = value?.toDate ? value.toDate() : new Date(value || 0);
-  if (Number.isNaN(date.getTime())) return '';
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
 function productCard(item) {
   return `<button class="product-card" data-product-add="${item.id}" data-category="${escapeHtml(item.category || 'General')}" data-search="${escapeHtml(`${item.name} ${item.sku || ''} ${item.category || ''}`.toLowerCase())}">
     <div style="display:flex;justify-content:space-between;align-items:center;width:100%;">
@@ -455,7 +431,7 @@ function productCard(item) {
     <b>${formatMoney(item.priceCents)}</b>
   </button>`;
 }
-function cartLine(item, index) {
+export function cartLine(item, index) {
   return `<div class="cart-line">
     <div style="flex:1;">
       <strong>${escapeHtml(item.name)}</strong>
@@ -470,6 +446,10 @@ function cartLine(item, index) {
     </div>
     <b>${formatMoney(item.unitPriceCents * item.quantity)}</b>
   </div>`;
+}
+
+export function renderCartLines(items) {
+  return items && items.length ? items.map(cartLine).join('') : empty('shopping-basket', 'Cuenta vacía', 'Toca un producto del menú para agregarlo.');
 }
 
 export function renderCartTotals(items, discountState = { discount: 0, discountType: 'amount', includeLegalTip: false }) {

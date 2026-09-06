@@ -1,6 +1,6 @@
 import {
   collection, doc, addDoc, getDoc, getDocs, onSnapshot, orderBy, query, serverTimestamp,
-  setDoc, runTransaction, writeBatch, deleteField
+  setDoc, runTransaction, writeBatch, deleteField, getDocFromServer
 } from 'firebase/firestore';
 import {
   buildDocumentNumber, buildNcf, calculateDocument, canTransitionOrder, paymentStatus, PAYMENT_METHODS,
@@ -68,7 +68,7 @@ export class DataService {
     this.watchAllowed('cash:*', 'cashMovements', 'createdAt', callbacks.cashMovements);
     this.watchAllowed('users:manage', 'users', 'displayName', callbacks.users, 'asc');
     if (callbacks.auditLogs) {
-      this.watchAllowed('users:manage', 'auditLogs', 'createdAt', callbacks.auditLogs, 'desc');
+      this.watchAllowed('audit:view', 'auditLogs', 'createdAt', callbacks.auditLogs, 'desc');
     }
   }
 
@@ -134,7 +134,7 @@ export class DataService {
   }
 
   async verifyDrawerPin(pin, reason = 'Apertura manual') {
-    const cleanPin = String(pin || '').trim().replace(/\D/g, '');
+    const cleanPin = String(pin || '').trim();
     if (!/^\d{4}$/.test(cleanPin)) throw new Error('El PIN debe tener exactamente 4 dígitos.');
     const [secretSnapshot, profileSnapshot] = await Promise.all([
       getDoc(doc(this.db, 'userSecrets', this.actor.uid)),
@@ -150,16 +150,7 @@ export class DataService {
       await this.audit('cash.drawer_failed', `PIN incorrecto: ${String(reason).slice(0, 120)}`);
       throw new Error('PIN incorrecto.');
     }
-    if (!secretSnapshot.exists() && /^\d{4}$/.test(String(account.drawerPin || ''))) {
-      const batch = writeBatch(this.db);
-      batch.set(doc(this.db, 'userSecrets', this.actor.uid), {
-        drawerPin: storedPin, updatedAt: serverTimestamp(), updatedBy: this.actor.uid
-      });
-      batch.set(doc(this.db, 'users', this.actor.uid), {
-        drawerPin: deleteField(), updatedAt: serverTimestamp(), updatedBy: this.actor.uid
-      }, { merge: true });
-      await batch.commit();
-    }
+    if (secretSnapshot.data()?.pinUnique !== true) await this.saveMyDrawerPin(cleanPin);
     await this.audit('cash.pin_authorized', String(reason).slice(0, 300));
     return {
       success: true,
@@ -168,21 +159,34 @@ export class DataService {
   }
 
   async saveMyDrawerPin(pin) {
-    const drawerPin = String(pin || '').trim().replace(/\D/g, '');
+    const drawerPin = String(pin || '').trim();
     if (!/^\d{4}$/.test(drawerPin)) throw new Error('El PIN debe tener exactamente 4 dígitos.');
     const profileRef = doc(this.db, 'users', this.actor.uid);
-    const profileSnapshot = await getDoc(profileRef);
-    const batch = writeBatch(this.db);
-    batch.set(doc(this.db, 'userSecrets', this.actor.uid), {
-      drawerPin, updatedAt: serverTimestamp(), updatedBy: this.actor.uid
-    }, { merge: true });
-    if (profileSnapshot.exists() && 'drawerPin' in profileSnapshot.data()) {
-      batch.set(profileRef, {
-        drawerPin: deleteField(), updatedAt: serverTimestamp(), updatedBy: this.actor.uid
-      }, { merge: true });
+    const secretRef = doc(this.db, 'userSecrets', this.actor.uid);
+    try {
+      await runTransaction(this.db, async (transaction) => {
+        const [secret, profile] = await Promise.all([transaction.get(secretRef), transaction.get(profileRef)]);
+        if (!profile.data()?.active) throw new Error('Tu usuario no está habilitado.');
+        const previous = secret.data();
+        // Claims are write-only. Rules enforce ownership and the matching private
+        // secret atomically, including when two users request the same PIN.
+        transaction.set(doc(this.db, 'pinClaims', drawerPin), { userId: this.actor.uid });
+        transaction.set(secretRef, { drawerPin, pinUnique: true, updatedAt: serverTimestamp(), updatedBy: this.actor.uid });
+        if (previous?.pinUnique && previous.drawerPin !== drawerPin) {
+          transaction.delete(doc(this.db, 'pinClaims', previous.drawerPin));
+        }
+        if (profile.exists() && 'drawerPin' in profile.data()) {
+          transaction.update(profileRef, { drawerPin: deleteField(), updatedAt: serverTimestamp(), updatedBy: this.actor.uid });
+        }
+        transaction.set(doc(collection(this.db, 'auditLogs')), {
+          action: 'user.drawer_pin.updated', details: 'PIN personal actualizado; reserva exclusiva.',
+          actorId: this.actor.uid, actorName: this.actor.displayName || '', createdAt: serverTimestamp()
+        });
+      });
+    } catch (error) {
+      if (error.code === 'permission-denied') throw new Error('No se pudo reservar ese PIN. Puede estar asignado a otra persona; elige otro o pide revisar tu acceso.');
+      throw error;
     }
-    await batch.commit();
-    await this.audit('user.drawer_pin.updated', 'El usuario actualizó su PIN de gaveta.');
   }
 
   async saveProduct(product) {
@@ -642,8 +646,11 @@ export class DataService {
         openedAt: serverTimestamp(), openedBy: this.actor.uid, openedByName: this.actor.displayName || this.actor.email
       });
       transaction.set(lockRef, { activeSessionId: ref.id, updatedAt: serverTimestamp(), updatedBy: this.actor.uid }, { merge: true });
+      transaction.set(doc(collection(this.db, 'auditLogs')), {
+        action: 'cash.opened', details: ref.id, actorId: this.actor.uid,
+        actorName: this.actor.displayName || this.actor.username || '', createdAt: serverTimestamp()
+      });
     });
-    await this.audit('cash.opened', ref.id);
     return ref.id;
   }
 
@@ -660,6 +667,9 @@ export class DataService {
       const expectedCents = Number(sessionSnapshot.data().expectedCents
         ?? sessionSnapshot.data().openingCents ?? 0);
       if (!Number.isInteger(expectedCents) || expectedCents < 0) throw new Error('El saldo esperado de la caja no es válido.');
+      if (closingCents !== expectedCents && String(input.notes || '').trim().length < 3) {
+        throw new Error('Hay una diferencia de caja. Recuenta el efectivo y escribe una nota antes de cerrar.');
+      }
       closedSession = {
         id: sessionId,
         ...sessionSnapshot.data(),
@@ -677,8 +687,11 @@ export class DataService {
       if (lockSnapshot.exists() && lockSnapshot.data().activeSessionId === sessionId) {
         transaction.set(lockRef, { activeSessionId: null, updatedAt: serverTimestamp(), updatedBy: this.actor.uid }, { merge: true });
       }
+      transaction.set(doc(collection(this.db, 'auditLogs')), {
+        action: 'cash.closed', details: `${sessionId}: diferencia ${closingCents - expectedCents} centavos. ${String(input.notes || '').slice(0, 500)}`,
+        actorId: this.actor.uid, actorName: this.actor.displayName || this.actor.username || '', createdAt: serverTimestamp()
+      });
     });
-    await this.audit('cash.closed', sessionId);
     return closedSession;
   }
 
@@ -692,10 +705,22 @@ export class DataService {
     if (!input.cashSessionId) throw new Error('Abre una caja antes de registrar movimientos.');
 
     const sessionRef = doc(this.db, 'cashSessions', input.cashSessionId);
-    const movementRef = doc(collection(this.db, 'cashMovements'));
+    const requestId = String(input.requestId || '');
+    if (requestId && !/^[a-zA-Z0-9_-]{12,160}$/.test(requestId)) throw new Error('Identificador de movimiento inválido.');
+    const movementRef = requestId ? doc(this.db, 'cashMovements', requestId) : doc(collection(this.db, 'cashMovements'));
     const auditRef = doc(collection(this.db, 'auditLogs'));
-    await runTransaction(this.db, async (transaction) => {
-      const sessionSnapshot = await transaction.get(sessionRef);
+    const matches = (previous) => previous?.createdBy === this.actor.uid && previous.cashSessionId === input.cashSessionId
+      && previous.type === type && previous.amountCents === amountCents && previous.reason === reason;
+    try { await runTransaction(this.db, async (transaction) => {
+      const [sessionSnapshot, previousMovement] = await Promise.all([transaction.get(sessionRef), transaction.get(movementRef)]);
+      if (previousMovement.exists()) {
+        const previous = previousMovement.data();
+        if (previous.createdBy !== this.actor.uid || previous.cashSessionId !== input.cashSessionId
+          || previous.type !== type || previous.amountCents !== amountCents || previous.reason !== reason) {
+          throw new Error('Este identificador ya corresponde a otro movimiento.');
+        }
+        return;
+      }
       if (!sessionSnapshot.exists() || sessionSnapshot.data().status !== 'open') {
         throw new Error('La caja seleccionada ya no está abierta.');
       }
@@ -728,10 +753,16 @@ export class DataService {
         action: type === 'in' ? 'cash.movement_in' : 'cash.movement_out',
         details: `${input.cashSessionId}: ${amountCents} - ${reason}`,
         actorId: this.actor.uid,
+        actorName: this.actor.displayName || this.actor.username || '',
         actorEmail: this.actor.email || '',
         createdAt: serverTimestamp()
       });
-    });
+    }); } catch (error) {
+      // Some racing commits are rejected by immutable-write rules before the
+      // SDK retries. Only a server-confirmed, identical record counts as success.
+      const confirmed = requestId ? await getDocFromServer(movementRef).catch(() => null) : null;
+      if (!confirmed?.exists() || !matches(confirmed.data())) throw error;
+    }
     return movementRef.id;
   }
 
@@ -759,7 +790,7 @@ export class DataService {
   async audit(action, details) {
     await addDoc(collection(this.db, 'auditLogs'), {
       action, details: String(details || '').slice(0, 1000),
-      actorId: this.actor.uid, actorEmail: this.actor.email || '', createdAt: serverTimestamp()
+      actorId: this.actor.uid, actorName: this.actor.displayName || this.actor.username || '', actorEmail: this.actor.email || '', createdAt: serverTimestamp()
     });
   }
 }

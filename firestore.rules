@@ -381,10 +381,31 @@ service cloud.firestore {
       allow list: if false;
       allow create, update: if active()
         && request.auth.uid == userId
-        && request.resource.data.keys().hasOnly(['drawerPin', 'updatedAt', 'updatedBy'])
+        && request.resource.data.keys().hasOnly(['drawerPin', 'pinUnique', 'updatedAt', 'updatedBy'])
         && validDrawerPin(request.resource.data.drawerPin)
-        && request.resource.data.updatedBy == request.auth.uid;
+        && request.resource.data.pinUnique == true
+        && request.resource.data.updatedBy == request.auth.uid
+        && writtenNow(request.resource.data.updatedAt)
+        && getAfter(/databases/$(database)/documents/pinClaims/$(request.resource.data.drawerPin)).data.userId == userId
+        && (!exists(/databases/$(database)/documents/userSecrets/$(userId))
+          || !resource.data.get('pinUnique', false)
+          || resource.data.drawerPin == request.resource.data.drawerPin
+          || !existsAfter(/databases/$(database)/documents/pinClaims/$(resource.data.drawerPin)));
       allow delete: if false;
+    }
+
+    // No client can list/read these IDs (nor inspect which user owns a PIN).
+    // Reservations and private PIN changes must be committed together.
+    match /pinClaims/{pin} {
+      allow read: if false;
+      allow create, update: if active() && validDrawerPin(pin)
+        && request.resource.data.keys().hasOnly(['userId'])
+        && request.resource.data.userId == request.auth.uid
+        && (!exists(/databases/$(database)/documents/pinClaims/$(pin)) || resource.data.userId == request.auth.uid)
+        && getAfter(/databases/$(database)/documents/userSecrets/$(request.auth.uid)).data.drawerPin == pin
+        && getAfter(/databases/$(database)/documents/userSecrets/$(request.auth.uid)).data.pinUnique == true;
+      allow delete: if active() && resource.data.userId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/userSecrets/$(request.auth.uid)).data.drawerPin != pin;
     }
 
     match /settings/{settingId} {
@@ -598,6 +619,8 @@ service cloud.firestore {
         && request.resource.data.closingCents is int
         && request.resource.data.closingCents >= 0
         && request.resource.data.varianceCents == request.resource.data.closingCents - request.resource.data.expectedCents
+        && writtenNow(request.resource.data.closedAt)
+        && (request.resource.data.varianceCents == 0 || (request.resource.data.closingNotes is string && request.resource.data.closingNotes.size() >= 3))
         && request.resource.data.closedBy == request.auth.uid
         && existsAfter(/databases/$(database)/documents/counters/$(cashLockId()))
         && getAfter(/databases/$(database)/documents/counters/$(cashLockId())).data.activeSessionId == null);

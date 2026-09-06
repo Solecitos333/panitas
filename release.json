@@ -1,12 +1,13 @@
 {
-  "versionName": "1.4.0-rc.5",
-  "versionCode": 12,
+  "versionName": "1.4.0-rc.8",
+  "versionCode": 15,
   "channel": "release-candidate",
   "minimumSupportedVersionCode": 10,
   "mandatory": false,
   "releaseNotes": [
-    "Actualizaciones automáticas con protección de ventas y cambios sin guardar.",
-    "Publicación e integridad verificadas en Windows y Linux.",
-    "Instalación guiada en Android y recuperación al cancelar."
+    "Tipografía térmica restaurada a tamaño cómodo, nítido y perfectamente legible.",
+    "Modo continuo Star Raster (ESC * r P 0) para corte exacto sin colas ni saltos de página.",
+    "Logotipo térmico de alta definición sin duplicación de cabeceras.",
+    "Seguridad de caja con PIN personal, auditoría de gaveta e idempotencia."
   ]
 }

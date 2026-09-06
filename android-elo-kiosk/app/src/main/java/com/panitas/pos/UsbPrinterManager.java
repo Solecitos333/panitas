@@ -364,6 +364,16 @@ public class UsbPrinterManager {
             out.write(new byte[]{ (byte) 0x1B, (byte) 0x2A, (byte) 0x72, (byte) 0x52, (byte) 0x00 }); // ESC * r R \0 (Reset raster settings)
             out.write(new byte[]{ (byte) 0x1B, (byte) 0x2A, (byte) 0x72, (byte) 0x41 });       // ESC * r A (Begin raster mode)
 
+            // Configuración Star Raster para eliminación total del desperdicio de papel:
+            // ESC * r P '0' \0: Activa modo continuo (longitud de página 0 = longitud variable exacta sin salto de página fijo)
+            out.write(new byte[]{ 0x1B, 0x2A, 0x72, 0x50, 0x30, 0x00 });
+            // ESC * r T '0' \0: Margen superior en 0 puntos
+            out.write(new byte[]{ 0x1B, 0x2A, 0x72, 0x54, 0x30, 0x00 });
+            // ESC * r m l '0' \0: Margen izquierdo en 0 puntos
+            out.write(new byte[]{ 0x1B, 0x2A, 0x72, 0x6D, 0x6C, 0x30, 0x00 });
+            // ESC * r m r '0' \0: Margen derecho en 0 puntos
+            out.write(new byte[]{ 0x1B, 0x2A, 0x72, 0x6D, 0x72, 0x30, 0x00 });
+
             // 2. Scanlines de píxeles
             int[] pixels = new int[width * height];
             bitmap.getPixels(pixels, 0, width, 0, 0, width, height);
@@ -390,20 +400,13 @@ public class UsbPrinterManager {
                 out.write(lineData);
             }
 
-            // 3. Avance de 40 líneas en blanco para separar del cabezal térmico
-            byte[] blankData = new byte[widthBytes];
-            for (int f = 0; f < 40; f++) {
-                out.write(lineHeader);
-                out.write(blankData);
-            }
-
-            // 4. Finalizar Modo Raster Star
+            // 3. Finalizar Modo Raster Star
             out.write(new byte[]{ (byte) 0x1B, (byte) 0x2A, (byte) 0x72, (byte) 0x42 }); // ESC * r B (End raster mode)
 
-            // 5. Avance de papel y corte automático parcial
-            out.write(new byte[]{ (byte) 0x1B, (byte) 0x64, (byte) 0x02 });             // ESC d 2 (Feed and partial cut)
+            // 4. Avance de papel a la cuchilla y corte
+            out.write(new byte[]{ (byte) 0x1B, (byte) 0x64, (byte) 0x02 });             // ESC d 2 (Feed to cutter and cut)
 
-            // 6. Apertura de gaveta si fue solicitada
+            // 5. Apertura de gaveta si fue solicitada
             if (openDrawer) {
                 out.write(new byte[]{ 0x07 });                                           // BEL
             }
@@ -426,6 +429,7 @@ public class UsbPrinterManager {
 
     /**
      * Renderizador gráfico de ticket térmico 80mm (576 píxeles de ancho).
+     * Proporciona tipografía cómoda, legible, nítida y perfectamente contrastada.
      */
     public android.graphics.Bitmap renderTicketBitmap(String text) {
         int width = 576; // 80mm estándar a 203 DPI
@@ -441,47 +445,53 @@ public class UsbPrinterManager {
 
         android.graphics.Paint normalPaint = new android.graphics.Paint();
         normalPaint.setColor(android.graphics.Color.BLACK);
-        normalPaint.setTextSize(22f);
+        normalPaint.setTextSize(24f);
         normalPaint.setTypeface(android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.NORMAL));
         normalPaint.setAntiAlias(false);
 
         android.graphics.Paint boldPaint = new android.graphics.Paint();
         boldPaint.setColor(android.graphics.Color.BLACK);
-        boldPaint.setTextSize(22f);
+        boldPaint.setTextSize(25f);
         boldPaint.setTypeface(android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD));
         boldPaint.setAntiAlias(false);
 
         android.graphics.Paint linePaint = new android.graphics.Paint();
         linePaint.setColor(android.graphics.Color.BLACK);
-        linePaint.setStrokeWidth(2f);
+        linePaint.setStrokeWidth(2.0f);
 
-        // Calcular altura dinámica
-        int totalHeight = 40 + (receiptLogo != null ? receiptLogo.getHeight() + 18 : 0);
+        // Calcular altura dinámica proporcional y legible
+        int topMargin = 12;
+        int totalHeight = topMargin + (receiptLogo != null ? receiptLogo.getHeight() + 10 : 0);
         for (String line : lines) {
             String trimmed = line.trim();
             if (trimmed.startsWith("[LOGO]")) {
                 continue;
-            } else if (trimmed.startsWith("[TITLE]") || trimmed.startsWith("[B]")) {
-                totalHeight += 38;
+            } else if (trimmed.startsWith("[TITLE]")) {
+                if (receiptLogo != null && trimmed.toUpperCase().contains("PANITAS")) continue;
+                totalHeight += 36;
+            } else if (trimmed.startsWith("[C][B]") || (trimmed.startsWith("[B]") && trimmed.toUpperCase().contains("TOTAL"))) {
+                totalHeight += 36;
+            } else if (trimmed.startsWith("[B]") || trimmed.startsWith("[C]")) {
+                totalHeight += 30;
             } else if (trimmed.startsWith("[SEP]") || trimmed.startsWith("---") || trimmed.startsWith("===")) {
-                totalHeight += 20;
+                totalHeight += 12;
             } else if (trimmed.isEmpty()) {
-                totalHeight += 16;
+                totalHeight += 10;
             } else {
-                totalHeight += 28;
+                totalHeight += 30;
             }
         }
-        totalHeight += 60; // Margen inferior
+        totalHeight += 20; // Margen inferior
 
         android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(width, totalHeight, android.graphics.Bitmap.Config.ARGB_8888);
         android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
         canvas.drawColor(android.graphics.Color.WHITE);
 
-        int y = 35;
+        int y = topMargin;
         if (receiptLogo != null) {
             float logoX = Math.max(10, (width - receiptLogo.getWidth()) / 2f);
             canvas.drawBitmap(receiptLogo, logoX, y, null);
-            y += receiptLogo.getHeight() + 18;
+            y += receiptLogo.getHeight() + 10;
         }
         for (String rawLine : lines) {
             String line = rawLine.trim();
@@ -489,15 +499,22 @@ public class UsbPrinterManager {
             if (line.startsWith("[LOGO]")) {
                 continue;
             } else if (line.startsWith("[SEP]") || line.startsWith("---") || line.startsWith("===")) {
+                y += 4;
+                canvas.drawLine(14, y, width - 14, y, linePaint);
                 y += 8;
-                canvas.drawLine(10, y, width - 10, y, linePaint);
-                y += 12;
             } else if (line.startsWith("[TITLE]")) {
+                if (receiptLogo != null && line.toUpperCase().contains("PANITAS")) continue;
                 String content = line.substring(7).trim();
                 float textWidth = titlePaint.measureText(content);
                 float x = Math.max(10, (width - textWidth) / 2f);
-                canvas.drawText(content, x, y + 24, titlePaint);
-                y += 38;
+                canvas.drawText(content, x, y + 26, titlePaint);
+                y += 36;
+            } else if (line.startsWith("[C][B]") || (line.startsWith("[B]") && line.toUpperCase().contains("TOTAL"))) {
+                String content = line.replace("[C]", "").replace("[B]", "").trim();
+                float textWidth = titlePaint.measureText(content);
+                float x = Math.max(10, (width - textWidth) / 2f);
+                canvas.drawText(content, x, y + 26, titlePaint);
+                y += 36;
             } else if (line.startsWith("[C]")) {
                 String content = line.substring(3).trim();
                 boolean isBold = content.startsWith("[B]");
@@ -505,37 +522,37 @@ public class UsbPrinterManager {
                 android.graphics.Paint p = isBold ? boldPaint : normalPaint;
                 float textWidth = p.measureText(content);
                 float x = Math.max(10, (width - textWidth) / 2f);
-                canvas.drawText(content, x, y + 20, p);
-                y += 28;
+                canvas.drawText(content, x, y + 22, p);
+                y += 30;
             } else if (line.startsWith("[B]")) {
                 String content = line.substring(3).trim();
                 boolean centered = content.startsWith("[C]");
                 if (centered) content = content.substring(3).trim();
                 float textWidth = boldPaint.measureText(content);
                 float x = centered ? Math.max(10, (width - textWidth) / 2f) : 15f;
-                canvas.drawText(content, x, y + 20, boldPaint);
-                y += 28;
+                canvas.drawText(content, x, y + 22, boldPaint);
+                y += 30;
             } else if (line.startsWith("[R]")) {
                 String content = line.substring(3).trim();
                 float textWidth = normalPaint.measureText(content);
                 float x = Math.max(10, width - 15 - textWidth);
-                canvas.drawText(content, x, y + 20, normalPaint);
-                y += 28;
+                canvas.drawText(content, x, y + 22, normalPaint);
+                y += 30;
             } else if (line.contains("  ") && line.length() > 20) {
                 // Fila con dos columnas (ej. Nombre del producto y Precio)
                 int lastSpace = line.lastIndexOf("  ");
                 String left = line.substring(0, lastSpace).trim();
                 String right = line.substring(lastSpace).trim();
 
-                canvas.drawText(left, 15, y + 20, normalPaint);
+                canvas.drawText(left, 15, y + 22, normalPaint);
                 float rightWidth = normalPaint.measureText(right);
-                canvas.drawText(right, width - 15 - rightWidth, y + 20, normalPaint);
-                y += 28;
+                canvas.drawText(right, width - 15 - rightWidth, y + 22, normalPaint);
+                y += 30;
             } else if (line.isEmpty()) {
-                y += 16;
+                y += 10;
             } else {
-                canvas.drawText(line, 15, y + 20, normalPaint);
-                y += 28;
+                canvas.drawText(line, 15, y + 22, normalPaint);
+                y += 30;
             }
         }
 
@@ -547,12 +564,25 @@ public class UsbPrinterManager {
      *
      * La imagen corporativa contiene un fondo negro con ilustraciones de comida. Una conversión
      * normal a escala de grises convierte ese fondo en una mancha. Aquí se recorta solamente el
-     * logotipo, se descartan los tonos del fondo y se conservan los colores de las letras (rojo,
-     * amarillo, verde y blanco). Al final se engrosan un píxel: el resultado es legible incluso
-     * con la resolución y el calor variables de una impresora térmica.
+    /**
+     * Crea o carga el logotipo optimizado para recibos térmicos 80mm.
+     * Prioriza el recurso dedicado R.drawable.receipt_logo (monocromático de alto contraste),
+     * y si no existe, procesa R.drawable.app_icon extrayendo con precisión las letras rojas
+     * de la marca con contraste limpio para evitar manchas térmicas.
      */
     private android.graphics.Bitmap createReceiptLogoBitmap() {
         try {
+            // 1. Intentar cargar el recurso gráfico dedicado de alta definición para recibos
+            int receiptResId = context.getResources().getIdentifier("receipt_logo", "drawable", context.getPackageName());
+            if (receiptResId != 0) {
+                android.graphics.Bitmap logo = android.graphics.BitmapFactory.decodeResource(
+                        context.getResources(), receiptResId);
+                if (logo != null) {
+                    return logo;
+                }
+            }
+
+            // 2. Fallback de extracción desde app_icon: únicamente letras rojas con espacio claro
             android.graphics.Bitmap source = android.graphics.BitmapFactory.decodeResource(
                     context.getResources(), R.drawable.app_icon);
             if (source == null) return null;
@@ -565,52 +595,23 @@ public class UsbPrinterManager {
             android.graphics.Bitmap wordmark = android.graphics.Bitmap.createBitmap(
                     source, left, top, cropWidth, cropHeight);
 
-            // Un ancho amplio evita que las letras redondeadas de "Panitas" se empasten.
-            int targetWidth = 320;
+            int targetWidth = 300;
             int targetHeight = Math.max(1, Math.round(cropHeight * (targetWidth / (float) cropWidth)));
             android.graphics.Bitmap scaled = android.graphics.Bitmap.createScaledBitmap(
                     wordmark, targetWidth, targetHeight, true);
-            boolean[][] ink = new boolean[targetHeight][targetWidth];
+
+            android.graphics.Bitmap mono = android.graphics.Bitmap.createBitmap(
+                    targetWidth, targetHeight, android.graphics.Bitmap.Config.ARGB_8888);
 
             for (int y = 0; y < targetHeight; y++) {
                 for (int x = 0; x < targetWidth; x++) {
                     int color = scaled.getPixel(x, y);
-                    int alpha = android.graphics.Color.alpha(color);
                     int red = android.graphics.Color.red(color);
                     int green = android.graphics.Color.green(color);
                     int blue = android.graphics.Color.blue(color);
-                    int luminance = (red * 299 + green * 587 + blue * 114) / 1000;
-
-                    // Colores propios de la marca. Los marrones/negros del fondo no pasan.
-                    boolean redLetter = red >= 145 && red > green * 1.35f && red > blue * 1.8f;
-                    boolean yellowOutline = red >= 135 && green >= 105 && blue <= 105
-                            && (red + green) >= 275;
-                    boolean greenLetter = green >= 92 && green > red * 0.86f
-                            && green > blue * 1.12f && luminance >= 92;
-                    boolean whiteLetter = luminance >= 195 && Math.abs(red - green) <= 42
-                            && Math.abs(green - blue) <= 42;
-                    ink[y][x] = alpha > 120 && (redLetter || yellowOutline || greenLetter || whiteLetter);
-                }
-            }
-
-            android.graphics.Bitmap mono = android.graphics.Bitmap.createBitmap(
-                    targetWidth, targetHeight, android.graphics.Bitmap.Config.ARGB_8888);
-            for (int y = 0; y < targetHeight; y++) {
-                for (int x = 0; x < targetWidth; x++) {
-                    // Dilatación de un píxel: mejora letras finas sin recuperar el fondo.
-                    boolean black = false;
-                    for (int dy = -1; dy <= 1 && !black; dy++) {
-                        int sampleY = y + dy;
-                        if (sampleY < 0 || sampleY >= targetHeight) continue;
-                        for (int dx = -1; dx <= 1; dx++) {
-                            int sampleX = x + dx;
-                            if (sampleX >= 0 && sampleX < targetWidth && ink[sampleY][sampleX]) {
-                                black = true;
-                                break;
-                            }
-                        }
-                    }
-                    mono.setPixel(x, y, black ? android.graphics.Color.BLACK : android.graphics.Color.WHITE);
+                    // Solo el núcleo rojo de las letras para evitar que los bordes se fundan
+                    boolean isRedLetter = red >= 160 && red > green * 1.45f && red > blue * 1.75f;
+                    mono.setPixel(x, y, isRedLetter ? android.graphics.Color.BLACK : android.graphics.Color.WHITE);
                 }
             }
             return mono;

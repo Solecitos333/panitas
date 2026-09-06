@@ -344,7 +344,10 @@ export function buildInvoicePlainText(invoice, settings = {}, payments = [], cha
     changeCents: Number(cashPayment.changeCents || 0)
   } : null);
   lines.push('[LOGO]');
-  lines.push(`[TITLE]${(settings.name || 'LOS PANITAS BY NECHY').toUpperCase()}`);
+  const businessName = String(settings.name || 'Los Panitas by Nechy').trim();
+  if (!businessName.toUpperCase().includes('PANITAS')) {
+    lines.push(`[TITLE]${businessName.toUpperCase()}`);
+  }
   if (settings.rnc && settings.rnc !== 'N/D') lines.push(`[C]RNC: ${settings.rnc}`);
   if (settings.phone) lines.push(`[C]Tel: ${settings.phone}`);
   if (settings.address) lines.push(`[C]${settings.address}`);
@@ -397,11 +400,11 @@ export function buildInvoicePlainText(invoice, settings = {}, payments = [], cha
   if (resolvedChangeInfo && Number(resolvedChangeInfo.receivedCents || 0) > 0) {
     lines.push(`Efectivo Recibido:                      ${formatMoney(resolvedChangeInfo.receivedCents).padStart(11)}`);
     lines.push(`Devuelta / Cambio:                      ${formatMoney(resolvedChangeInfo.changeCents).padStart(11)}`);
-    lines.push('[SEP]');
   }
   const balance = Number(invoice.totalCents || 0) - Number(invoice.paidCents || 0);
   if (balance > 0) lines.push(`[B]BALANCE PENDIENTE: ${formatMoney(balance)}`);
 
+  lines.push('[SEP]');
   lines.push(`[C]${settings.receiptFooter || '¡Gracias por su compra! Vuelva pronto.'}`);
   if (settings.instagram) lines.push(`[C]Instagram: @${settings.instagram}`);
   if (settings.whatsapp) lines.push(`[C]WhatsApp: ${settings.whatsapp}`);
@@ -556,12 +559,17 @@ export function buildPrebillPlainText(orderOrInvoice, settings = {}) {
   const tipCents = Number(orderOrInvoice.tipCents || 0);
   const totalCents = Number(orderOrInvoice.totalCents || (subtotalCents - discountCents + taxCents + tipCents));
   const lines = [
-    '[LOGO]',
-    `[TITLE]${(settings.name || 'Los Panitas by Nechy').toUpperCase()}`,
+    '[LOGO]'
+  ];
+  const businessName = String(settings.name || 'Los Panitas by Nechy').trim();
+  if (!businessName.toUpperCase().includes('PANITAS')) {
+    lines.push(`[TITLE]${businessName.toUpperCase()}`);
+  }
+  lines.push(
     '[C]ESTADO DE CONSUMO / PRE-CUENTA',
     '[C](NO VÁLIDO COMO COMPROBANTE FISCAL)',
     '[SEP]'
-  ];
+  );
   if (orderOrInvoice.tableName) lines.push(`[B]MESA: ${orderOrInvoice.tableName}`);
   lines.push(`Fecha: ${formatDate(orderOrInvoice.createdAt || new Date(), true)}`);
   if (orderOrInvoice.clientName) lines.push(`Cliente: ${String(orderOrInvoice.clientName).slice(0, 34)}`);

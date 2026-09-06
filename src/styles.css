@@ -646,19 +646,20 @@ tbody tr:hover { background: rgba(255,255,255,.018); }
 
 /* Grid de billetes */
 .pos-bill-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr);
-  gap: 7px; margin-bottom: 10px;
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 6px; margin-bottom: 8px;
 }
 .pos-bill-btn {
-  min-height: 46px; padding: 8px 6px;
-  border: 1px solid var(--line); border-radius: 10px;
+  min-height: 40px; padding: 6px 4px;
+  border: 1px solid var(--line); border-radius: 8px;
   background: #1a1f1e; color: #ddd;
-  font-weight: 800; font-size: 0.82rem; cursor: pointer;
+  font-weight: 800; font-size: 0.85rem; cursor: pointer;
   transition: border-color .12s, background .12s, transform .1s;
   -webkit-tap-highlight-color: transparent;
 }
 .pos-bill-btn:hover, .pos-bill-btn:active { border-color: var(--brand-2); color: var(--brand-2); background: rgba(215,154,60,.12); transform: scale(0.97); }
 .pos-bill-btn.exact { border-color: rgba(84,201,141,.4); color: var(--green); background: rgba(84,201,141,.08); }
+.pos-bill-btn.clear { grid-column: span 2; }
 
 /* Display de cambio */
 .pos-change-display {
@@ -706,20 +707,22 @@ tbody tr:hover { background: rgba(255,255,255,.018); }
 
 /* Ajuste del cart-panel para flujo nuevo */
 .pos-fast-cart { display: flex; flex-direction: column; padding: 0 !important; overflow: hidden; }
-.pos-fast-cart .cart-lines { padding: 0 18px; max-height: 260px; overflow-y: auto; }
+.pos-fast-cart .pos-checkout-form-inner { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 0 !important; overflow: hidden; }
+.pos-fast-cart .pos-cart-header { flex: 0 0 auto; }
+.pos-fast-cart .pos-cart-scroll-area { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding-bottom: 24px; }
+.pos-fast-cart .cart-lines { padding: 0 18px; max-height: 220px; overflow-y: auto; }
 .pos-fast-cart .cart-totals { border-bottom: none; }
 .pos-fast-cart .cart-panel > header { display: none; } /* evita duplicación si existe */
 
 @media (min-width: 901px) {
   /* El carrito comienza debajo del encabezado del POS; reservar ese espacio
-     evita que el botón principal quede fuera de una terminal de 768/800 px. */
-  .pos-fast-cart { max-height: calc(100vh - 128px); }
-  .pos-fast-cart .pos-checkout-form-inner { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+     evita que el botón principal quede fuera de una terminal de 768/800 px o 1080p. */
+  .pos-fast-cart { height: calc(100vh - 210px); max-height: calc(100vh - 210px); }
   .pos-fast-cart .pos-cobrar-btn { flex: 0 0 auto; z-index: 4; margin: 0; box-shadow: 0 -10px 22px rgba(0,0,0,.35); }
 }
 
 @media (max-width: 900px) {
-  .pos-fast-cart > .pos-cobrar-btn { display: none; }
+  .pos-fast-cart .pos-cobrar-btn { display: none; }
   .mobile-pos-charge {
     position: fixed; right: 14px; bottom: 14px; z-index: 42; display: flex; min-height: 58px;
     align-items: center; justify-content: center; gap: 9px; max-width: calc(100vw - 28px); padding: 13px 20px;
@@ -733,7 +736,53 @@ tbody tr:hover { background: rgba(255,255,255,.018); }
 @media (max-width: 480px) {
   .pos-pay-method-grid { grid-template-columns: repeat(2,minmax(0,1fr)); padding-inline: 14px; }
   .pos-method-panel, .pos-step-label { padding-inline: 14px; }
-  .pos-fast-cart { overflow: visible; }
+}
+
+/* Indicadores visuales de PIN tipo terminal POS profesional */
+.pin-slots-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 0 12px;
+}
+.pin-slot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.04);
+  transition: all 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  display: inline-block;
+  box-sizing: border-box;
+}
+.pin-slot.filled {
+  border-color: var(--brand-2);
+  background: var(--brand-2);
+  box-shadow: 0 0 14px rgba(239, 189, 105, 0.55);
+  transform: scale(1.2);
+}
+
+/* Respuesta táctil inmediata para terminal ELO */
+.pin-num-btn, .pin-clear-btn, .pin-del-btn, .pos-pay-btn, .pos-bill-btn {
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  transition: transform 0.08s ease, background 0.08s ease, border-color 0.08s ease;
+}
+.pin-num-btn:active, .pin-clear-btn:active, .pin-del-btn:active {
+  transform: scale(0.93) !important;
+  background: rgba(239, 189, 105, 0.25) !important;
+  border-color: var(--brand-2) !important;
+}
+.pos-pay-btn:active {
+  transform: scale(0.94) !important;
+}
+.pos-bill-btn:active {
+  transform: scale(0.93) !important;
+}
+.product-card:active {
+  transform: scale(0.96) !important;
 }
 
 @media print {

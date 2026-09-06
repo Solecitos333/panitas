@@ -92,6 +92,10 @@ test('el PIN de cuatro dígitos pertenece al usuario que inició sesión', async
   assert.equal(authorized.user.id, actor.uid);
   await assert.rejects(() => service.verifyDrawerPin('4827'), /PIN incorrecto/);
   await assert.rejects(() => service.saveMyDrawerPin('12345'), /exactamente 4/);
+  await assert.rejects(() => service.saveMyDrawerPin('48x26'), /exactamente 4/);
+  service.data.users.push({ id: 'another', drawerPin: '7492' });
+  await assert.rejects(() => service.saveMyDrawerPin('7492'), /otra persona/);
+  await service.verifyDrawerPin('4826');
 });
 
 test('un doble toque con el mismo requestId no duplica factura, pago ni descuento de inventario', async () => {

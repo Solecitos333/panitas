@@ -17,6 +17,7 @@ export class MemoryDataService {
       cashSessions: [],
       cashMovements: [],
       inventoryMovements: [],
+      auditLogs: [],
       orders: [],
       users: [
         {
@@ -84,13 +85,16 @@ export class MemoryDataService {
     return /^\d{4}$/.test(String(current?.drawerPin || ""));
   }
   async saveMyDrawerPin(pin) {
-    const drawerPin = String(pin || "").replace(/\D/g, "");
+    const drawerPin = String(pin || "").trim();
     if (!/^\d{4}$/.test(drawerPin))
       throw new Error("El PIN debe tener exactamente 4 dígitos.");
     const current = this.data.users.find(
       (entry) => entry.id === this.actor.uid,
     );
     if (!current) throw new Error("Usuario no encontrado.");
+    if (this.data.users.some((user) => user.id !== this.actor.uid && user.drawerPin === drawerPin)) {
+      throw new Error('Ese PIN ya está asignado a otra persona. Elige otro.');
+    }
     current.drawerPin = drawerPin;
     current.updatedAt = new Date();
     this.emit("users");
@@ -458,6 +462,7 @@ export class MemoryDataService {
     const session = this.data.cashSessions.find((item) => item.id === id);
     if (!session || session.status !== "open")
       throw new Error("La caja ya no está abierta.");
+    if (session.openedBy !== this.actor.uid) throw new Error('No puedes cerrar la caja de otro usuario.');
     const closingCents = Number(input.closingCents);
     const expectedCents = Number(session.expectedCents ?? session.openingCents ?? 0);
     if (
@@ -467,6 +472,9 @@ export class MemoryDataService {
       expectedCents < 0
     )
       throw new Error("Arqueo de caja inválido.");
+    if (closingCents !== expectedCents && String(input.notes || '').trim().length < 3) {
+      throw new Error('Hay una diferencia de caja. Recuenta el efectivo y escribe una nota antes de cerrar.');
+    }
     Object.assign(session, {
       status: "closed",
       expectedCents,
@@ -488,6 +496,13 @@ export class MemoryDataService {
       throw new Error("Monto de movimiento inválido.");
     if (reason.length < 3)
       throw new Error("Indica un motivo de al menos 3 caracteres.");
+    const previous = input.requestId && this.data.cashMovements.find((item) => item.id === input.requestId);
+    if (previous) {
+      if (previous.createdBy !== this.actor.uid || previous.cashSessionId !== input.cashSessionId || previous.type !== input.type || previous.amountCents !== amountCents || previous.reason !== reason) {
+        throw new Error('Este identificador ya corresponde a otro movimiento.');
+      }
+      return previous.id;
+    }
     const session = this.data.cashSessions.find(
       (item) =>
         item.id === input.cashSessionId &&
@@ -495,7 +510,7 @@ export class MemoryDataService {
         item.openedBy === this.actor.uid,
     );
     if (!session) throw new Error("La caja seleccionada ya no está abierta.");
-    const id = createOperationId("cash-movement");
+    const id = input.requestId || createOperationId("cash-movement");
     const expectedCents = Number(session.expectedCents ?? session.openingCents ?? 0)
       + (input.type === "in" ? amountCents : -amountCents);
     if (!Number.isInteger(expectedCents) || expectedCents < 0)
@@ -514,6 +529,10 @@ export class MemoryDataService {
     session.lastCashActivityType = "movement";
     this.emit("cashMovements");
     return id;
+  }
+  async audit(action, details) {
+    this.data.auditLogs.unshift({ id: createOperationId('audit'), action, details, actorId: this.actor.uid, actorName: this.actor.displayName, createdAt: new Date() });
+    this.emit('auditLogs');
   }
   async seedFoundation() {}
 }

@@ -121,6 +121,7 @@ export function renderCash(state) {
           <label>Movimiento<select name="type" required><option value="in">Entrada de efectivo</option><option value="out">Salida de efectivo</option></select></label>
           <label>Monto<input name="amount" type="number" min="0.01" step="0.01" required></label>
           <label>Motivo<input name="reason" minlength="3" maxlength="300" placeholder="Compra menor, cambio, depósito…" required></label>
+          <label>PIN personal<input name="pin" type="password" inputmode="numeric" autocomplete="off" pattern="[0-9]{4}" maxlength="4" required></label>
           <button class="button primary" type="submit">Registrar movimiento</button>
         </form>
       </section>
@@ -137,7 +138,8 @@ export function renderCash(state) {
         <form id="cash-close-form" class="inline-form">
           <input type="hidden" name="expected" value="${expectedCash}">
           <label>Efectivo contado<input name="closing" type="number" min="0" step="0.01" required></label>
-          <label>Nota de cierre<input name="notes" maxlength="500"></label>
+          <label>Nota de cierre<input name="notes" maxlength="500" placeholder="Obligatoria si hay diferencia"></label>
+          <label>PIN personal<input name="pin" type="password" inputmode="numeric" autocomplete="off" pattern="[0-9]{4}" maxlength="4" required></label>
           <button class="button danger" type="submit"><i data-lucide="lock"></i> Cerrar caja (Corte Z)</button>
         </form>
       </section>` : `
@@ -150,6 +152,7 @@ export function renderCash(state) {
         <form id="cash-open-form" class="inline-form">
           <label>Fondo inicial<input name="opening" type="number" min="0" step="0.01" value="0" required></label>
           <label>Nota<input name="notes" maxlength="500" placeholder="Turno, responsable…"></label>
+          <label>PIN personal<input name="pin" type="password" inputmode="numeric" autocomplete="off" pattern="[0-9]{4}" maxlength="4" required></label>
           <button class="button primary" type="submit">Abrir caja</button>
         </form>
       </section>`}
@@ -323,7 +326,7 @@ export function renderAuditLogs(state) {
     </section>
     <div class="metric-grid">
       <article class="metric-card"><i data-lucide="shield-check"></i><div><span>Total registros</span><strong>${logs.length}</strong></div></article>
-      <article class="metric-card positive"><i data-lucide="wallet"></i><div><span>Aperturas de gaveta</span><strong>${logs.filter(l => l.action === 'cash.drawer_opened').length}</strong></div></article>
+      <article class="metric-card positive"><i data-lucide="wallet"></i><div><span>Pulsos enviados a gaveta</span><strong>${logs.filter(l => l.action === 'cash.drawer_pulse_sent').length}</strong></div></article>
       <article class="metric-card warning"><i data-lucide="shield-alert"></i><div><span>Intentos fallidos</span><strong>${logs.filter(l => l.action === 'cash.drawer_failed').length}</strong></div></article>
     </div>
     <section class="surface-card data-surface">
@@ -358,6 +361,12 @@ function auditRow(item) {
   const toneClass = isFailed ? 'status-cancelled' : isDrawer ? 'status-paid' : 'status-partial';
   const actionLabel = ({
     'cash.drawer_opened': 'Apertura de gaveta (PIN)',
+    'cash.pin_authorized': 'PIN autorizado',
+    'cash.drawer_requested': 'Apertura solicitada',
+    'cash.drawer_pulse_sent': 'Pulso enviado (sin sensor de apertura)',
+    'cash.drawer_hardware_failed': 'Error al enviar pulso a gaveta',
+    'user.drawer_pin.updated': 'PIN personal actualizado',
+    'user.drawer_pin.provisioned': 'PIN asignado por administración',
     'cash.drawer_failed': 'Intento fallido de PIN',
     'cash.opened': 'Apertura de turno',
     'cash.closed': 'Cierre de turno',

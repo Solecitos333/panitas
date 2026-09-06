@@ -1,3 +1,4 @@
+import { businessDateKey } from '../lib/business-time.js';
 import { csvCell } from '../domain/billing.js';
 import { downloadText, escapeHtml, formatDate, formatMoney } from '../lib/format.js';
 
@@ -24,24 +25,24 @@ export function renderInvoiceModal(invoice, payments, capabilities = {}) {
 }
 
 export function renderReports(state) {
-  const selectedDateStr = state.selectedReportDate || new Date().toISOString().slice(0, 10);
+  const selectedDateStr = state.selectedReportDate || businessDateKey(new Date());
 
   // Facturas del día seleccionado
   const dayInvoices = (state.invoices || []).filter((inv) => {
     if (inv.status === 'cancelled' || inv.documentType !== 'invoice') return false;
     const d = inv.createdAt?.toDate ? inv.createdAt.toDate() : new Date(inv.createdAt || 0);
-    const ymd = d.toISOString().slice(0, 10);
+    const ymd = businessDateKey(d);
     return ymd === selectedDateStr;
   });
 
   const dayPayments = (state.payments || []).filter((p) => {
     const d = p.createdAt?.toDate ? p.createdAt.toDate() : new Date(p.createdAt || 0);
-    return d.toISOString().slice(0, 10) === selectedDateStr;
+    return businessDateKey(d) === selectedDateStr;
   });
 
   const dayMovements = (state.cashMovements || []).filter((m) => {
     const d = m.createdAt?.toDate ? m.createdAt.toDate() : new Date(m.createdAt || 0);
-    return d.toISOString().slice(0, 10) === selectedDateStr;
+    return businessDateKey(d) === selectedDateStr;
   });
 
   const dayTotalSales = dayInvoices.reduce((sum, item) => sum + Number(item.totalCents || 0), 0);
@@ -165,7 +166,7 @@ export function renderReports(state) {
 }
 
 export function exportReport(type, state) {
-  const date = new Date().toISOString().slice(0, 10);
+  const date = businessDateKey(new Date());
   if (type === 'invoices') {
     const header = ['Documento','Tipo','NCF','Cliente','RNC_Cedula','Fecha','Subtotal','Descuento','ITBIS','Propina_Legal','Total','Pagado','Balance','Estado'];
     const rows = state.invoices.map((item) => [

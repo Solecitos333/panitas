@@ -48,6 +48,58 @@ beforeEach(async () => {
 
 after(async () => environment?.cleanup());
 
+test('dos usuarios concurrentes no pueden reservar el mismo PIN y nadie puede leer las reservas', async () => {
+  const ownerDb = environment.authenticatedContext('owner', auth('owner')).firestore();
+  const cashierDb = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  const owner = new DataService(ownerDb, { uid: 'owner', displayName: 'Propietario' });
+  const cashier = new DataService(cashierDb, { uid: 'cashier', displayName: 'Caja' });
+  const results = await Promise.allSettled([owner.saveMyDrawerPin('5824'), cashier.saveMyDrawerPin('5824')]);
+  assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+  await assertFails(getDoc(doc(ownerDb, 'pinClaims', '5824')));
+  await assertFails(getDocs(collection(ownerDb, 'pinClaims')));
+  await assertFails(setDoc(doc(ownerDb, 'userSecrets', 'cashier'), { drawerPin: '7492', pinUnique: true, updatedBy: 'owner', updatedAt: serverTimestamp() }));
+});
+
+test('cambiar PIN libera solo la reserva propia y un fallo conserva el PIN anterior', async () => {
+  const ownerDb = environment.authenticatedContext('owner', auth('owner')).firestore();
+  const cashierDb = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  const owner = new DataService(ownerDb, { uid: 'owner', displayName: 'Propietario' });
+  const cashier = new DataService(cashierDb, { uid: 'cashier', displayName: 'Caja' });
+  await owner.saveMyDrawerPin('5824');
+  await cashier.saveMyDrawerPin('7492');
+  await assert.rejects(owner.saveMyDrawerPin('7492'), /reservar/);
+  await owner.verifyDrawerPin('5824');
+  await owner.saveMyDrawerPin('6138');
+  await cashier.saveMyDrawerPin('5824');
+  await cashier.verifyDrawerPin('5824');
+  const invalid = writeBatch(ownerDb);
+  invalid.set(doc(ownerDb, 'pinClaims', '9264'), { userId: 'owner' });
+  await assertFails(invalid.commit());
+  await assert.rejects(owner.saveMyDrawerPin('61x38'), /exactamente/);
+});
+
+test('reintentar una salida conserva un movimiento y un único descuento de caja', async () => {
+  const db = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  const service = new DataService(db, { uid: 'cashier', displayName: 'Caja' });
+  const input = { requestId: 'movement-retry-000001', cashSessionId: 'shift-cashier', type: 'out', amountCents: 100, reason: 'Compra menor' };
+  const ids = await Promise.all([service.createCashMovement(input), service.createCashMovement(input)]);
+  assert.equal(ids[0], ids[1]);
+  assert.equal((await getDoc(doc(db, 'cashSessions', 'shift-cashier'))).data().expectedCents, 400);
+  assert.equal((await getDocs(collection(db, 'cashMovements'))).size, 1);
+  await assert.rejects(service.createCashMovement({ ...input, amountCents: 200 }), /otro movimiento/);
+});
+
+test('un cierre con diferencia requiere nota y registra usuario y hora de servidor', async () => {
+  const db = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  const service = new DataService(db, { uid: 'cashier', displayName: 'Caja' });
+  await assert.rejects(service.closeCashSession('shift-cashier', { closingCents: 400 }), /diferencia/);
+  const result = await service.closeCashSession('shift-cashier', { closingCents: 400, notes: 'Recontado, falta revisar recibos.' });
+  assert.equal(result.varianceCents, -100);
+  const stored = (await getDoc(doc(db, 'cashSessions', 'shift-cashier'))).data();
+  assert.equal(stored.closedBy, 'cashier');
+  assert.ok(stored.closedAt.toMillis() > 0);
+});
+
 test('rechaza lecturas anónimas', async () => {
   await assertFails(getDoc(doc(environment.unauthenticatedContext().firestore(), 'settings', 'general')));
 });
@@ -278,7 +330,7 @@ test('el cierre de caja usa el esperado acumulado y libera el bloqueo del usuari
   const batch = writeBatch(db);
   batch.update(doc(db, 'cashSessions', 'shift-cashier'), {
     status: 'closed', expectedCents: 500, closingCents: 450, varianceCents: -50,
-    closingNotes: '', closedAt: serverTimestamp(), closedBy: 'cashier'
+    closingNotes: 'Diferencia recontada; pendiente de revisión.', closedAt: serverTimestamp(), closedBy: 'cashier'
   });
   batch.update(doc(db, 'counters', 'cash-cashier'), {
     activeSessionId: null, updatedAt: serverTimestamp(), updatedBy: 'cashier'
@@ -328,9 +380,7 @@ test('los conteos de inventario son exclusivos de gerencia y sus movimientos son
 
 test('el PIN solo vive en el secreto privado del propio usuario', async () => {
   const db = environment.authenticatedContext('owner', auth('owner')).firestore();
-  await assertSucceeds(setDoc(doc(db, 'userSecrets', 'owner'), {
-    drawerPin: '4321', updatedAt: serverTimestamp(), updatedBy: 'owner'
-  }));
+  await new DataService(db, { uid: 'owner', displayName: 'Propietario' }).saveMyDrawerPin('4321');
   await assertSucceeds(getDoc(doc(db, 'userSecrets', 'owner')));
   await assertFails(getDoc(doc(db, 'userSecrets', 'cashier')));
   await assertFails(getDocs(collection(db, 'userSecrets')));
