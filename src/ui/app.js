@@ -1,9 +1,9 @@
 import {
-  createIcons, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, BookOpen, Cake, Calculator, Calendar,
+  createIcons, AlertTriangle, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, BookOpen, Cake, Calculator, Calendar,
   ChartNoAxesCombined, Check, ChefHat, ChevronDown, CircleDollarSign, Clock3, Coffee, Cpu, CreditCard, Download, Eye,
   FileCheck2, FileSpreadsheet, Flame, Globe, KeyRound, Landmark, Layers, LayoutDashboard, Lock, LogOut, Menu,
-  MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Package, PackageOpen, PanelLeftClose, PanelLeftOpen,
-  Pencil, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, Salad, Sandwich, Save, ScanBarcode,
+  MessageSquare, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Package, PackageOpen, PanelLeftClose, PanelLeftOpen,
+  Pencil, Phone, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, Salad, Sandwich, Save, ScanBarcode,
   Search, Send, Settings, Sheet, ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, SlidersHorizontal,
   Smartphone, Sparkles, Star, Timer, Trash2, TrendingDown, TrendingUp, Usb, UserPlus, Users, Utensils, Volume2,
   Wallet, WalletCards, Wheat, Wifi, WifiOff, X
@@ -35,10 +35,10 @@ const NAV = [
 ];
 
 const icons = {
-  BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, BookOpen, Cake, Calculator, Calendar, ChartNoAxesCombined, Check, ChefHat,
+  AlertTriangle, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, BookOpen, Cake, Calculator, Calendar, ChartNoAxesCombined, Check, ChefHat,
   ChevronDown, CircleDollarSign, Clock3, Coffee, Cpu, CreditCard, Download, Eye, FileCheck2, FileSpreadsheet, Flame, Globe, KeyRound, Landmark,
-  Layers, LayoutDashboard, Lock, LogOut, Menu, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Package, PackageOpen, PanelLeftClose, PanelLeftOpen,
-  Pencil, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, Salad, Sandwich, Save, ScanBarcode, Search, Send, Settings, Sheet,
+  Layers, LayoutDashboard, Lock, LogOut, Menu, MessageSquare, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Package, PackageOpen, PanelLeftClose, PanelLeftOpen,
+  Pencil, Phone, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, Salad, Sandwich, Save, ScanBarcode, Search, Send, Settings, Sheet,
   ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, SlidersHorizontal, Smartphone, Sparkles, Star, Timer, Trash2, TrendingDown, TrendingUp, Usb, UserPlus, Users,
   Utensils, Volume2, Wallet, WalletCards, Wheat, Wifi, WifiOff, X
 };
@@ -535,8 +535,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelectorAll('[data-invoice-view]').forEach((button)=>button.addEventListener('click',()=>openInvoice(button.dataset.invoiceView)));
     root.querySelector('#invoice-search')?.addEventListener('input',filterInvoiceRows);
     root.querySelector('#invoice-status-filter')?.addEventListener('change',filterInvoiceRows);
-    root.querySelector('[data-product-new]')?.addEventListener('click',()=>openForm('product'));
-    root.querySelector('[data-client-new]')?.addEventListener('click',()=>openForm('client'));
+    root.querySelectorAll('[data-product-new]').forEach((button)=>button.addEventListener('click',()=>openForm('product')));
+    root.querySelectorAll('[data-client-new]').forEach((button)=>button.addEventListener('click',()=>openForm('client')));
     root.querySelector('[data-user-new]')?.addEventListener('click',()=>openUserForm());
     root.querySelectorAll('[data-user-edit]').forEach((button)=>button.addEventListener('click',()=>openUserForm(button.dataset.userEdit)));
     root.querySelectorAll('[data-product-edit]').forEach((button)=>button.addEventListener('click',()=>openForm('product',button.dataset.productEdit)));
@@ -1486,7 +1486,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     setBusy(submit, false);
     if (result.ok) renderContent();
   }
-  async function saveClient(event){event.preventDefault();const f=new FormData(event.currentTarget);await perform(()=>service.saveClient({id:f.get('id'),name:f.get('name'),rnc:f.get('rnc'),phone:f.get('phone'),email:f.get('email'),address:f.get('address'),active:f.get('active')==='on'}),'Cliente guardado.',closeModal);}
+  async function saveClient(event){event.preventDefault();const f=new FormData(event.currentTarget);await perform(()=>service.saveClient({id:f.get('id'),name:f.get('name'),rnc:f.get('rnc'),phone:f.get('phone'),email:f.get('email'),address:f.get('address'),notes:f.get('notes')||'',creditLimitCents:toCents(f.get('creditLimit')||0),active:f.get('active')==='on'}),'Cliente guardado.',closeModal);}
   async function saveUserAccess(event){event.preventDefault();const f=new FormData(event.currentTarget);if(!f.get('uid')&&f.get('password')!==f.get('passwordConfirm'))return toast('Las contraseñas no coinciden.','danger');await perform(()=>service.saveUserAccess({uid:f.get('uid'),displayName:f.get('displayName'),username:f.get('username'),password:f.get('password'),role:f.get('role'),active:f.get('active')==='on'}),f.get('uid')?'Acceso actualizado.':'Usuario creado correctamente.',closeModal);}
   async function submitPasswordChange(event){event.preventDefault();const f=new FormData(event.currentTarget);if(f.get('newPassword')!==f.get('newPasswordConfirm'))return toast('Las contraseñas nuevas no coinciden.','danger');await perform(()=>onChangePassword(f.get('currentPassword'),f.get('newPassword')),'Contraseña actualizada.',closeModal);}
   async function submitDrawerPinChange(event){event.preventDefault();const f=new FormData(event.currentTarget);if(f.get('drawerPin')!==f.get('drawerPinConfirm'))return toast('Los PINes no coinciden.','danger');await perform(()=>service.saveMyDrawerPin(f.get('drawerPin')),'PIN de gaveta actualizado.',closeModal);}

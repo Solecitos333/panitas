@@ -248,6 +248,8 @@ export class DataService {
       phone: String(client.phone || '').trim().slice(0, 30),
       email: String(client.email || '').trim().slice(0, 160),
       address: String(client.address || '').trim().slice(0, 300),
+      notes: String(client.notes || '').trim().slice(0, 500),
+      creditLimitCents: Math.max(0, Number(client.creditLimitCents || 0)),
       active: client.active !== false,
       updatedAt: serverTimestamp(),
       updatedBy: this.actor.uid

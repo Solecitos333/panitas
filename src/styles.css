@@ -1082,6 +1082,22 @@ input::placeholder, textarea::placeholder { color: #64748b; }
 
 .data-surface { overflow: hidden; }
 .table-scroll { overflow: auto; }
+.directory-desktop-table { display: block; }
+.directory-mobile-cards { display: none; }
+
+@media (max-width: 768px) {
+  .directory-desktop-table { display: none; }
+  .directory-mobile-cards { display: grid; gap: 12px; margin-top: 10px; }
+  .mobile-dir-card {
+    padding: 16px;
+    border-radius: 16px;
+    background: linear-gradient(155deg, rgba(26, 36, 54, 0.9) 0%, rgba(15, 23, 42, 0.98) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+    user-select: none;
+    touch-action: manipulation;
+  }
+}
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: 15px 18px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
 th { color: #79837f; background: rgba(0,0,0,.13); font-size: .65rem; letter-spacing: .08em; text-transform: uppercase; }

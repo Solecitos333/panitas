@@ -1,4 +1,4 @@
-﻿import { escapeHtml, formatDate, formatMoney } from '../lib/format.js';
+import { escapeHtml, formatDate, formatMoney } from '../lib/format.js';
 
 export function renderReceivables(state) {
   const pendingInvoices = (state.invoices || []).filter(
@@ -39,7 +39,8 @@ export function renderReceivables(state) {
         <h2>Fiao y Cuentas por Cobrar</h2>
         <p>Control de consumos pendientes de pago y cobro directo de clientes fiados.</p>
       </div>
-      <div class="header-actions">
+      <div class="header-actions" style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="button secondary" data-client-new><i data-lucide="user-plus"></i> Registrar Cliente para Fiao</button>
         <button class="button primary" data-route="pos"><i data-lucide="plus"></i> Nuevo Fiao en POS</button>
       </div>
     </section>
