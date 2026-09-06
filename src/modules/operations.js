@@ -569,6 +569,24 @@ function empty(icon, title, copy) { return `<div class="empty-state"><i data-luc
 export function getCategoryMeta(category = '') {
   const norm = String(category).toLowerCase().trim();
   if (norm === 'todos') return { icon: 'sparkles', color: '#f59e0b', bg: 'rgba(245,158,11,.12)', border: 'rgba(245,158,11,.3)' };
+  if (norm.includes('tostada')) {
+    return { icon: 'coffee', color: '#f59e0b', bg: 'rgba(245,158,11,.12)', border: 'rgba(245,158,11,.3)' };
+  }
+  if (norm.includes('rikitaki')) {
+    return { icon: 'flame', color: '#ea580c', bg: 'rgba(234,88,12,.12)', border: 'rgba(234,88,12,.3)' };
+  }
+  if (norm.includes('variedad') || norm.includes('empanada') || norm.includes('nacho') || norm.includes('omelet')) {
+    return { icon: 'sparkles', color: '#10b981', bg: 'rgba(16,185,129,.12)', border: 'rgba(16,185,129,.3)' };
+  }
+  if (norm.includes('yaroa')) {
+    return { icon: 'layers', color: '#eab308', bg: 'rgba(234,179,8,.12)', border: 'rgba(234,179,8,.3)' };
+  }
+  if (norm.includes('hot dog') || norm.includes('hotdog')) {
+    return { icon: 'flame', color: '#ef4444', bg: 'rgba(239,68,68,.12)', border: 'rgba(239,68,68,.3)' };
+  }
+  if (norm.includes('taco') || norm.includes('burrito') || norm.includes('quesadilla') || norm.includes('wrap')) {
+    return { icon: 'utensils', color: '#84cc16', bg: 'rgba(132,204,22,.12)', border: 'rgba(132,204,22,.3)' };
+  }
   if (norm.includes('burger') || norm.includes('hamburg') || norm.includes('sandwich')) {
     return { icon: 'sandwich', color: '#f97316', bg: 'rgba(249,115,22,.12)', border: 'rgba(249,115,22,.3)' };
   }
@@ -584,7 +602,7 @@ export function getCategoryMeta(category = '') {
   if (norm.includes('ensalada') || norm.includes('vegetal') || norm.includes('aguacate')) {
     return { icon: 'salad', color: '#84cc16', bg: 'rgba(132,204,22,.12)', border: 'rgba(132,204,22,.3)' };
   }
-  if (norm.includes('bebida') || norm.includes('jugo') || norm.includes('refresco') || norm.includes('cerveza') || norm.includes('agua')) {
+  if (norm.includes('bebida') || norm.includes('jugo') || norm.includes('refresco') || norm.includes('cerveza') || norm.includes('agua') || norm.includes('batida')) {
     return { icon: 'beer', color: '#0ea5e9', bg: 'rgba(14,165,233,.12)', border: 'rgba(14,165,233,.3)' };
   }
   if (norm.includes('postre') || norm.includes('dulce') || norm.includes('helado')) {
