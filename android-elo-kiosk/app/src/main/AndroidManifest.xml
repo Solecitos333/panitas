@@ -36,7 +36,7 @@
         android:roundIcon="@drawable/app_icon"
         android:label="Los Panitas POS"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+        android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
         android:hardwareAccelerated="true">
 
         <activity

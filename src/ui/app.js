@@ -43,6 +43,16 @@ const icons = {
   Utensils, Volume2, Wallet, WalletCards, Wheat, Wifi, WifiOff, X
 };
 
+// Desenfocar controles interactivos tras el clic para que no retengan foco en pantalla táctil
+if (typeof document !== 'undefined') {
+  document.addEventListener('click', (e) => {
+    const interactive = e.target?.closest?.('button, [role="button"], a, .category-pill, .pos-category-pill, .product-card, .restaurant-table, .pin-num-btn, .pin-clear-btn, .pin-del-btn, .kds-action-btn, .quick-cash-btn, .pos-bill-btn');
+    if (interactive && typeof interactive.blur === 'function') {
+      setTimeout(() => interactive.blur(), 0);
+    }
+  }, { passive: true });
+}
+
 export function createApplication({ root, user, service, onLogout, onChangePassword, development = false }) {
   const state = {
     user, settings: {}, route: initialRoute(user), cart: [], selectedOrderId: '', selectedInvoiceId: '', preselectedTableId: '', modal: '',
@@ -110,17 +120,24 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 
   function update(key) { return (items, error) => { if (error) toast(`No se pudo sincronizar ${key}.`, 'danger'); state[key] = items; requestLiveRender(); }; }
 
+  let liveRenderRaf = null;
   function requestLiveRender() {
     if (destroyed) return;
-    const active = document.activeElement;
-    const editingField = active && root.contains(active) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName);
-    const modalFormOpen = Boolean(root.querySelector('#modal-root form'));
-    if (state.saleInProgress || editingField || modalFormOpen || updateForms.isDirty(root)) {
-      state.pendingLiveRender = true;
-      return;
-    }
-    state.pendingLiveRender = false;
-    renderContent();
+    if (liveRenderRaf !== null) return;
+    const scheduleFn = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (cb) => setTimeout(cb, 16);
+    liveRenderRaf = scheduleFn(() => {
+      liveRenderRaf = null;
+      if (destroyed) return;
+      const active = document.activeElement;
+      const editingField = active && root.contains(active) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName);
+      const modalFormOpen = Boolean(root.querySelector('#modal-root form'));
+      if (state.saleInProgress || editingField || modalFormOpen || updateForms.isDirty(root)) {
+        state.pendingLiveRender = true;
+        return;
+      }
+      state.pendingLiveRender = false;
+      renderContent();
+    });
   }
 
   function flushPendingLiveRender() {
@@ -209,7 +226,17 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const renderer = renderers[state.route] || renderDashboard;
     const mainEl = root.querySelector('#main-content');
     mainEl.innerHTML = renderer(state);
-    renderModal(); bindContent(); iconsRefresh(mainEl); syncNativeUpdateState();
+    if (state.modal) {
+      renderModal();
+    } else {
+      const modalRoot = root.querySelector('#modal-root');
+      if (modalRoot && modalRoot.innerHTML) {
+        modalRoot.innerHTML = '';
+        disposePinPad();
+        disposePinPad = () => {};
+      }
+    }
+    bindContent(); iconsRefresh(mainEl); syncNativeUpdateState();
     if (state.route === 'terminal') initTerminalDiag();
   }
 
@@ -565,11 +592,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   }
 
   function syncNativeUpdateState() {
-    updateForms.remember(root);
+    if (root.querySelector('form')) {
+      updateForms.remember(root);
+    }
     updateSafety.setBlocker('application', !destroyed && updateIsBusy());
-    window.dispatchEvent(new Event('panitas-update-safety-check'));
-    // Android owns automatic installation and its idle grace period. Only an
-    // explicit user action calls installEloAppUpdate (including a cancelled retry).
   }
 
   function bindUpdateActions(target) {
@@ -706,6 +732,29 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         if(input){input.value=btn.dataset.quickNote;input.focus();}
       });
     });
+    const qtyForm = modalRoot?.querySelector('#quantity-form');
+    if (qtyForm) {
+      const qtyInput = qtyForm.querySelector('#item-qty-input');
+      if (qtyInput) {
+        qtyInput.setAttribute('readonly', 'true');
+        qtyInput.setAttribute('inputmode', 'none');
+        qtyInput.setAttribute('tabindex', '-1');
+        qtyInput.addEventListener('focus', () => {
+          try { qtyInput.blur(); } catch (_) {}
+        });
+      }
+      qtyForm.addEventListener('keydown', (e) => {
+        if (['0','1','2','3','4','5','6','7','8','9'].includes(e.key)) {
+          e.preventDefault();
+          if (qtyInput && qtyInput.value.length < 4) {
+            qtyInput.value = (qtyInput.value === '0' ? '' : qtyInput.value) + e.key;
+          }
+        } else if (e.key === 'Backspace') {
+          e.preventDefault();
+          if (qtyInput) qtyInput.value = qtyInput.value.slice(0, -1);
+        }
+      });
+    }
     modalRoot?.querySelector('#quantity-form')?.addEventListener('submit',saveQuantity);
     modalRoot?.querySelectorAll('.qty-num-btn').forEach((btn)=>{
       btn.addEventListener('click',()=>{
@@ -1061,14 +1110,31 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       );
     }
 
+    const totalsEl = cartPanel.querySelector('.cart-totals-block');
+    if (totalsEl) {
+      totalsEl.innerHTML = renderCartTotals(state.cart, state.posDiscountState);
+    }
+
+    const totals = calculateDocument(state.cart, state.posDiscountState || {});
+    const selectedTableId = state.posDraft?.tableId ?? state.preselectedTableId ?? '';
+    const actionText = selectedTableId
+      ? 'Enviar comanda a cocina'
+      : (state.posPaymentMethod === 'credit'
+        ? `Registrar fiao ${formatMoney(totals.totalCents)}`
+        : `Cobrar ${formatMoney(totals.totalCents)}`);
+
     const submitBtn = root.querySelector('#pos-submit-btn');
     if (submitBtn) {
       submitBtn.disabled = !state.cart.length;
+      const span = submitBtn.querySelector('span');
+      if (span) span.textContent = actionText;
     }
 
     const mobileBtn = root.querySelector('.mobile-pos-charge');
     if (mobileBtn) {
       mobileBtn.disabled = !state.cart.length;
+      const mobileSpan = mobileBtn.querySelector('span');
+      if (mobileSpan) mobileSpan.textContent = selectedTableId ? 'Enviar comanda' : actionText;
     }
 
     const prebillBtn = root.querySelector('[data-print-cart-prebill]');
@@ -1078,8 +1144,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 
     updatePosChange();
 
-    iconsRefresh(cartPanel);
-    syncNativeUpdateState();
+    if (linesEl) iconsRefresh(linesEl);
+    updateSafety.setBlocker('application', !destroyed && updateIsBusy());
   }
 
   function addProduct(id){
@@ -1361,7 +1427,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
             <p style="margin:8px 0 6px; font-size:.82rem; color:var(--muted);text-align:center;">
               ${isCredit ? 'Digita tu PIN de 4 dígitos para registrar la cuenta por cobrar.' : 'Digita tu PIN de 4 dígitos. Si no hay una sesión de caja, este mismo paso la inicia y registra el cobro.'}
             </p>
-            <input id="checkout-pin-input" name="pin" type="password" inputmode="none" pattern="[0-9]{4}" maxlength="4" placeholder="" required readonly style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;">
+            <input id="checkout-pin-input" name="pin" type="password" inputmode="none" pattern="[0-9]{4}" maxlength="4" placeholder="" required readonly tabindex="-1" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;">
             <div class="pin-slots-container" id="chk-pin-slots">
               <span class="pin-slot" data-slot="0"></span>
               <span class="pin-slot" data-slot="1"></span>
@@ -1605,7 +1671,16 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         const sessionId=await service.openCashSession({openingCents:0,notes:`Apertura rápida autorizada por PIN: ${authorized.user.displayName}`});
         state.activeCash={id:typeof sessionId==='string'?sessionId:sessionId.id,status:'open',openingCents:0,openedBy:user.uid,openedByName:authorized.user.displayName,optimistic:true};
       }
-      const outcome = await perform(()=>service.recordPayment(invoice.id,{requestId:createOperationId('payment'),amountCents:amount,method,reference:f.get('reference'),tenderedCents:method==='cash'?amount:0,cashSessionId:state.activeCash.id}),'Cobro registrado.');
+      const outcome = await perform(()=>service.recordPayment(invoice.id,{
+        requestId:createOperationId('payment'),
+        amountCents:amount,
+        method,
+        reference:f.get('reference'),
+        tenderedCents:method==='cash'?amount:0,
+        cashSessionId:state.activeCash.id,
+        cashierId:authorized.user.id,
+        cashierName:authorized.user.displayName
+      }),'Cobro registrado.');
       if (!outcome.ok) return;
       closeModal();
       setTimeout(() => {
@@ -2215,7 +2290,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           </header>
           <div class="stack-form" style="padding-top:8px;">
             <label>Cantidad de unidades
-              <input name="itemQty" id="item-qty-input" type="number" step="1" min="1" max="999" value="${item.quantity}" style="font-size:1.6rem;text-align:center;font-weight:700;" required autofocus>
+              <input name="itemQty" id="item-qty-input" type="text" inputmode="none" readonly tabindex="-1" value="${item.quantity}" style="font-size:1.6rem;text-align:center;font-weight:700;background:rgba(255,255,255,0.05);border:1px solid var(--line);border-radius:10px;padding:8px;" required>
             </label>
             <div class="pin-pad" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;margin:8px 0;">
               ${[1,2,3,4,5,6,7,8,9].map(n => `<button type="button" class="button secondary qty-num-btn" data-qty-num="${n}" style="font-size:1.2rem;font-weight:700;padding:10px 0;">${n}</button>`).join('')}
@@ -2290,7 +2365,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           <form id="quick-cash-form" class="stack-form" style="padding-top:8px;">
             <p style="margin:0 0 12px; font-size:.82rem; color:var(--muted);">Indica el fondo inicial en efectivo con el que comienzas el turno para poder cobrar facturas.</p>
             <label>Fondo inicial en caja (DOP)
-              <input name="opening" type="number" step="0.01" min="0" value="0.00" required autofocus>
+              <input name="opening" type="number" step="0.01" min="0" value="0.00" required>
             </label>
             <div class="quick-cash-grid" style="margin:4px 0 12px;">
               <button type="button" class="quick-cash-btn" data-set-opening="0">RD$ 0</button>
@@ -2340,7 +2415,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
                 <option value="Apertura manual por revisión">Apertura manual por revisión</option>
               </select>
             </label>
-            <input id="drawer-pin-input" name="pin" type="password" inputmode="none" pattern="[0-9]{4}" maxlength="4" placeholder="" required readonly style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;">
+            <input id="drawer-pin-input" name="pin" type="password" inputmode="none" pattern="[0-9]{4}" maxlength="4" placeholder="" required readonly tabindex="-1" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;">
             <div class="pin-slots-container" id="drawer-pin-slots">
               <span class="pin-slot" data-slot="0"></span>
               <span class="pin-slot" data-slot="1"></span>
@@ -2424,7 +2499,11 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     updatePosSubmitLabel();
   }
   function updateConnection(){const online=navigator.onLine;const banner=root.querySelector('#offline-banner');if(banner)banner.hidden=online;root.querySelector('#connection-indicator')?.classList.toggle('offline',!online);}
-  function iconsRefresh(container = root){createIcons({icons,nameAttr:'data-lucide',rootNode:container||root,attrs:{'aria-hidden':'true'}});}
+  function iconsRefresh(container = root) {
+    const target = container || root;
+    if (!target || !target.querySelector('[data-lucide]')) return;
+    createIcons({ icons, nameAttr: 'data-lucide', rootNode: target, attrs: { 'aria-hidden': 'true' } });
+  }
   function destroy(){
     destroyed=true;
     disposePinPad();

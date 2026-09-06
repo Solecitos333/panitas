@@ -136,25 +136,67 @@ export class DataService {
   async verifyDrawerPin(pin, reason = 'Apertura manual') {
     const cleanPin = String(pin || '').trim();
     if (!/^\d{4}$/.test(cleanPin)) throw new Error('El PIN debe tener exactamente 4 dígitos.');
-    const [secretSnapshot, profileSnapshot] = await Promise.all([
-      getDoc(doc(this.db, 'userSecrets', this.actor.uid)),
-      getDoc(doc(this.db, 'users', this.actor.uid))
-    ]);
-    const account = profileSnapshot.exists() ? profileSnapshot.data() : null;
-    const storedPin = String(secretSnapshot.data()?.drawerPin || account?.drawerPin || '');
-    if (!account?.active) throw new Error('Tu usuario no está habilitado.');
-    if (!/^\d{4}$/.test(storedPin)) {
-      throw new Error('Configura primero tu PIN de 4 dígitos.');
+
+    let authorizingUser = null;
+
+    // 1. Intentar resolver el PIN mediante la reserva única en pinClaims
+    try {
+      const claimSnapshot = await getDoc(doc(this.db, 'pinClaims', cleanPin));
+      if (claimSnapshot.exists()) {
+        const targetUserId = claimSnapshot.data()?.userId;
+        if (targetUserId) {
+          const userSnapshot = await getDoc(doc(this.db, 'users', targetUserId));
+          if (userSnapshot.exists()) {
+            const userData = userSnapshot.data();
+            if (userData.active === false) {
+              throw new Error('El usuario asociado a este PIN está inhabilitado.');
+            }
+            authorizingUser = {
+              id: targetUserId,
+              displayName: userData.displayName || userData.username || 'Usuario',
+              username: userData.username || '',
+              roles: userData.roles || []
+            };
+          }
+        }
+      }
+    } catch (err) {
+      if (err.message?.includes('inhabilitado')) throw err;
     }
-    if (storedPin !== cleanPin) {
+
+    // 2. Fallback para el usuario activo en la sesión si aún no está en pinClaims
+    if (!authorizingUser) {
+      const [secretSnapshot, profileSnapshot] = await Promise.all([
+        getDoc(doc(this.db, 'userSecrets', this.actor.uid)),
+        getDoc(doc(this.db, 'users', this.actor.uid))
+      ]);
+      const account = profileSnapshot.exists() ? profileSnapshot.data() : null;
+      const storedPin = String(secretSnapshot.data()?.drawerPin || account?.drawerPin || '');
+      if (storedPin === cleanPin) {
+        if (!account?.active) throw new Error('Tu usuario no está habilitado.');
+        authorizingUser = {
+          id: this.actor.uid,
+          displayName: account.displayName || this.actor.displayName,
+          username: account.username || this.actor.username || '',
+          roles: account.roles || this.actor.roles || []
+        };
+        if (secretSnapshot.data()?.pinUnique !== true) {
+          await this.saveMyDrawerPin(cleanPin).catch(() => {});
+        }
+      } else if (!authorizingUser && !/^\d{4}$/.test(storedPin)) {
+        throw new Error('Configura primero tu PIN de 4 dígitos.');
+      }
+    }
+
+    if (!authorizingUser) {
       await this.audit('cash.drawer_failed', `PIN incorrecto: ${String(reason).slice(0, 120)}`);
       throw new Error('PIN incorrecto.');
     }
-    if (secretSnapshot.data()?.pinUnique !== true) await this.saveMyDrawerPin(cleanPin);
-    await this.audit('cash.pin_authorized', String(reason).slice(0, 300));
+
+    await this.audit('cash.pin_authorized', `${String(reason).slice(0, 240)} (Autorizado por ${authorizingUser.displayName})`);
     return {
       success: true,
-      user: { id: this.actor.uid, displayName: account.displayName || this.actor.displayName, username: account.username || '' }
+      user: authorizingUser
     };
   }
 
@@ -560,8 +602,8 @@ export class DataService {
         ...(hasRequestId ? { requestId } : {}),
         invoiceId, invoiceNumber: invoice.invoiceNumber, amountCents, method: payment.method,
         reference: String(payment.reference || '').slice(0, 120), tenderedCents, changeCents,
-        cashierId: this.actor.uid,
-        cashierName: this.actor.displayName || this.actor.username || '',
+        cashierId: payment.cashierId || this.actor.uid,
+        cashierName: payment.cashierName || this.actor.displayName || this.actor.username || '',
         cashSessionId: payment.cashSessionId || '',
         createdAt: serverTimestamp(), createdBy: this.actor.uid
       });
@@ -577,7 +619,7 @@ export class DataService {
         });
       }
       transaction.set(auditRef, {
-        action: 'payment.created', details: `${invoice.invoiceNumber}: ${amountCents}`,
+        action: 'payment.created', details: `${invoice.invoiceNumber}: ${amountCents}${payment.cashierName ? ` (${payment.cashierName})` : ''}`,
         actorId: this.actor.uid, actorEmail: this.actor.email || '', createdAt: serverTimestamp()
       });
     });

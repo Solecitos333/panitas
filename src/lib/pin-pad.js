@@ -9,6 +9,16 @@ export function bindPinPad({ form, input, slots, digits, clear, backspace, submi
     listeners.push(() => target.removeEventListener(type, handler));
   };
   const cancel = () => { clearTimeout(timer); timer = null; };
+  if (input && typeof input.setAttribute === 'function') {
+    input.setAttribute('readonly', 'true');
+    input.setAttribute('inputmode', 'none');
+    input.setAttribute('tabindex', '-1');
+  }
+  if (input && typeof input.addEventListener === 'function') {
+    listen(input, 'focus', () => {
+      try { input.blur(); } catch (_) {}
+    });
+  }
   const refresh = () => slots.forEach((slot, index) => slot.classList.toggle('filled', index < input.value.length));
   const authorize = () => {
     cancel();

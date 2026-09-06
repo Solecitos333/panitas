@@ -99,23 +99,35 @@ export class MemoryDataService {
     current.updatedAt = new Date();
     this.emit("users");
   }
-  async verifyDrawerPin(pin) {
+  async verifyDrawerPin(pin, reason = "Apertura manual") {
     const cleanPin = String(pin || "").replace(/\D/g, "");
+    if (!/^\d{4}$/.test(cleanPin))
+      throw new Error("El PIN debe tener exactamente 4 dígitos.");
+
+    // 1. Buscar entre todos los usuarios activos si alguno tiene este PIN
+    const match = this.data.users.find(
+      (entry) => entry.drawerPin === cleanPin && entry.active !== false,
+    );
+    if (match) {
+      return {
+        success: true,
+        user: {
+          id: match.id,
+          displayName: match.displayName || match.username || "Usuario",
+          username: match.username || "",
+          roles: match.roles || [],
+        },
+      };
+    }
+
+    // 2. Si el usuario actual no tiene PIN configurado
     const current = this.data.users.find(
       (entry) => entry.id === this.actor.uid && entry.active !== false,
     );
     if (!/^\d{4}$/.test(String(current?.drawerPin || "")))
       throw new Error("Configura primero tu PIN de 4 dígitos.");
-    if (current.drawerPin !== cleanPin) throw new Error("PIN incorrecto.");
-    return {
-      success: true,
-      user: {
-        id: current.id,
-        displayName: current.displayName,
-        username: current.username,
-        roles: current.roles || [],
-      },
-    };
+
+    throw new Error("PIN incorrecto.");
   }
   async saveProduct(item) {
     const id = item.id || createOperationId("product");

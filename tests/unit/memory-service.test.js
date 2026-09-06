@@ -98,6 +98,23 @@ test('el PIN de cuatro dígitos pertenece al usuario que inició sesión', async
   await service.verifyDrawerPin('4826');
 });
 
+test('identifica al usuario que introduce su PIN independientemente del usuario con sesión activa', async () => {
+  const service = new MemoryDataService(actor);
+  await service.saveMyDrawerPin('4826');
+  service.data.users.push({
+    id: 'jespinal-uid',
+    username: 'JESPINAL',
+    displayName: 'JESPINAL',
+    drawerPin: '1945',
+    roles: ['owner'],
+    active: true
+  });
+  const authorized = await service.verifyDrawerPin('1945', 'Apertura por PIN de JESPINAL');
+  assert.equal(authorized.success, true);
+  assert.equal(authorized.user.id, 'jespinal-uid');
+  assert.equal(authorized.user.displayName, 'JESPINAL');
+});
+
 test('un doble toque con el mismo requestId no duplica factura, pago ni descuento de inventario', async () => {
   const service = new MemoryDataService(actor);
   const productId = await service.saveProduct({ name: 'Sandwich', priceCents: 25000, costCents: 12000, taxRate: 0, stock: 8, active: true });

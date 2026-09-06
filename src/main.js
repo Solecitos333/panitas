@@ -24,13 +24,29 @@ let unsubscribeProfile = null;
 let nativeInstallInProgress = false;
 let lastNativeBusy = null;
 const afterCurrentEvent = (callback) => Promise.resolve().then(callback);
+let safetyCheckScheduled = false;
 
 function refreshDomUpdateSafety() {
-  updateForms.remember(document);
+  const forms = document.forms;
+  if (forms && forms.length > 0) {
+    updateForms.remember(document);
+    updateSafety.setBlocker('unsaved-form', updateForms.isDirty(document));
+  } else {
+    updateSafety.setBlocker('unsaved-form', false);
+  }
   const active = document.activeElement;
   updateSafety.setBlocker('editing-field', Boolean(active?.matches?.('input, textarea, select, [contenteditable="true"]')));
-  updateSafety.setBlocker('unsaved-form', updateForms.isDirty(document));
   updateSafety.setBlocker('dialog', Boolean(document.querySelector('.modal-backdrop:not([data-update-install-lock])')));
+}
+
+function scheduleSafetyCheck() {
+  if (safetyCheckScheduled) return;
+  safetyCheckScheduled = true;
+  const scheduleFn = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (cb) => setTimeout(cb, 16);
+  scheduleFn(() => {
+    safetyCheckScheduled = false;
+    refreshDomUpdateSafety();
+  });
 }
 
 function sendNativeBusy(busy) {
@@ -43,18 +59,22 @@ function handleUserActivity(event) {
     return;
   }
   updateSafety.touch();
-  refreshDomUpdateSafety();
-  afterCurrentEvent(refreshDomUpdateSafety);
 }
 
-for (const name of ['pointerdown', 'keydown', 'input', 'change', 'click', 'submit']) {
+for (const name of ['pointerdown', 'keydown', 'click']) {
   document.addEventListener(name, handleUserActivity, true);
 }
-for (const name of ['focusin', 'focusout', 'reset']) {
-  document.addEventListener(name, () => afterCurrentEvent(refreshDomUpdateSafety), true);
+for (const name of ['input', 'change', 'submit']) {
+  document.addEventListener(name, (event) => {
+    handleUserActivity(event);
+    scheduleSafetyCheck();
+  }, true);
 }
-window.addEventListener('panitas-update-safety-check', refreshDomUpdateSafety);
-new MutationObserver(refreshDomUpdateSafety).observe(root, { childList: true, subtree: true });
+for (const name of ['focusin', 'focusout', 'reset']) {
+  document.addEventListener(name, scheduleSafetyCheck, true);
+}
+window.addEventListener('panitas-update-safety-check', scheduleSafetyCheck);
+new MutationObserver(scheduleSafetyCheck).observe(root, { childList: true, subtree: true });
 window.addEventListener('beforeprint', () => updateSafety.setBlocker('browser-print', true));
 window.addEventListener('afterprint', () => updateSafety.setBlocker('browser-print', false));
 updateSafety.subscribe(sendNativeBusy);

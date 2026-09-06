@@ -356,7 +356,7 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow get: if verified() && (request.auth.uid == userId || isOwner());
+      allow get: if active();
       allow list: if isOwner();
       allow create: if isOwner()
         && request.resource.data.username is string
@@ -394,10 +394,11 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // No client can list/read these IDs (nor inspect which user owns a PIN).
-    // Reservations and private PIN changes must be committed together.
+    // No client can list these IDs. Only active users can look up an exact PIN
+    // to identify the authorizer at the terminal.
     match /pinClaims/{pin} {
-      allow read: if false;
+      allow get: if active();
+      allow list: if false;
       allow create, update: if active() && validDrawerPin(pin)
         && request.resource.data.keys().hasOnly(['userId'])
         && request.resource.data.userId == request.auth.uid
@@ -542,7 +543,7 @@ service cloud.firestore {
         && request.resource.data.requestId == invoiceId
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.cashierId == request.auth.uid
+        && (request.resource.data.cashierId == request.auth.uid || (request.resource.data.cashierId is string && exists(/databases/$(database)/documents/users/$(request.resource.data.cashierId))))
         && writtenNow(request.resource.data.createdAt)
         && writtenNow(request.resource.data.updatedAt)
         && request.resource.data.invoiceNumber is string
@@ -585,7 +586,7 @@ service cloud.firestore {
         && validMoney(request.resource.data.amountCents)
         && request.resource.data.amountCents > 0
         && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.cashierId == request.auth.uid
+        && (request.resource.data.cashierId == request.auth.uid || (request.resource.data.cashierId is string && exists(/databases/$(database)/documents/users/$(request.resource.data.cashierId))))
         && writtenNow(request.resource.data.createdAt)
         && ownsOpenCashSession(request.resource.data.cashSessionId)
         && request.resource.data.method in ['cash', 'card', 'transfer', 'check']
