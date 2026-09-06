@@ -17,14 +17,24 @@ export function renderReceivables(state) {
   for (const inv of pendingInvoices) {
     const clientKey = String(inv.clientName || 'Cliente').trim();
     if (!clientMap.has(clientKey)) {
+      const regClient = (state.clients || []).find(c =>
+        (inv.clientId && c.id === inv.clientId) ||
+        (c.name && c.name.trim().toLowerCase() === clientKey.toLowerCase())
+      );
       clientMap.set(clientKey, {
         name: clientKey,
-        clientId: inv.clientId || '',
+        clientId: inv.clientId || regClient?.id || '',
+        phone: inv.clientPhone || regClient?.phone || '',
+        address: inv.clientAddress || regClient?.address || '',
+        notes: regClient?.notes || '',
         invoices: [],
         totalDebtCents: 0
       });
     }
     const entry = clientMap.get(clientKey);
+    if (!entry.phone && inv.clientPhone) entry.phone = inv.clientPhone;
+    if (!entry.address && inv.clientAddress) entry.address = inv.clientAddress;
+
     const balanceCents = Number(inv.totalCents || 0) - Number(inv.paidCents || 0);
     entry.invoices.push({ ...inv, balanceCents });
     entry.totalDebtCents += balanceCents;
@@ -73,7 +83,7 @@ export function renderReceivables(state) {
       <div class="toolbar">
         <label class="search-field">
           <i data-lucide="search"></i>
-          <input id="fiao-search" type="search" placeholder="Buscar por nombre del cliente fiado...">
+          <input id="fiao-search" type="search" placeholder="Buscar por nombre o teléfono del cliente fiado...">
         </label>
       </div>
 
@@ -90,17 +100,44 @@ export function renderReceivables(state) {
   `;
 }
 
+function cleanPhoneForWa(phone) {
+  if (!phone) return '';
+  const digits = String(phone).replace(/\D/g, '');
+  if (digits.length === 10) return '1' + digits;
+  return digits;
+}
+
 function debtCard(client) {
+  const cleanPhone = cleanPhoneForWa(client.phone);
+  const waMessage = encodeURIComponent(`Hola ${client.name}, un cordial saludo de Los Panitas. Le recordamos que tiene un balance pendiente de ${formatMoney(client.totalDebtCents)} en su cuenta de consumo. ¡Muchas gracias!`);
+  const searchIndex = `${client.name} ${client.phone || ''} ${client.address || ''}`.toLowerCase();
+
   return `
-    <article class="fiao-debt-card surface-card" data-fiao-card data-search="${escapeHtml(client.name.toLowerCase())}" style="margin-bottom:14px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02);padding:18px;border-radius:14px;">
+    <article class="fiao-debt-card surface-card" data-fiao-card data-search="${escapeHtml(searchIndex)}" style="margin-bottom:14px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02);padding:18px;border-radius:14px;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
-        <div style="display:flex;align-items:center;gap:12px;">
-          <div style="width:44px;height:44px;border-radius:10px;background:rgba(239,189,105,.15);color:var(--brand-2);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1.2rem;">
+        <div style="display:flex;align-items:flex-start;gap:12px;">
+          <div style="width:44px;height:44px;border-radius:10px;background:rgba(239,189,105,.15);color:var(--brand-2);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1.2rem;flex-shrink:0;">
             ${escapeHtml(client.name.charAt(0).toUpperCase())}
           </div>
           <div>
             <h3 style="margin:0;font-size:1.15rem;font-weight:700;color:#fff;">${escapeHtml(client.name)}</h3>
-            <span style="font-size:0.8rem;color:var(--muted);">${client.invoices.length} consumo(s) registrado(s)</span>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap;">
+              ${client.phone ? `
+                <a href="tel:${escapeHtml(client.phone)}" class="button secondary compact" style="padding:3px 8px;font-size:0.8rem;text-decoration:none;color:#58a6ff;border-color:rgba(88,166,255,.3);" title="Llamar a ${escapeHtml(client.name)}">
+                  <i data-lucide="phone"></i> ${escapeHtml(client.phone)}
+                </a>
+                <a href="https://wa.me/${escapeHtml(cleanPhone)}?text=${waMessage}" target="_blank" rel="noopener" class="button secondary compact" style="padding:3px 8px;font-size:0.8rem;text-decoration:none;color:#25D366;border-color:rgba(37,211,102,.3);" title="Enviar mensaje de cobro por WhatsApp">
+                  <i data-lucide="message-square"></i> WhatsApp
+                </a>
+              ` : `
+                <span style="font-size:0.75rem;color:var(--muted);font-style:italic;">Sin teléfono registrado</span>
+                <button type="button" class="button secondary compact" data-client-edit="${escapeHtml(client.clientId || '')}" data-client-name="${escapeHtml(client.name)}" style="font-size:0.72rem;padding:2px 7px;height:auto;line-height:1.2;">
+                  <i data-lucide="user-plus" style="width:12px;height:12px;"></i> Agregar Teléfono
+                </button>
+              `}
+              ${client.address ? `<span style="font-size:0.75rem;color:var(--muted);">· ${escapeHtml(client.address)}</span>` : ''}
+            </div>
+            <span style="font-size:0.75rem;color:var(--muted);display:block;margin-top:4px;">${client.invoices.length} consumo(s) registrado(s)</span>
           </div>
         </div>
         <div style="text-align:right;">
@@ -120,7 +157,7 @@ function debtCard(client) {
               <div style="font-size:0.8rem;color:#ccc;margin-top:2px;">
                 ${(inv.items || []).map(i => `${i.quantity}x ${escapeHtml(i.name)}`).join(' · ')}
               </div>
-              ${inv.notes ? `<small style="color:var(--muted);display:block;font-style:italic;">Nota: ${escapeHtml(inv.notes)}</small>` : ''}
+              ${inv.clientPhone || inv.notes ? `<small style="color:var(--muted);display:block;font-style:italic;">${inv.clientPhone ? `Tel: ${escapeHtml(inv.clientPhone)} ` : ''}${inv.notes ? `· Nota: ${escapeHtml(inv.notes)}` : ''}</small>` : ''}
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
               <strong style="font-size:1rem;color:#fff;">${formatMoney(inv.balanceCents)}</strong>
@@ -146,6 +183,7 @@ export function renderFiaoPayModal(invoice, activeCash) {
           <div>
             <span class="eyebrow">Saldar Cuenta Pendiente</span>
             <h2>Cobrar Fiao: ${escapeHtml(invoice.clientName)}</h2>
+            ${invoice.clientPhone ? `<span style="font-size:0.82rem;color:var(--brand-2);display:inline-flex;align-items:center;gap:4px;margin-top:2px;"><i data-lucide="phone" style="width:13px;height:13px;"></i> ${escapeHtml(invoice.clientPhone)}</span>` : ''}
           </div>
           <button type="button" class="icon-button" data-modal-close aria-label="Cerrar"><i data-lucide="x"></i></button>
         </header>

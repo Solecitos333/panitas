@@ -507,6 +507,8 @@ export class DataService {
         documentType, invoiceNumber, ncf, ncfType,
         clientId: input.clientId || '', clientName: String(input.clientName || 'Consumidor final').slice(0, 160),
         clientRnc: String(input.clientRnc || '').slice(0, 30),
+        clientPhone: String(input.clientPhone || '').slice(0, 30),
+        clientAddress: String(input.clientAddress || '').slice(0, 300),
         notes: String(input.notes || '').slice(0, 500),
         items: input.items, ...totals, paidCents: amountCents,
         lastPaymentId: amountCents > 0 ? paymentRef.id : '',

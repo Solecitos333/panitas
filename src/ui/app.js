@@ -246,7 +246,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const modalRoot = root.querySelector('#modal-root');
     if (!modalRoot) return;
     if (state.modal === 'product') modalRoot.innerHTML = renderProductForm(state.products.find((item)=>item.id===state.editingId));
-    else if (state.modal === 'client') modalRoot.innerHTML = renderClientForm(state.clients.find((item)=>item.id===state.editingId));
+    else if (state.modal === 'client') modalRoot.innerHTML = renderClientForm(state.clients.find((item)=>item.id===state.editingId) || state.editingClientDraft || {});
     else if (state.modal === 'order') modalRoot.innerHTML = renderOrderDrawer(state.orders.find((item)=>item.id===state.selectedOrderId), state.capabilities);
     else if (state.modal === 'invoice') modalRoot.innerHTML = renderInvoiceModal(state.invoices.find((item)=>item.id===state.selectedInvoiceId), state.payments, state.capabilities);
     else if (state.modal === 'payment') modalRoot.innerHTML = paymentModal();
@@ -508,10 +508,70 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     });
 
     root.querySelector('#pos-fiao-client-select')?.addEventListener('change', (e) => {
+      const clientId = e.target.value;
+      const selectedClient = (state.clients || []).find(c => c.id === clientId);
       const nameInput = root.querySelector('#pos-fiao-name');
-      if (nameInput && e.target.value) {
-        nameInput.value = e.target.value;
-        capturePosDraft();
+      const phoneInput = root.querySelector('#pos-fiao-phone');
+      const notesInput = root.querySelector('#pos-fiao-notes');
+      const idInput = root.querySelector('#pos-fiao-client-id');
+      const debtInfo = root.querySelector('#pos-fiao-debt-info');
+      const debtText = root.querySelector('#pos-fiao-debt-text');
+
+      if (selectedClient) {
+        if (idInput) idInput.value = selectedClient.id;
+        if (nameInput) nameInput.value = selectedClient.name;
+        if (phoneInput) phoneInput.value = selectedClient.phone || '';
+        if (notesInput && !notesInput.value) notesInput.value = selectedClient.notes || '';
+
+        const pendingInvoices = (state.invoices || []).filter(inv =>
+          inv.documentType === 'invoice' && inv.status !== 'paid' && inv.status !== 'cancelled' &&
+          ((inv.clientId && inv.clientId === selectedClient.id) ||
+           (inv.clientName && inv.clientName.trim().toLowerCase() === selectedClient.name.trim().toLowerCase()))
+        );
+        const debtCents = pendingInvoices.reduce((sum, inv) => sum + (Number(inv.totalCents || 0) - Number(inv.paidCents || 0)), 0);
+
+        if (debtInfo && debtText) {
+          if (debtCents > 0) {
+            debtInfo.style.display = 'block';
+            debtText.textContent = `Atención: Este cliente tiene una deuda pendiente de ${formatMoney(debtCents)} (${pendingInvoices.length} consumo(s)).`;
+          } else {
+            debtInfo.style.display = 'none';
+          }
+        }
+      } else {
+        if (idInput) idInput.value = '';
+        if (debtInfo) debtInfo.style.display = 'none';
+      }
+      capturePosDraft();
+    });
+
+    root.querySelector('#pos-fiao-name')?.addEventListener('input', (e) => {
+      const typedName = e.target.value.trim().toLowerCase();
+      const debtInfo = root.querySelector('#pos-fiao-debt-info');
+      const debtText = root.querySelector('#pos-fiao-debt-text');
+      if (!typedName) {
+        if (debtInfo) debtInfo.style.display = 'none';
+        return;
+      }
+      const matchingClient = (state.clients || []).find(c => c.name && c.name.trim().toLowerCase() === typedName);
+      if (matchingClient) {
+        const phoneInput = root.querySelector('#pos-fiao-phone');
+        if (phoneInput && !phoneInput.value && matchingClient.phone) phoneInput.value = matchingClient.phone;
+        const idInput = root.querySelector('#pos-fiao-client-id');
+        if (idInput) idInput.value = matchingClient.id;
+      }
+      const pendingInvoices = (state.invoices || []).filter(inv =>
+        inv.documentType === 'invoice' && inv.status !== 'paid' && inv.status !== 'cancelled' &&
+        (inv.clientName && inv.clientName.trim().toLowerCase() === typedName)
+      );
+      const debtCents = pendingInvoices.reduce((sum, inv) => sum + (Number(inv.totalCents || 0) - Number(inv.paidCents || 0)), 0);
+      if (debtInfo && debtText) {
+        if (debtCents > 0) {
+          debtInfo.style.display = 'block';
+          debtText.textContent = `Atención: Este cliente tiene una deuda pendiente de ${formatMoney(debtCents)} (${pendingInvoices.length} consumo(s)).`;
+        } else {
+          debtInfo.style.display = 'none';
+        }
       }
     });
 
@@ -566,8 +626,16 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelectorAll('[data-client-new]').forEach((button)=>button.addEventListener('click',()=>openForm('client')));
     root.querySelector('[data-user-new]')?.addEventListener('click',()=>openUserForm());
     root.querySelectorAll('[data-user-edit]').forEach((button)=>button.addEventListener('click',()=>openUserForm(button.dataset.userEdit)));
-    root.querySelectorAll('[data-product-edit]').forEach((button)=>button.addEventListener('click',()=>openForm('product',button.dataset.productEdit)));
-    root.querySelectorAll('[data-client-edit]').forEach((button)=>button.addEventListener('click',()=>openForm('client',button.dataset.clientEdit)));
+    root.querySelectorAll('[data-client-edit]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const id = button.dataset.clientEdit || '';
+        const name = button.dataset.clientName || '';
+        state.editingId = id;
+        state.editingClientDraft = id ? null : { name };
+        state.modal = 'client';
+        renderModal();
+      });
+    });
     root.querySelector('#directory-search')?.addEventListener('input',filterDirectory);
     root.querySelector('#cash-open-form')?.addEventListener('submit',openCash);
     root.querySelector('#cash-close-form')?.addEventListener('submit',closeCash);
@@ -1222,6 +1290,16 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const clientName = isCredit
       ? String(form.get('fiaoClientName') || '').trim()
       : String(form.get('clientName') || 'Consumidor final').trim();
+    const clientPhone = isCredit
+      ? String(form.get('fiaoClientPhone') || '').trim()
+      : '';
+    const clientId = isCredit
+      ? String(form.get('fiaoClientId') || '').trim()
+      : '';
+    const fiaoNotes = isCredit
+      ? String(form.get('fiaoNotes') || '').trim()
+      : '';
+    const fiaoSaveAsClient = isCredit && form.get('fiaoSaveAsClient') === 'on';
 
     if (isCredit && (!clientName || clientName === 'Consumidor final')) {
       return toast('Escribe el nombre de la persona que se lleva el fiao.', 'warning');
@@ -1288,8 +1366,12 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       reference,
       totals,
       tenderedCents: method === 'cash' ? cashReceivedCents : 0,
+      clientId,
       clientName: clientName || 'Consumidor final',
+      clientPhone,
       clientRnc,
+      fiaoNotes,
+      fiaoSaveAsClient,
       tableId: '',
       ncfType,
       notes: form.get('notes') || '',
@@ -1316,12 +1398,15 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     try {
       setBusy(submitButton, true);
       const isCredit = payload.method === 'credit';
+      const fiaoNoteCombined = [payload.notes, payload.fiaoNotes].filter(Boolean).join(' | ');
       const docPayload = {
         requestId: payload.requestId,
         documentType: 'invoice',
+        clientId: payload.clientId || '',
         clientName: payload.clientName,
+        clientPhone: payload.clientPhone || '',
         clientRnc: payload.clientRnc,
-        notes: payload.notes,
+        notes: fiaoNoteCombined,
         items: payload.items,
         discount: payload.discount,
         discountType: payload.discountType,
@@ -1345,6 +1430,19 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       // Esta transacción es el punto de verdad: inventario, factura, pago y auditoría se
       // confirman antes de tocar periféricos, para que una impresora fallida nunca borre una venta.
       const created = await service.createDirectDocument(docPayload);
+      if (isCredit && payload.fiaoSaveAsClient && payload.clientName && payload.clientName !== 'Consumidor final') {
+        const existingClient = (state.clients || []).find(c =>
+          (payload.clientId && c.id === payload.clientId) ||
+          (c.name && c.name.trim().toLowerCase() === payload.clientName.trim().toLowerCase())
+        );
+        service.saveClient({
+          id: existingClient?.id || payload.clientId || undefined,
+          name: payload.clientName,
+          phone: payload.clientPhone || existingClient?.phone || '',
+          notes: payload.fiaoNotes || existingClient?.notes || '',
+          active: true
+        }).catch((err) => console.warn('No se pudo guardar automáticamente el cliente fiado:', err));
+      }
       const invoiceId = typeof created === 'string' ? created : created.id;
       const changeCents = payload.method === 'cash'
         ? Math.max(0, payload.tenderedCents - payload.totals.totalCents)
@@ -1356,6 +1454,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         documentType: 'invoice',
         ncf: created?.ncf || '',
         clientName: payload.clientName,
+        clientPhone: payload.clientPhone || '',
         clientRnc: payload.clientRnc,
         subtotalCents: payload.totals.subtotalCents,
         taxCents: payload.totals.taxCents,
@@ -1512,6 +1611,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
               <div style="background:rgba(239,189,105,.12);border:1px solid rgba(239,189,105,.3);border-radius:12px;padding:14px;margin:6px 0 12px;">
                 <span style="font-size:0.8rem;color:var(--muted);text-transform:uppercase;">Cliente Fiado</span>
                 <strong style="font-size:1.35rem;color:#fff;display:block;margin:4px 0;">${escapeHtml(data.clientName)}</strong>
+                ${data.clientPhone ? `<span style="display:inline-flex;align-items:center;gap:5px;font-size:0.9rem;color:var(--brand-2);margin-bottom:6px;"><i data-lucide="phone" style="width:14px;height:14px;"></i> ${escapeHtml(data.clientPhone)}</span><br>` : ''}
                 <span style="font-size:1.15rem;color:#f85149;font-weight:700;">Deuda: ${formatMoney(data.totalCents)}</span>
               </div>
             ` : `
@@ -1797,9 +1897,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   async function testPrint() {
     const fake = {
       id: 'test',
-      invoiceNumber: 'TEST-0001',
+      invoiceNumber: 'PRUEBA NO FISCAL',
       documentType: 'invoice',
-      ncf: 'B0200000001',
+      ncf: '',
       clientName: 'Cliente de Prueba ELO',
       subtotalCents: 10000,
       taxCents: 1800,
@@ -1808,8 +1908,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       createdAt: new Date(),
       items: [{ name: 'Ticket Térmico 80mm - Los Panitas', quantity: 1, unitPriceCents: 10000 }]
     };
-    const b = buildInvoiceEscPos(fake, state.settings, [{ method: 'cash', amountCents: 11800 }], { receivedCents: 20000, changeCents: 8200 });
-    const plainText = buildInvoicePlainText(fake, state.settings, [{ method: 'cash', amountCents: 11800 }], { receivedCents: 20000, changeCents: 8200 });
+    const printSettings = { ...state.settings, receiptFooter: 'PRUEBA DE IMPRESIÓN · SIN VALOR FISCAL' };
+    const b = buildInvoiceEscPos(fake, printSettings, [{ method: 'cash', amountCents: 11800 }], { receivedCents: 20000, changeCents: 8200 });
+    const plainText = buildInvoicePlainText(fake, printSettings, [{ method: 'cash', amountCents: 11800 }], { receivedCents: 20000, changeCents: 8200 });
     // La prueba de impresión no debe abrir la gaveta: ambas comprobaciones tienen
     // botones separados y un pulso inesperado es un riesgo operativo.
     const res = await sendEscPosToPrinter(b, { plainText, openDrawer: false });
@@ -2463,7 +2564,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       tableId:String(data.get('tableId')||''),ncfType:String(data.get('ncfType')||''),clientRnc:String(data.get('posClientRnc')||''),
       notes:String(data.get('notes')||''),cashReceived:String(root.querySelector('#pos-cash-received')?.value||''),
       cardReference:String(data.get('cardReference')||''),transferReference:String(data.get('transferReference')||''),
-      fiaoClientName:String(data.get('fiaoClientName')||''),advancedOpen:Boolean(root.querySelector('#pos-advanced-details')?.open),
+      fiaoClientId:String(data.get('fiaoClientId')||''),fiaoClientName:String(data.get('fiaoClientName')||''),
+      fiaoClientPhone:String(data.get('fiaoClientPhone')||''),fiaoNotes:String(data.get('fiaoNotes')||''),
+      fiaoSaveAsClient:data.get('fiaoSaveAsClient') === 'on',
+      advancedOpen:Boolean(root.querySelector('#pos-advanced-details')?.open),
       cashOpen:Boolean(root.querySelector('#pos-cash-panel details')?.open)
     };
     state.posPaymentMethod=String(data.get('paymentMethod')||state.posPaymentMethod||'cash');

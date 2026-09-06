@@ -35,6 +35,35 @@ function callEloNativeAsync(method, args = [], timeoutMs = 20000) {
 // Ancho estándar en caracteres para impresoras térmicas de 80 mm (Font A - 12x24)
 export const TICKET_WIDTH = 48;
 
+// Los datos de negocio no son comandos de impresora ni etiquetas de formato.
+// Una sola separación interna mantiene inequívocas las columnas del puente nativo.
+function receiptText(value) {
+  return String(value ?? '')
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, ' ')
+    .replace(/\[(LOGO|SEP|TITLE|C|B|L|R)\]/gi, '($1)')
+    .replace(/\s+/g, ' ').trim();
+}
+
+function receiptRow(left, right) {
+  return `${receiptText(left)}  ${receiptText(right)}`;
+}
+
+function wrapReceiptText(value, width) {
+  const text = receiptText(value);
+  if (!text) return [''];
+  const lines = [];
+  let remaining = Array.from(text);
+  while (remaining.length > width) {
+    let end = remaining.lastIndexOf(' ', width);
+    if (end <= 0) end = width;
+    lines.push(remaining.slice(0, end).join(''));
+    remaining = remaining.slice(end);
+    while (remaining[0] === ' ') remaining.shift();
+  }
+  if (remaining.length) lines.push(remaining.join(''));
+  return lines;
+}
+
 export function resolveReceiptQrUrl(settings = {}) {
   const menuUrl = String(settings.menuUrl || '').trim();
   if (menuUrl) return menuUrl;
@@ -68,6 +97,7 @@ export const ESC_POS = {
 export class EscPosBuilder {
   constructor() {
     this.buffer = [];
+    this.lineWidth = TICKET_WIDTH;
     this.init();
   }
 
@@ -98,6 +128,7 @@ export class EscPosBuilder {
   }
 
   size(mode = 'normal') {
+    this.lineWidth = mode === 'double' ? TICKET_WIDTH / 2 : TICKET_WIDTH;
     if (mode === 'double') this.raw(ESC_POS.DOUBLE_SIZE_ON);
     else if (mode === 'double-height') this.raw(ESC_POS.DOUBLE_HEIGHT_ON);
     else this.raw(ESC_POS.NORMAL_SIZE);
@@ -112,7 +143,7 @@ export class EscPosBuilder {
   }
 
   line(str = '') {
-    this.text(str + '\n');
+    for (const line of wrapReceiptText(str, this.lineWidth)) this.text(line + '\n');
     return this;
   }
 
@@ -130,29 +161,40 @@ export class EscPosBuilder {
    * Imprime dos columnas: izquierda y derecha justificadas (ej. Descripción y Monto)
    */
   row(left, right) {
-    const l = String(left || '');
-    const r = String(right || '');
-    const spaces = Math.max(1, TICKET_WIDTH - l.length - r.length);
-    this.line(l + ' '.repeat(spaces) + r);
+    const l = receiptText(left);
+    const r = receiptText(right);
+    const rightWidth = Array.from(r).length;
+    const available = this.lineWidth - rightWidth - 2;
+    // Nunca recortar el importe ni dejar que se superponga a la descripción.
+    if (available < 12 && Array.from(l).length > available) {
+      this.line(l);
+      for (const line of wrapReceiptText(r, this.lineWidth)) {
+        this.text(' '.repeat(this.lineWidth - Array.from(line).length) + line + '\n');
+      }
+    } else {
+      const leftLines = wrapReceiptText(l, Math.max(1, available));
+      leftLines.forEach((line, index) => {
+        const amount = index === 0 ? r : '';
+        const spaces = amount ? this.lineWidth - Array.from(line).length - rightWidth : 0;
+        this.text(line + ' '.repeat(spaces) + amount + '\n');
+      });
+    }
     return this;
   }
 
   /**
-   * Imprime cuatro columnas: Cant, Descripción, Precio Unitario, Total
+   * Descripción completa e importe, con precio unitario para varias unidades.
    */
   itemRow(qty, name, price, total) {
-    const q = String(qty).padEnd(4, ' ');
-    const t = String(total).padStart(10, ' ');
-    const p = String(price).padStart(10, ' ');
-    const nameMax = TICKET_WIDTH - q.length - t.length - p.length - 2;
-    const n = String(name || '').slice(0, Math.max(10, nameMax)).padEnd(nameMax, ' ');
-    this.line(`${q} ${n} ${p} ${t}`);
+    this.row(`${receiptText(qty)} ${receiptText(name)}`, total);
+    if (Number(String(qty).replace(/x$/i, '')) !== 1) this.row('Precio unitario:', price);
     return this;
   }
 
   feed(lines = 3) {
-    if (lines === 5) this.raw(ESC_POS.FEED_LINES_5);
-    else this.raw(ESC_POS.FEED_LINES_3);
+    const count = Number(lines);
+    if (!Number.isInteger(count) || count < 0 || count > 255) throw new RangeError('Avance de papel inválido.');
+    if (count > 0) this.raw([0x1B, 0x64, count]);
     return this;
   }
 
@@ -217,21 +259,26 @@ export function buildInvoiceEscPos(invoice, settings = {}, payments = [], change
   // Datos del documento
   b.align('left');
   const docTypeLabel = ({ invoice: 'FACTURA', quote: 'COTIZACIÓN', proforma: 'PROFORMA' })[invoice.documentType] || 'DOCUMENTO';
-  b.row(`${docTypeLabel}: ${invoice.invoiceNumber}`, formatDate(invoice.createdAt, true));
+  b.bold(true).line(`${docTypeLabel}: ${invoice.invoiceNumber || invoice.id || 'N/A'}`).bold(false);
+  b.line(`Fecha: ${formatDate(invoice.createdAt, true)}`);
   if (invoice.ncf) {
     b.bold(true).line(`NCF: ${invoice.ncf}`).bold(false);
   }
   b.line(`Cliente: ${invoice.clientName || 'Consumidor final'}`);
+  if (invoice.clientPhone) {
+    b.line(`Teléfono: ${invoice.clientPhone}`);
+  }
   if (invoice.clientRnc) {
     b.line(`RNC/Cédula: ${invoice.clientRnc}`);
   }
+  if (invoice.tableName) b.line(`Mesa: ${invoice.tableName}`);
+  if (invoice.cashierName) b.line(`Atendido por: ${invoice.cashierName}`);
 
   b.separator('-');
 
   // Detalle de productos
   b.align('left');
-  b.row('CANT DESCRIPCION', 'PRECIO     TOTAL');
-  b.separator('-');
+  b.row('CANT. / DESCRIPCION', 'IMPORTE');
 
   for (const item of invoice.items || []) {
     const qty = `${item.quantity}x`;
@@ -252,7 +299,7 @@ export function buildInvoiceEscPos(invoice, settings = {}, payments = [], change
     b.row('DESCUENTO:', `-${formatMoney(invoice.discountCents)}`);
   }
   if (Number(invoice.taxCents) > 0) {
-    b.row('ITBIS (18%):', formatMoney(invoice.taxCents));
+    b.row('ITBIS:', formatMoney(invoice.taxCents));
   }
   if (Number(invoice.tipCents) > 0) {
     b.row('PROPINA LEY (10%):', formatMoney(invoice.tipCents));
@@ -289,11 +336,10 @@ export function buildInvoiceEscPos(invoice, settings = {}, payments = [], change
     b.line(settings.receiptFooter);
   } else {
     b.line('\u00a1Gracias por preferirnos!');
-    b.line('Vuelva pronto.');
   }
 
   // WiFi / redes sociales del negocio si están configuradas
-  if (settings.instagram) b.line(`Instagram: @${settings.instagram}`);
+  if (settings.instagram) b.line(`Instagram: @${String(settings.instagram).replace(/^@+/, '')}`);
   if (settings.whatsapp) b.line(`WhatsApp: ${settings.whatsapp}`);
 
   // Código QR con URL del menú o WhatsApp del negocio
@@ -307,18 +353,17 @@ export function buildInvoiceEscPos(invoice, settings = {}, payments = [], change
     const qrBytes = [];
     // Model: GS ( k pL pH cn 65 n  (n=2: Model 2)
     qrBytes.push(0x1D, 0x28, 0x6B, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00);
-    // Tamaño de módulo: GS ( k pL pH cn 67 n  (n=4: módulo de 4 puntos)
-    qrBytes.push(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x43, 0x06);
+    // Módulo de 4 puntos: legible sin ocupar innecesariamente todo el ancho.
+    qrBytes.push(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x43, 0x04);
     // Corrección de errores: GS ( k pL pH cn 69 n  (n=49: nivel M)
     qrBytes.push(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x45, 0x31);
     // Guardar datos: GS ( k pL pH cn 80 30  (+ datos)
-    const dataLen = qrData.length + 3;
+    const encodedQr = new TextEncoder().encode(qrData);
+    const dataLen = encodedQr.length + 3;
     const pL = dataLen & 0xFF;
     const pH = (dataLen >> 8) & 0xFF;
     qrBytes.push(0x1D, 0x28, 0x6B, pL, pH, 0x31, 0x50, 0x30);
-    for (let i = 0; i < qrData.length; i++) {
-      qrBytes.push(qrData.charCodeAt(i) & 0xFF);
-    }
+    qrBytes.push(...encodedQr);
     // Imprimir QR almacenado: GS ( k pL pH cn 81 30
     qrBytes.push(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x51, 0x30);
     b.raw(qrBytes);
@@ -326,7 +371,7 @@ export function buildInvoiceEscPos(invoice, settings = {}, payments = [], change
     b.line('Escanea para el men\u00fa digital');
   }
 
-  // Cortar y abrir gaveta si es cobro en efectivo
+  // Un único avance de seguridad para el cortador; imprimir nunca abre la gaveta.
   b.cut();
   return b;
 }
@@ -344,13 +389,14 @@ export function buildInvoicePlainText(invoice, settings = {}, payments = [], cha
     changeCents: Number(cashPayment.changeCents || 0)
   } : null);
   lines.push('[LOGO]');
-  const businessName = String(settings.name || 'Los Panitas by Nechy').trim();
+  const businessName = receiptText(settings.name || 'Los Panitas by Nechy');
   if (!businessName.toUpperCase().includes('PANITAS')) {
     lines.push(`[TITLE]${businessName.toUpperCase()}`);
   }
-  if (settings.rnc && settings.rnc !== 'N/D') lines.push(`[C]RNC: ${settings.rnc}`);
-  if (settings.phone) lines.push(`[C]Tel: ${settings.phone}`);
-  if (settings.address) lines.push(`[C]${settings.address}`);
+  if (settings.legalName && receiptText(settings.legalName) !== businessName) lines.push(`[C]${receiptText(settings.legalName)}`);
+  if (settings.rnc && settings.rnc !== 'N/D') lines.push(`[C]RNC: ${receiptText(settings.rnc)}`);
+  if (settings.phone) lines.push(`[C]Tel: ${receiptText(settings.phone)}`);
+  if (settings.address) lines.push(`[C]${receiptText(settings.address)}`);
   lines.push('[SEP]');
 
   const docLabel = ({
@@ -359,55 +405,56 @@ export function buildInvoicePlainText(invoice, settings = {}, payments = [], cha
     proforma: 'PROFORMA',
     delivery: 'CONDUCE DE ENTREGA'
   })[invoice.documentType] || 'DOCUMENTO';
-  lines.push(`${docLabel}: ${invoice.invoiceNumber || invoice.id || 'N/A'}`);
-  if (invoice.ncf) lines.push(`NCF: ${invoice.ncf}`);
+  lines.push(`[B]${docLabel}: ${receiptText(invoice.invoiceNumber || invoice.id || 'N/A')}`);
+  if (invoice.ncf) lines.push(`NCF: ${receiptText(invoice.ncf)}`);
   lines.push(`Fecha: ${formatDate(invoice.createdAt || new Date(), true)}`);
-  if (invoice.clientName) lines.push(`Cliente: ${invoice.clientName}`);
-  if (invoice.clientRnc) lines.push(`RNC/Cédula: ${invoice.clientRnc}`);
-  if (invoice.tableName) lines.push(`Mesa / Salón: ${invoice.tableName}`);
+  lines.push(`Cliente: ${receiptText(invoice.clientName || 'Consumidor final')}`);
+  if (invoice.clientPhone) lines.push(`Teléfono: ${receiptText(invoice.clientPhone)}`);
+  if (invoice.clientRnc) lines.push(`RNC/Cédula: ${receiptText(invoice.clientRnc)}`);
+  if (invoice.tableName) lines.push(`Mesa: ${receiptText(invoice.tableName)}`);
+  if (invoice.cashierName) lines.push(`Atendido por: ${receiptText(invoice.cashierName)}`);
   lines.push('[SEP]');
 
-  lines.push('CANT.  DESCRIPCIÓN                         TOTAL');
-  lines.push('[SEP]');
+  lines.push(receiptRow('CANT. / DESCRIPCIÓN', 'IMPORTE'));
 
   for (const item of (invoice.items || [])) {
-    const qty = String(item.quantity || 1);
-    const name = (item.name || '').substring(0, 24);
-    const lineTotal = formatMoney(Math.round((item.quantity || 1) * (item.unitPriceCents || 0)));
-    lines.push(`${qty.padEnd(2)} x   ${name.padEnd(24)}  ${lineTotal.padStart(11)}`);
+    const qty = Number(item.quantity ?? 1);
+    const lineTotal = formatMoney(Math.round(qty * Number(item.unitPriceCents || 0)));
+    lines.push(receiptRow(`${qty} x ${receiptText(item.name)}`, lineTotal));
+    if (qty !== 1) lines.push(receiptRow('Precio unitario:', formatMoney(item.unitPriceCents)));
+    if (item.notes) lines.push(`Nota: ${receiptText(item.notes)}`);
   }
 
   lines.push('[SEP]');
-  lines.push(`Subtotal:                               ${formatMoney(invoice.subtotalCents || 0).padStart(11)}`);
+  lines.push(receiptRow('Subtotal:', formatMoney(invoice.subtotalCents || 0)));
   if (Number(invoice.discountCents || 0) > 0) {
-    lines.push(`Descuento:                             -${formatMoney(invoice.discountCents).padStart(11)}`);
+    lines.push(receiptRow('Descuento:', `-${formatMoney(invoice.discountCents)}`));
   }
   if (Number(invoice.taxCents || 0) > 0) {
-    lines.push(`ITBIS:                                  ${formatMoney(invoice.taxCents).padStart(11)}`);
+    lines.push(receiptRow('ITBIS:', formatMoney(invoice.taxCents)));
   }
   if (Number(invoice.tipCents || 0) > 0) {
-    lines.push(`Propina legal:                          ${formatMoney(invoice.tipCents).padStart(11)}`);
+    lines.push(receiptRow('Propina legal:', formatMoney(invoice.tipCents)));
   }
-  lines.push('[SEP]');
-  lines.push(`[C][B]TOTAL A PAGAR: ${formatMoney(invoice.totalCents || 0)}`);
+  lines.push(`[B]${receiptRow('TOTAL A PAGAR:', formatMoney(invoice.totalCents || 0))}`);
   lines.push('[SEP]');
 
   for (const payment of relatedPayments) {
     const methodLabel = ({ cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', check: 'Cheque', credit: 'Crédito' })[payment.method] || payment.method;
-    lines.push(`Pago ${methodLabel}:                     ${formatMoney(payment.amountCents).padStart(11)}`);
-    if (payment.reference) lines.push(`Referencia: ${String(payment.reference).slice(0, 36)}`);
+    lines.push(receiptRow(`Pago ${methodLabel}:`, formatMoney(payment.amountCents)));
+    if (payment.reference) lines.push(`Referencia: ${receiptText(payment.reference)}`);
   }
   if (resolvedChangeInfo && Number(resolvedChangeInfo.receivedCents || 0) > 0) {
-    lines.push(`Efectivo Recibido:                      ${formatMoney(resolvedChangeInfo.receivedCents).padStart(11)}`);
-    lines.push(`Devuelta / Cambio:                      ${formatMoney(resolvedChangeInfo.changeCents).padStart(11)}`);
+    lines.push(receiptRow('Efectivo recibido:', formatMoney(resolvedChangeInfo.receivedCents)));
+    lines.push(receiptRow('Devuelta / Cambio:', formatMoney(resolvedChangeInfo.changeCents)));
   }
   const balance = Number(invoice.totalCents || 0) - Number(invoice.paidCents || 0);
-  if (balance > 0) lines.push(`[B]BALANCE PENDIENTE: ${formatMoney(balance)}`);
+  if (balance > 0) lines.push(`[B]${receiptRow('BALANCE PENDIENTE:', formatMoney(balance))}`);
 
-  lines.push('[SEP]');
-  lines.push(`[C]${settings.receiptFooter || '¡Gracias por su compra! Vuelva pronto.'}`);
-  if (settings.instagram) lines.push(`[C]Instagram: @${settings.instagram}`);
-  if (settings.whatsapp) lines.push(`[C]WhatsApp: ${settings.whatsapp}`);
+  if (lines[lines.length - 1] !== '[SEP]') lines.push('[SEP]');
+  lines.push(`[C]${receiptText(settings.receiptFooter || '¡Gracias por su compra!')}`);
+  if (settings.instagram) lines.push(`[C]Instagram: @${receiptText(settings.instagram).replace(/^@+/, '')}`);
+  if (settings.whatsapp) lines.push(`[C]WhatsApp: ${receiptText(settings.whatsapp)}`);
 
   return lines.join('\n');
 }
@@ -466,22 +513,22 @@ export function buildKitchenEscPos(order, settings = {}) {
 export function buildKitchenPlainText(order, settings = {}) {
   const lines = [
     '[TITLE]*** COCINA ***',
-    `[C]${settings.name || 'Los Panitas by Nechy'}`,
+    `[C]${receiptText(settings.name || 'Los Panitas by Nechy')}`,
     '[SEP]',
-    `[B]MESA: ${order.tableName || 'Directa'}`,
-    `Orden: ${order.id ? order.id.slice(-6).toUpperCase() : 'N/A'}    Rev: ${order.revision || 1}`,
+    `[B]MESA: ${receiptText(order.tableName || 'Directa')}`,
+    receiptRow(`Orden: ${order.id ? order.id.slice(-6).toUpperCase() : 'N/A'}`, `Rev: ${order.revision || 1}`),
     `Hora: ${formatDate(order.createdAt || new Date(), true)}`,
-    `Cliente: ${String(order.clientName || 'Consumidor').slice(0, 34)}`
+    `Cliente: ${receiptText(order.clientName || 'Consumidor')}`
   ];
   if (order.priority && order.priority !== 'normal') {
-    lines.push(`[B]PRIORIDAD: ${{ urgent: 'URGENTE', high: 'ALTA' }[order.priority] || String(order.priority).toUpperCase()}`);
+    lines.push(`[B]PRIORIDAD: ${receiptText({ urgent: 'URGENTE', high: 'ALTA' }[order.priority] || String(order.priority).toUpperCase())}`);
   }
   lines.push('[SEP]');
   for (const item of order.items || []) {
-    lines.push(`[B]${item.quantity} x ${String(item.name || '').slice(0, 34)}`);
-    if (item.notes) lines.push(`  NOTA: ${String(item.notes).slice(0, 38)}`);
+    lines.push(`[B]${receiptText(item.quantity)} x ${receiptText(item.name)}`);
+    if (item.notes) lines.push(`NOTA: ${receiptText(item.notes)}`);
   }
-  if (order.notes) lines.push('[SEP]', `[B]OBSERVACIONES:`, String(order.notes).slice(0, 120));
+  if (order.notes) lines.push('[SEP]', '[B]OBSERVACIONES:', receiptText(order.notes));
   lines.push('[SEP]', `[C]Fin de comanda · ${formatDate(new Date(), true)}`);
   return lines.join('\n');
 }
@@ -515,8 +562,7 @@ export function buildPrebillEscPos(orderOrInvoice, settings = {}) {
   }
 
   b.separator('-');
-  b.row('CANT DESCRIPCION', 'PRECIO     TOTAL');
-  b.separator('-');
+  b.row('CANT. / DESCRIPCION', 'IMPORTE');
 
   for (const item of items) {
     const qty = `${item.quantity}x`;
@@ -561,7 +607,7 @@ export function buildPrebillPlainText(orderOrInvoice, settings = {}) {
   const lines = [
     '[LOGO]'
   ];
-  const businessName = String(settings.name || 'Los Panitas by Nechy').trim();
+  const businessName = receiptText(settings.name || 'Los Panitas by Nechy');
   if (!businessName.toUpperCase().includes('PANITAS')) {
     lines.push(`[TITLE]${businessName.toUpperCase()}`);
   }
@@ -570,20 +616,22 @@ export function buildPrebillPlainText(orderOrInvoice, settings = {}) {
     '[C](NO VÁLIDO COMO COMPROBANTE FISCAL)',
     '[SEP]'
   );
-  if (orderOrInvoice.tableName) lines.push(`[B]MESA: ${orderOrInvoice.tableName}`);
+  if (orderOrInvoice.tableName) lines.push(`[B]MESA: ${receiptText(orderOrInvoice.tableName)}`);
   lines.push(`Fecha: ${formatDate(orderOrInvoice.createdAt || new Date(), true)}`);
-  if (orderOrInvoice.clientName) lines.push(`Cliente: ${String(orderOrInvoice.clientName).slice(0, 34)}`);
-  lines.push('[SEP]', 'CANT.  DESCRIPCIÓN                         TOTAL', '[SEP]');
+  if (orderOrInvoice.clientName) lines.push(`Cliente: ${receiptText(orderOrInvoice.clientName)}`);
+  lines.push('[SEP]', receiptRow('CANT. / DESCRIPCIÓN', 'IMPORTE'));
   for (const item of orderOrInvoice.items || []) {
-    const description = `${item.quantity} x ${String(item.name || '').slice(0, 25)}`;
-    lines.push(`${description.padEnd(32)}  ${formatMoney(Number(item.unitPriceCents || 0) * Number(item.quantity || 0)).padStart(11)}`);
-    if (item.notes) lines.push(`  * ${String(item.notes).slice(0, 38)}`);
+    const qty = Number(item.quantity ?? 1);
+    const description = `${qty} x ${receiptText(item.name)}`;
+    lines.push(receiptRow(description, formatMoney(Math.round(Number(item.unitPriceCents || 0) * qty))));
+    if (qty !== 1) lines.push(receiptRow('Precio unitario:', formatMoney(item.unitPriceCents)));
+    if (item.notes) lines.push(`Nota: ${receiptText(item.notes)}`);
   }
-  lines.push('[SEP]', `Subtotal:                       ${formatMoney(subtotalCents).padStart(11)}`);
-  if (discountCents > 0) lines.push(`Descuento:                     -${formatMoney(discountCents).padStart(11)}`);
-  if (taxCents > 0) lines.push(`ITBIS:                          ${formatMoney(taxCents).padStart(11)}`);
-  if (tipCents > 0) lines.push(`Propina legal:                  ${formatMoney(tipCents).padStart(11)}`);
-  lines.push('[SEP]', `[C][B]TOTAL A PAGAR: ${formatMoney(totalCents)}`, '[SEP]', '[C]Solicita tu factura fiscal si la requieres.');
+  lines.push('[SEP]', receiptRow('Subtotal:', formatMoney(subtotalCents)));
+  if (discountCents > 0) lines.push(receiptRow('Descuento:', `-${formatMoney(discountCents)}`));
+  if (taxCents > 0) lines.push(receiptRow('ITBIS:', formatMoney(taxCents)));
+  if (tipCents > 0) lines.push(receiptRow('Propina legal:', formatMoney(tipCents)));
+  lines.push(`[B]${receiptRow('TOTAL A PAGAR:', formatMoney(totalCents))}`, '[SEP]', '[C]Solicita tu factura fiscal si la requieres.');
   return lines.join('\n');
 }
 
@@ -650,7 +698,7 @@ export function buildCashReportEscPos(session, payments = [], settings = {}, mov
     b.bold(true).line('DETALLE DE GASTOS / RETIROS:').bold(false);
     for (const movement of sessionMovements) {
       const sign = movement.type === 'in' ? '+' : '-';
-      b.row(`${sign} ${String(movement.reason || 'Movimiento').slice(0, 26)}`, formatMoney(movement.amountCents));
+      b.row(`${sign} ${movement.reason || 'Movimiento'}`, formatMoney(movement.amountCents));
     }
   }
 
@@ -661,8 +709,8 @@ export function buildCashReportEscPos(session, payments = [], settings = {}, mov
 
   b.feed(2);
   b.align('center');
-  b.line('___________________________     ___________________________');
-  b.line('       Firma Cajero                     Firma Supervisor   ');
+  b.row('____________________', '____________________');
+  b.row('Firma Cajero', 'Firma Supervisor');
   b.feed(1);
   b.line(`Generado: ${formatDate(new Date(), true)}`);
   b.cut();
@@ -682,28 +730,28 @@ export function buildCashReportPlainText(session, payments = [], settings = {}, 
   const isCorteX = mode === 'X' || session.status === 'open';
   const lines = [
     `[TITLE]${isCorteX ? 'ARQUEO PARCIAL · CORTE X' : 'CIERRE DE CAJA · CORTE Z'}`,
-    `[C]${settings.name || 'Los Panitas by Nechy'}`,
+    `[C]${receiptText(settings.name || 'Los Panitas by Nechy')}`,
     '[SEP]',
-    `Responsable: ${String(session.openedByName || 'Cajero').slice(0, 30)}`,
+    `Responsable: ${receiptText(session.openedByName || 'Cajero')}`,
     `Apertura: ${formatDate(session.openedAt, true)}`,
     ...(session.closedAt ? [`Cierre: ${formatDate(session.closedAt, true)}`] : []),
     '[SEP]',
-    `Fondo inicial:                 ${formatMoney(session.openingCents || 0).padStart(11)}`,
-    `Ventas efectivo:               ${formatMoney(cashCollected).padStart(11)}`,
-    `Ventas tarjeta:                ${formatMoney(cardCollected).padStart(11)}`,
-    `Transferencias:                ${formatMoney(transferCollected).padStart(11)}`,
-    `Entradas de caja:              ${formatMoney(cashIn).padStart(11)}`,
-    `Salidas de caja:              -${formatMoney(cashOut).padStart(11)}`,
+    receiptRow('Fondo inicial:', formatMoney(session.openingCents || 0)),
+    receiptRow('Ventas efectivo:', formatMoney(cashCollected)),
+    receiptRow('Ventas tarjeta:', formatMoney(cardCollected)),
+    receiptRow('Transferencias:', formatMoney(transferCollected)),
+    receiptRow('Entradas de caja:', formatMoney(cashIn)),
+    receiptRow('Salidas de caja:', `-${formatMoney(cashOut)}`),
     '[SEP]',
-    `[B]EFECTIVO ESPERADO: ${formatMoney(expectedCash)}`
+    `[B]${receiptRow('EFECTIVO ESPERADO:', formatMoney(expectedCash))}`
   ];
   if (session.status === 'closed') {
-    lines.push(`Efectivo contado: ${formatMoney(session.closingCents || 0)}`,
-      `[B]DIFERENCIA: ${formatMoney(session.varianceCents || 0)}`);
+    lines.push(receiptRow('Efectivo contado:', formatMoney(session.closingCents || 0)),
+      `[B]${receiptRow('DIFERENCIA:', formatMoney(session.varianceCents || 0))}`);
   }
   if (sessionMovements.length) {
     lines.push('[SEP]', '[B]MOVIMIENTOS:');
-    sessionMovements.forEach((movement) => lines.push(`${movement.type === 'in' ? '+' : '-'} ${String(movement.reason || 'Movimiento').slice(0, 28)}  ${formatMoney(movement.amountCents)}`));
+    sessionMovements.forEach((movement) => lines.push(receiptRow(`${movement.type === 'in' ? '+' : '-'} ${movement.reason || 'Movimiento'}`, formatMoney(movement.amountCents))));
   }
   lines.push('[SEP]', `[C]Generado: ${formatDate(new Date(), true)}`);
   return lines.join('\n');

@@ -355,17 +355,53 @@ export function renderPos(state) {
             <div class="pos-method-detail-card" style="border-color:rgba(248,81,73,.4);background:rgba(248,81,73,.07);">
               <div class="pos-method-detail-title">
                 <i data-lucide="book-open"></i>
-                <strong>Fiao — Fiado</strong>
+                <strong>Fiao — Registro de Cuenta por Cobrar</strong>
               </div>
-              <label>Nombre de quien se lleva el fiao <strong style="color:#f85149;">*</strong>
-                <input name="fiaoClientName" id="pos-fiao-name" value="${escapeHtml(draft.fiaoClientName || '')}" placeholder="Ej: Pedro Mecánico, Sra. López..." maxlength="160">
-              </label>
-              <div style="margin-top:6px;">
-                <span style="font-size:0.75rem;color:var(--muted);">O selecciona un cliente registrado:</span>
-                <select id="pos-fiao-client-select" style="margin-top:4px;font-size:0.85rem;">
-                  <option value="">Seleccionar cliente registrado...</option>
-                  ${clients.filter(c => c.active !== false).map(c => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join('')}
+
+              <!-- Selector de cliente frecuente -->
+              <div style="margin-bottom:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+                  <span style="font-size:0.75rem;color:var(--muted);font-weight:600;">Cliente frecuente registrado:</span>
+                  <button type="button" class="button secondary compact" data-client-new style="font-size:0.72rem;padding:2px 7px;height:auto;line-height:1.2;gap:3px;">
+                    <i data-lucide="user-plus" style="width:12px;height:12px;"></i> + Registrar
+                  </button>
+                </div>
+                <select id="pos-fiao-client-select" style="font-size:0.85rem;width:100%;">
+                  <option value="">-- Seleccionar de la lista --</option>
+                  ${clients.filter(c => c.active !== false).map(c => `<option value="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}" data-phone="${escapeHtml(c.phone || '')}" data-notes="${escapeHtml(c.notes || '')}" data-limit="${c.creditLimitCents || 0}">${escapeHtml(c.name)}${c.phone ? ' · ' + escapeHtml(c.phone) : ''}</option>`).join('')}
                 </select>
+              </div>
+
+              <input type="hidden" name="fiaoClientId" id="pos-fiao-client-id" value="${escapeHtml(draft.fiaoClientId || '')}">
+
+              <!-- Nombre o apodo obligatorio -->
+              <label style="font-size:0.82rem;font-weight:600;">Nombre o apodo del deudor <strong style="color:#f85149;">*</strong>
+                <input name="fiaoClientName" id="pos-fiao-name" value="${escapeHtml(draft.fiaoClientName || '')}" placeholder="Ej: Pedro Mecánico, Doña Carmen..." maxlength="160" required>
+              </label>
+
+              <!-- Teléfono / WhatsApp de contacto -->
+              <label style="font-size:0.82rem;font-weight:600;margin-top:6px;">Teléfono móvil / WhatsApp (para llamar o cobrar)
+                <div style="position:relative;display:flex;align-items:center;">
+                  <i data-lucide="phone" style="position:absolute;left:10px;width:15px;height:15px;color:var(--muted);pointer-events:none;"></i>
+                  <input name="fiaoClientPhone" id="pos-fiao-phone" type="tel" inputmode="tel" value="${escapeHtml(draft.fiaoClientPhone || '')}" placeholder="Ej: 809-555-1234 o 829..." maxlength="30" style="padding-left:32px;">
+                </div>
+              </label>
+
+              <!-- Referencia / promesa de pago -->
+              <label style="font-size:0.82rem;font-weight:600;margin-top:6px;">Referencia / Promesa de pago (opcional)
+                <input name="fiaoNotes" id="pos-fiao-notes" value="${escapeHtml(draft.fiaoNotes || '')}" placeholder="Ej: Taller del lado, pasa a pagar el viernes..." maxlength="200">
+              </label>
+
+              <!-- Casilla guardar en clientes habituales -->
+              <label class="check-field" style="font-size:0.78rem;margin-top:8px;color:var(--muted);display:flex;align-items:center;gap:6px;">
+                <input type="checkbox" name="fiaoSaveAsClient" id="pos-fiao-save-client" ${draft.fiaoSaveAsClient === false ? '' : 'checked'}>
+                Guardar o actualizar en lista de clientes
+              </label>
+
+              <!-- Alerta reactiva de deuda previa -->
+              <div id="pos-fiao-debt-info" style="display:none;margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(248,81,73,.15);border:1px solid rgba(248,81,73,.35);font-size:0.8rem;color:#f85149;line-height:1.3;">
+                <i data-lucide="alert-triangle" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;"></i>
+                <span id="pos-fiao-debt-text"></span>
               </div>
             </div>
           </div>
