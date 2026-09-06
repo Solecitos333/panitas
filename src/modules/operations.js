@@ -388,37 +388,177 @@ export function renderPos(state) {
     </div>`;
 }
 
+export function formatElapsedMinutes(value) {
+  if (!value) return '';
+  const date = typeof value?.toDate === 'function' ? value.toDate() : new Date(value);
+  if (!date || Number.isNaN(date.getTime())) return '';
+  const mins = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60000));
+  if (mins < 60) return `${mins} min`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return `${hours}h ${remMins}m`;
+}
+
 export function renderTables(state) {
+  const tables = state.tables || [];
+  const activeOrders = state.orders || [];
+
+  let countAvailable = 0;
+  let countOccupied = 0;
+  let countPendingPayment = 0;
+
+  const enrichedTables = tables.map((table) => {
+    const order = activeOrders.find((item) => item.id === table.currentOrderId);
+    const status = order?.status || 'available';
+    if (status === 'available') {
+      countAvailable++;
+    } else if (status === 'pending_payment') {
+      countPendingPayment++;
+      countOccupied++;
+    } else {
+      countOccupied++;
+    }
+    return { table, order, status };
+  });
+
   return `
-    <section class="panel-heading"><div><span class="eyebrow">Salón</span><h2>Mapa de mesas</h2><p>Disponibilidad y estado de cada comanda en tiempo real.</p></div><button class="button primary" data-route="pos"><i data-lucide="plus"></i> Nueva comanda</button></section>
-    <div class="table-map">${state.tables.map((table) => {
-      const order = state.orders.find((item) => item.id === table.currentOrderId);
-      const status = order?.status || 'available';
-      return `<button type="button" class="restaurant-table status-${status}" ${order ? `data-order-open="${order.id}"` : `data-table-start="${table.id}"`}><div class="table-icon"><i data-lucide="utensils"></i></div><strong>${escapeHtml(table.name)}</strong><span>${order ? STATUS_LABELS[status] : 'Disponible'}</span>${order ? `<small>${formatMoney(order.totalCents)} · ${formatDate(order.createdAt, true)}</small>` : '<small>Toca para iniciar una comanda</small>'}</button>`;
-    }).join('')}</div>`;
+    <div class="tables-view-header">
+      <div class="tables-title-block">
+        <span class="eyebrow">Gestión de Salón</span>
+        <h2>Mapa de Mesas</h2>
+      </div>
+      <div class="tables-stats-strip">
+        <span class="table-stat-chip available">
+          <span class="stat-dot green"></span> <b>${countAvailable}</b> Libres
+        </span>
+        <span class="table-stat-chip occupied">
+          <span class="stat-dot amber"></span> <b>${countOccupied}</b> Ocupadas
+        </span>
+        ${countPendingPayment > 0 ? `
+          <span class="table-stat-chip payment">
+            <span class="stat-dot purple"></span> <b>${countPendingPayment}</b> Por Cobrar
+          </span>
+        ` : ''}
+      </div>
+      <button class="button primary" data-route="pos" style="margin-left:auto;">
+        <i data-lucide="plus"></i> Nueva comanda
+      </button>
+    </div>
+
+    <div class="table-map">
+      ${enrichedTables.map(({ table, order, status }) => {
+        const elapsed = order ? formatElapsedMinutes(order.createdAt) : '';
+        const itemsCount = order?.items ? order.items.reduce((s, i) => s + (i.quantity || 1), 0) : 0;
+        const statusText = order ? (STATUS_LABELS[status] || status) : 'Disponible';
+
+        return `<button type="button" class="restaurant-table restaurant-table-card status-${status}" ${order ? `data-order-open="${order.id}"` : `data-table-start="${table.id}"`}>
+          <div class="table-card-top">
+            <div class="table-number-pill">
+              <i data-lucide="utensils" style="width:14px;height:14px;"></i>
+              <strong>${escapeHtml(table.name)}</strong>
+            </div>
+            <span class="table-status-pill status-${status}">
+              <span class="status-indicator-dot"></span>
+              ${statusText}
+            </span>
+          </div>
+
+          <div class="table-card-center">
+            ${order ? `
+              <div class="table-order-info">
+                <span class="table-client-name" title="${escapeHtml(order.clientName || 'Cliente')}">
+                  <i data-lucide="users" style="width:12px;height:12px;display:inline-block;vertical-align:-1px;"></i>
+                  ${escapeHtml(order.clientName || 'Sin cliente')}
+                </span>
+                <div class="table-order-meta-line">
+                  <span class="table-items-count">${itemsCount} ${itemsCount === 1 ? 'artículo' : 'artículos'}</span>
+                  ${elapsed ? `<span class="table-elapsed-badge"><i data-lucide="clock-3" style="width:11px;height:11px;"></i> ${elapsed}</span>` : ''}
+                </div>
+              </div>
+            ` : `
+              <div class="table-empty-prompt">
+                <div class="table-empty-icon"><i data-lucide="plus"></i></div>
+                <span>Tocar para abrir comanda</span>
+              </div>
+            `}
+          </div>
+
+          <div class="table-card-footer">
+            ${order ? `
+              <span class="table-total-label">Consumo</span>
+              <strong class="table-total-amount">${formatMoney(order.totalCents)}</strong>
+            ` : `
+              <span class="table-free-badge"><i data-lucide="badge-check" style="width:13px;height:13px;"></i> Lista para servicio</span>
+            `}
+          </div>
+        </button>`;
+      }).join('')}
+    </div>`;
 }
 
 export function renderKds(state) {
-  const orders = state.orders.filter((item) => ['pending', 'preparing', 'ready'].includes(item.status));
+  const orders = (state.orders || []).filter((item) => ['pending', 'preparing', 'ready'].includes(item.status));
+  const pendingCount = orders.filter((o) => o.status === 'pending').length;
+  const preparingCount = orders.filter((o) => o.status === 'preparing').length;
+  const readyCount = orders.filter((o) => o.status === 'ready').length;
+
   return `
-    <section class="panel-heading"><div><span class="eyebrow">Kitchen Display System</span><h2>Cocina en vivo</h2><p>Ordenadas por prioridad y antigüedad.</p></div><div class="live-indicator"><span></span> Sincronización activa</div></section>
+    <div class="kds-view-header">
+      <div class="kds-title-block">
+        <span class="eyebrow">Kitchen Display System</span>
+        <h2>Cocina en Vivo</h2>
+      </div>
+      <div class="kds-summary-counters">
+        <span class="kds-counter-chip pending">
+          <b>${pendingCount}</b> Pendientes
+        </span>
+        <span class="kds-counter-chip preparing">
+          <b>${preparingCount}</b> En Preparación
+        </span>
+        <span class="kds-counter-chip ready">
+          <b>${readyCount}</b> Listas
+        </span>
+      </div>
+      <div class="kds-live-indicator" style="margin-left:auto;">
+        <span class="live-pulse-dot"></span> Sincronización activa
+      </div>
+    </div>
     <div class="kds-grid">${orders.length ? orders.map(kdsCard).join('') : empty('badge-check', 'Cocina al día', 'No hay comandas activas en este momento.')}</div>`;
 }
 
 export function renderOrderDrawer(order, capabilities = {}) {
   if (!order) return '';
   return `<div class="modal-backdrop" data-modal-close><article class="modal-card order-detail" role="dialog" aria-modal="true" aria-labelledby="order-title" data-modal-card>
-    <header><div><span class="eyebrow">${escapeHtml(order.tableName)}</span><h2 id="order-title">${escapeHtml(order.clientName)}</h2></div><button class="icon-button" data-modal-close aria-label="Cerrar"><i data-lucide="x"></i></button></header>
-    <div class="order-meta"><span class="order-status status-${order.status}">${STATUS_LABELS[order.status]}</span><span>${formatDate(order.createdAt, true)}</span><span>Rev. ${order.revision}</span></div>
-    <ul class="order-items">${order.items.map((item) => `<li><div><strong>${item.quantity} × ${escapeHtml(item.name)}</strong>${item.notes ? `<small style="display:block;color:var(--brand-2);">↳ ${escapeHtml(item.notes)}</small>` : ''}</div><span>${formatMoney(item.unitPriceCents * item.quantity)}</span></li>`).join('')}</ul>
-    ${order.notes ? `<p class="notice warning"><i data-lucide="message-square-warning"></i>${escapeHtml(order.notes)}</p>` : ''}
-    <div class="total-row"><span>Total</span><strong>${formatMoney(order.totalCents)}</strong></div>
+    <header>
+      <div>
+        <span class="eyebrow">${escapeHtml(order.tableName || 'Mesa')}</span>
+        <h2 id="order-title">${escapeHtml(order.clientName || 'Comanda')}</h2>
+      </div>
+      <button class="icon-button" data-modal-close aria-label="Cerrar"><i data-lucide="x"></i></button>
+    </header>
+    <div class="order-meta">
+      <span class="order-status status-${order.status}">${STATUS_LABELS[order.status] || order.status}</span>
+      <span><i data-lucide="clock-3" style="width:12px;height:12px;display:inline-block;vertical-align:-1px;"></i> ${formatDate(order.createdAt, true)}</span>
+      <span>Rev. ${order.revision || 1}</span>
+    </div>
+    <ul class="order-items">${order.items.map((item) => `<li>
+      <div>
+        <strong>${item.quantity} × ${escapeHtml(item.name)}</strong>
+        ${item.notes ? `<small style="display:block;color:var(--brand-2);">↳ ${escapeHtml(item.notes)}</small>` : ''}
+      </div>
+      <b style="color:var(--text);font-family:'Manrope',sans-serif;">${formatMoney(item.unitPriceCents * item.quantity)}</b>
+    </li>`).join('')}</ul>
+    ${order.notes ? `<div class="notice warning" style="margin:16px 23px 0;"><i data-lucide="message-square-warning"></i>${escapeHtml(order.notes)}</div>` : ''}
+    <div class="total-row">
+      <span>Total a Pagar</span>
+      <strong style="color:var(--brand-2);font-family:'Manrope',sans-serif;font-size:1.6rem;">${formatMoney(order.totalCents)}</strong>
+    </div>
     <footer class="modal-actions">
       <button class="button secondary" data-order-prebill="${order.id}"><i data-lucide="receipt"></i> Pre-cuenta</button>
       <button class="button secondary" data-order-print="${order.id}"><i data-lucide="printer"></i> Imprimir comanda</button>
-      ${order.status === 'ready' && (capabilities.serveOrder || capabilities.updateOrder) ? '<button class="button secondary" data-order-transition="served">Marcar servida</button>' : ''}
-      ${order.status === 'served' && (capabilities.serveOrder || capabilities.updateOrder) ? '<button class="button secondary" data-order-transition="pending_payment">Enviar a cobro</button>' : ''}
-      ${['served','pending_payment'].includes(order.status) && capabilities.chargeOrder ? '<button class="button primary" data-order-charge>Cobrar y cerrar</button>' : ''}
+      ${order.status === 'ready' && (capabilities.serveOrder || capabilities.updateOrder) ? '<button class="button secondary" data-order-transition="served"><i data-lucide="check"></i> Marcar servida</button>' : ''}
+      ${order.status === 'served' && (capabilities.serveOrder || capabilities.updateOrder) ? '<button class="button secondary" data-order-transition="pending_payment"><i data-lucide="send"></i> Enviar a cobro</button>' : ''}
+      ${['served','pending_payment'].includes(order.status) && capabilities.chargeOrder ? '<button class="button primary" data-order-charge><i data-lucide="credit-card"></i> Cobrar y cerrar</button>' : ''}
       ${!['closed','cancelled'].includes(order.status) && capabilities.updateOrder ? '<button class="button danger ghost" data-order-cancel>Cancelar</button>' : ''}
     </footer>
   </article></div>`;
@@ -527,6 +667,70 @@ export function renderCartTotals(items, discountState = { discount: 0, discountT
   </div>`;
 }
 
-function kdsCard(order) { const action = order.status === 'pending' ? ['preparing','Comenzar preparación'] : order.status === 'preparing' ? ['ready','Marcar lista'] : null; return `<article class="kds-card priority-${order.priority} status-${order.status}"><header><div><span>${escapeHtml(order.tableName)}</span><h3>${escapeHtml(order.clientName)}</h3></div><span class="order-status status-${order.status}">${STATUS_LABELS[order.status]}</span></header><div class="kds-time"><i data-lucide="clock-3"></i>${formatDate(order.createdAt, true)}${order.priority !== 'normal' ? `<b>${order.priority === 'urgent' ? 'URGENTE' : 'PRIORIDAD'}</b>` : ''}</div><ul>${order.items.map((item) => `<li><strong>${item.quantity}×</strong><span>${escapeHtml(item.name)}</span>${item.notes ? `<small style="display:block;color:var(--brand-2);">↳ ${escapeHtml(item.notes)}</small>` : ''}</li>`).join('')}</ul>${order.notes ? `<p>${escapeHtml(order.notes)}</p>` : ''}${action ? `<button class="button primary full" data-kds-order="${order.id}" data-next-status="${action[0]}">${action[1]}</button>` : '<span class="notice success">Lista para retirar</span>'}</article>`; }
+function kdsCard(order) {
+  const action = order.status === 'pending'
+    ? ['preparing', '🔥 Iniciar Preparación', 'kds-btn-prepare']
+    : order.status === 'preparing'
+    ? ['ready', '✅ Marcar Lista para Servir', 'kds-btn-ready']
+    : null;
+
+  const date = order.createdAt ? (typeof order.createdAt.toDate === 'function' ? order.createdAt.toDate() : new Date(order.createdAt)) : null;
+  const elapsedMins = date && !Number.isNaN(date.getTime()) ? Math.max(0, Math.floor((Date.now() - date.getTime()) / 60000)) : 0;
+  const timeUrgency = elapsedMins >= 20 ? 'time-urgent' : elapsedMins >= 10 ? 'time-warning' : 'time-normal';
+  const elapsedLabel = formatElapsedMinutes(order.createdAt);
+
+  return `<article class="kds-card priority-${order.priority} status-${order.status} ${timeUrgency}">
+    <header class="kds-card-header">
+      <div class="kds-header-main">
+        <div class="kds-table-badge">
+          <i data-lucide="utensils" style="width:13px;height:13px;"></i>
+          ${escapeHtml(order.tableName || 'Para Llevar')}
+        </div>
+        <div class="kds-client-sub">${escapeHtml(order.clientName || 'Cliente')}</div>
+      </div>
+      <div class="kds-status-col">
+        <span class="order-status status-${order.status}">${STATUS_LABELS[order.status] || order.status}</span>
+        ${order.priority !== 'normal' ? `<span class="kds-priority-tag ${order.priority}">${order.priority === 'urgent' ? '🚨 URGENTE' : '⚡ PRIORIDAD'}</span>` : ''}
+      </div>
+    </header>
+
+    <div class="kds-timer-bar ${timeUrgency}">
+      <span class="kds-timer-clock"><i data-lucide="clock-3" style="width:13px;height:13px;"></i> ${formatDate(order.createdAt, true)}</span>
+      <span class="kds-elapsed-pill ${timeUrgency}"><i data-lucide="flame" style="width:12px;height:12px;"></i> ${elapsedLabel ? `hace ${elapsedLabel}` : 'recién'}</span>
+    </div>
+
+    <ul class="kds-items-list">
+      ${order.items.map((item) => `
+        <li class="kds-item-row">
+          <span class="kds-item-qty">${item.quantity}×</span>
+          <div class="kds-item-details">
+            <strong class="kds-item-name">${escapeHtml(item.name)}</strong>
+            ${item.notes ? `<div class="kds-item-note"><i data-lucide="message-square-warning" style="width:12px;height:12px;"></i> ${escapeHtml(item.notes)}</div>` : ''}
+          </div>
+        </li>
+      `).join('')}
+    </ul>
+
+    ${order.notes ? `
+      <div class="kds-order-notes-box">
+        <i data-lucide="message-square-warning" style="width:15px;height:15px;flex-shrink:0;"></i>
+        <span><strong>Nota comanda:</strong> ${escapeHtml(order.notes)}</span>
+      </div>
+    ` : ''}
+
+    <div class="kds-card-actions">
+      ${action ? `
+        <button class="button primary full kds-action-btn ${action[2]}" data-kds-order="${order.id}" data-next-status="${action[0]}">
+          ${action[1]}
+        </button>
+      ` : `
+        <div class="kds-ready-banner">
+          <i data-lucide="bell" style="width:16px;height:16px;"></i>
+          <span>Lista en el pase para retirar</span>
+        </div>
+      `}
+    </div>
+  </article>`;
+}
 function renderOrderMiniList(items) { return items.length ? `<div class="mini-list">${items.map((item) => `<button data-order-open="${item.id}"><span class="dot status-${item.status}"></span><div><strong>${escapeHtml(item.tableName)}</strong><small>${STATUS_LABELS[item.status]} · ${formatDate(item.createdAt, true)}</small></div><b>${formatMoney(item.totalCents)}</b></button>`).join('')}</div>` : empty('badge-check', 'Sin pendientes', 'Todo está bajo control.'); }
 function renderInvoiceMiniList(items) { return items.length ? `<div class="mini-list">${items.map((item) => `<button data-invoice-view="${item.id}"><i data-lucide="receipt"></i><div><strong>${escapeHtml(item.invoiceNumber)}</strong><small>${escapeHtml(item.clientName)} · ${formatDate(item.createdAt)}</small></div><b>${formatMoney(item.totalCents)}</b></button>`).join('')}</div>` : empty('receipt', 'Sin documentos', 'Las ventas aparecerán aquí.'); }

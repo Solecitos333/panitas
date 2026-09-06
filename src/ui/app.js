@@ -1,11 +1,11 @@
 import {
-  createIcons, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, BookOpen, Cake, Calculator, Calendar,
-  ChartNoAxesCombined, ChefHat, ChevronDown, CircleDollarSign, Clock3, Coffee, Cpu, CreditCard, Download, Eye,
+  createIcons, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, BookOpen, Cake, Calculator, Calendar,
+  ChartNoAxesCombined, Check, ChefHat, ChevronDown, CircleDollarSign, Clock3, Coffee, Cpu, CreditCard, Download, Eye,
   FileCheck2, FileSpreadsheet, Flame, Globe, KeyRound, Landmark, Layers, LayoutDashboard, Lock, LogOut, Menu,
   MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Package, PackageOpen, PanelLeftClose, PanelLeftOpen,
   Pencil, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, Salad, Sandwich, Save, ScanBarcode,
   Search, Send, Settings, Sheet, ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, SlidersHorizontal,
-  Smartphone, Sparkles, Star, Trash2, TrendingDown, TrendingUp, Usb, UserPlus, Users, Utensils, Volume2,
+  Smartphone, Sparkles, Star, Timer, Trash2, TrendingDown, TrendingUp, Usb, UserPlus, Users, Utensils, Volume2,
   Wallet, WalletCards, Wheat, Wifi, WifiOff, X
 } from 'lucide';
 import { can, allowedNavigation, primaryRole } from '../domain/roles.js';
@@ -35,11 +35,11 @@ const NAV = [
 ];
 
 const icons = {
-  BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, BookOpen, Cake, Calculator, Calendar, ChartNoAxesCombined, ChefHat,
+  BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, BookOpen, Cake, Calculator, Calendar, ChartNoAxesCombined, Check, ChefHat,
   ChevronDown, CircleDollarSign, Clock3, Coffee, Cpu, CreditCard, Download, Eye, FileCheck2, FileSpreadsheet, Flame, Globe, KeyRound, Landmark,
   Layers, LayoutDashboard, Lock, LogOut, Menu, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Package, PackageOpen, PanelLeftClose, PanelLeftOpen,
   Pencil, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, Salad, Sandwich, Save, ScanBarcode, Search, Send, Settings, Sheet,
-  ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, SlidersHorizontal, Smartphone, Sparkles, Star, Trash2, TrendingDown, TrendingUp, Usb, UserPlus, Users,
+  ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, SlidersHorizontal, Smartphone, Sparkles, Star, Timer, Trash2, TrendingDown, TrendingUp, Usb, UserPlus, Users,
   Utensils, Volume2, Wallet, WalletCards, Wheat, Wifi, WifiOff, X
 };
 
