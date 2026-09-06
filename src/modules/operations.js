@@ -131,20 +131,22 @@ export function renderPos(state) {
       ? `Registrar fiao ${formatMoney(totals.totalCents)}`
       : `Cobrar ${formatMoney(totals.totalCents)}`;
   return `
-    <section class="panel-heading">
-      <div>
-        <span class="eyebrow">Venta rápida</span>
-        <h2>1. Elige los productos</h2>
-        <p>Al terminar, toca Cobrar y confirma con tu PIN de cuatro dígitos.</p>
+    <header class="pos-topbar">
+      <div class="pos-topbar-left">
+        <div class="pos-topbar-title">
+          <span class="pos-badge-live">VENTA RÁPIDA</span>
+          <h2>Punto de Venta</h2>
+        </div>
+        ${selectedTableId ? `<span class="pos-table-indicator"><i data-lucide="utensils"></i> Mesa asignada</span>` : ''}
       </div>
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <div class="pos-topbar-right">
         <span class="hw-chip ${hardware.printerConnected ? 'online' : 'warning'}"><i data-lucide="printer"></i> ${hardware.printerConnected ? 'Impresora lista' : 'Impresora sin confirmar'}</span>
         ${state.activeCash
           ? `<div class="status-chip online"><i data-lucide="wallet"></i>Caja lista</div>`
           : `<div class="status-chip warning"><i data-lucide="key-round"></i>El PIN iniciará la caja</div>`
         }
       </div>
-    </section>
+    </header>
 
     ${hardware.paperOut ? `
       <div style="background:rgba(248,81,73,.16);border:2px solid #f85149;border-radius:12px;padding:12px 18px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;color:#fff;">
@@ -173,18 +175,23 @@ export function renderPos(state) {
     </button>
     <div class="pos-layout">
       <section class="surface-card product-browser">
-        <div class="toolbar">
-          <label class="search-field">
+        <div class="toolbar pos-toolbar">
+          <label class="search-field pos-search-field">
             <i data-lucide="search"></i>
             <input id="product-search" type="search" value="${escapeHtml(state.posSearch || '')}" placeholder="Buscar por nombre o escanear SKU/código..." autocomplete="off">
           </label>
         </div>
-        <div class="pos-category-bar" style="display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;margin:8px 0 12px;-webkit-overflow-scrolling:touch;">
-          ${categories.map((cat) => `
-            <button type="button" class="category-pill ${cat === selectedCategory ? 'active' : ''}" data-cat-filter="${escapeHtml(cat)}" style="padding:7px 14px;border-radius:999px;font-size:0.8rem;font-weight:600;white-space:nowrap;border:1px solid ${cat === selectedCategory ? 'var(--brand-2)' : 'var(--line)'};background:${cat === selectedCategory ? 'rgba(215,154,60,.15)' : 'rgba(255,255,255,.04)'};color:${cat === selectedCategory ? 'var(--brand-2)' : '#ccc'};cursor:pointer;">
-              ${escapeHtml(cat)}
-            </button>
-          `).join('')}
+        <div class="pos-category-bar">
+          ${categories.map((cat) => {
+            const meta = getCategoryMeta(cat);
+            const isAct = cat === selectedCategory;
+            return `
+              <button type="button" class="category-pill ${isAct ? 'active' : ''}" data-cat-filter="${escapeHtml(cat)}" style="${isAct ? '' : `border-color:${meta.border};`}">
+                <i data-lucide="${meta.icon}"></i>
+                <span>${escapeHtml(cat)}</span>
+              </button>
+            `;
+          }).join('')}
         </div>
         <div id="pos-products" class="product-grid">${activeProducts.length ? activeProducts.map(productCard).join('') : empty('package-open', 'Catálogo vacío', 'Agrega el primer producto para comenzar a vender.')}</div>
       </section>
@@ -419,32 +426,86 @@ export function renderOrderDrawer(order, capabilities = {}) {
 
 function metric(label, value, icon, tone = '') { return `<article class="metric-card ${tone}"><i data-lucide="${icon}"></i><div><span>${label}</span><strong>${value}</strong></div></article>`; }
 function empty(icon, title, copy) { return `<div class="empty-state"><i data-lucide="${icon}"></i><strong>${title}</strong><p>${copy}</p></div>`; }
+export function getCategoryMeta(category = '') {
+  const norm = String(category).toLowerCase().trim();
+  if (norm === 'todos') return { icon: 'sparkles', color: '#f59e0b', bg: 'rgba(245,158,11,.12)', border: 'rgba(245,158,11,.3)' };
+  if (norm.includes('burger') || norm.includes('hamburg') || norm.includes('sandwich')) {
+    return { icon: 'sandwich', color: '#f97316', bg: 'rgba(249,115,22,.12)', border: 'rgba(249,115,22,.3)' };
+  }
+  if (norm.includes('carne') || norm.includes('cerdo') || norm.includes('res') || norm.includes('pollo')) {
+    return { icon: 'flame', color: '#ef4444', bg: 'rgba(239,68,68,.12)', border: 'rgba(239,68,68,.3)' };
+  }
+  if (norm.includes('guarni') || norm.includes('fritur') || norm.includes('papa') || norm.includes('yuca') || norm.includes('batata') || norm.includes('arepa')) {
+    return { icon: 'layers', color: '#eab308', bg: 'rgba(234,179,8,.12)', border: 'rgba(234,179,8,.3)' };
+  }
+  if (norm.includes('arroz')) {
+    return { icon: 'wheat', color: '#d97706', bg: 'rgba(217,119,6,.12)', border: 'rgba(217,119,6,.3)' };
+  }
+  if (norm.includes('ensalada') || norm.includes('vegetal') || norm.includes('aguacate')) {
+    return { icon: 'salad', color: '#84cc16', bg: 'rgba(132,204,22,.12)', border: 'rgba(132,204,22,.3)' };
+  }
+  if (norm.includes('bebida') || norm.includes('jugo') || norm.includes('refresco') || norm.includes('cerveza') || norm.includes('agua')) {
+    return { icon: 'beer', color: '#0ea5e9', bg: 'rgba(14,165,233,.12)', border: 'rgba(14,165,233,.3)' };
+  }
+  if (norm.includes('postre') || norm.includes('dulce') || norm.includes('helado')) {
+    return { icon: 'cake', color: '#ec4899', bg: 'rgba(236,72,153,.12)', border: 'rgba(236,72,153,.3)' };
+  }
+  if (norm.includes('plato') || norm.includes('especial') || norm.includes('dia')) {
+    return { icon: 'star', color: '#a855f7', bg: 'rgba(168,85,247,.12)', border: 'rgba(168,85,247,.3)' };
+  }
+  return { icon: 'utensils', color: '#10b981', bg: 'rgba(16,185,129,.12)', border: 'rgba(16,185,129,.3)' };
+}
+
 function productCard(item) {
-  return `<button class="product-card" data-product-add="${item.id}" data-category="${escapeHtml(item.category || 'General')}" data-search="${escapeHtml(`${item.name} ${item.sku || ''} ${item.category || ''}`.toLowerCase())}">
-    <div style="display:flex;justify-content:space-between;align-items:center;width:100%;">
-      <span class="product-category">${escapeHtml(item.category || 'General')}</span>
-      ${item.sku ? `<span style="font-size:.65rem;background:rgba(215,154,60,.12);color:var(--brand-2);padding:2px 6px;border-radius:4px;font-family:monospace;"><i data-lucide="barcode" style="width:10px;height:10px;display:inline-block;vertical-align:-1px;"></i> ${escapeHtml(item.sku)}</span>` : ''}
+  const meta = getCategoryMeta(item.category);
+  const stock = Number(item.stock ?? 0);
+  const isOutOfStock = stock <= 0;
+  const isLowStock = stock > 0 && stock <= 10;
+  const stockClass = isOutOfStock ? 'stock-out' : isLowStock ? 'stock-low' : 'stock-ok';
+  const stockLabel = isOutOfStock ? 'Agotado' : isLowStock ? `Últimas ${stock}` : `Stock: ${stock}`;
+
+  return `<button class="product-card pos-product-tile ${stockClass}" data-product-add="${item.id}" data-category="${escapeHtml(item.category || 'General')}" data-search="${escapeHtml(`${item.name} ${item.sku || ''} ${item.category || ''}`.toLowerCase())}" style="--cat-accent:${meta.color};">
+    <div class="product-tile-header">
+      <span class="product-category-badge" style="color:${meta.color};background:${meta.bg};border-color:${meta.border};">
+        <i data-lucide="${meta.icon}" style="width:12px;height:12px;"></i>
+        ${escapeHtml(item.category || 'General')}
+      </span>
+      ${item.sku ? `<span class="product-sku"><i data-lucide="barcode" style="width:10px;height:10px;display:inline-block;vertical-align:-1px;"></i> ${escapeHtml(item.sku)}</span>` : ''}
     </div>
-    <i data-lucide="utensils"></i>
-    <strong>${escapeHtml(item.name)}</strong>
-    <small>Existencia: ${item.stock}</small>
-    <b>${formatMoney(item.priceCents)}</b>
+    <div class="product-tile-body">
+      <div class="product-tile-icon" style="color:${meta.color};background:${meta.bg};">
+        <i data-lucide="${meta.icon}"></i>
+      </div>
+      <strong class="product-tile-name">${escapeHtml(item.name)}</strong>
+    </div>
+    <div class="product-tile-footer">
+      <span class="product-stock-badge ${stockClass}">
+        <span class="stock-dot"></span>
+        ${stockLabel}
+      </span>
+      <b class="product-tile-price">${formatMoney(item.priceCents)}</b>
+    </div>
   </button>`;
 }
+
 export function cartLine(item, index) {
-  return `<div class="cart-line">
-    <div style="flex:1;">
-      <strong>${escapeHtml(item.name)}</strong>
-      <small>${formatMoney(item.unitPriceCents)} c/u</small>
-      ${item.notes ? `<div style="font-size:0.72rem;color:var(--brand-2);margin-top:2px;">↳ ${escapeHtml(item.notes)}</div>` : ''}
+  return `<div class="cart-line pos-cart-line" data-cart-row="${index}">
+    <div class="cart-line-info" style="flex:1;min-width:0;">
+      <strong class="cart-line-name" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(item.name)}</strong>
+      <div class="cart-line-meta" style="display:flex;align-items:center;gap:6px;margin-top:2px;">
+        <span class="cart-unit-price">${formatMoney(item.unitPriceCents)} c/u</span>
+        ${item.notes ? `<span class="cart-line-note" style="display:inline-flex;align-items:center;gap:3px;font-size:0.7rem;color:var(--brand-2);background:rgba(245,158,11,.1);padding:1px 5px;border-radius:4px;"><i data-lucide="message-square-plus" style="width:11px;height:11px;"></i> ${escapeHtml(item.notes)}</span>` : ''}
+      </div>
     </div>
-    <div class="quantity-control">
-      <button type="button" data-cart-qty="${index}" data-delta="-1">−</button>
-      <span data-cart-set-qty="${index}" style="cursor:pointer;font-weight:700;" title="Tocar para editar">${item.quantity}</span>
-      <button type="button" data-cart-qty="${index}" data-delta="1">+</button>
-      <button type="button" class="icon-button" data-cart-item-note="${index}" style="padding:4px;width:26px;height:26px;" title="Agregar nota al plato"><i data-lucide="message-square-plus" style="width:14px;height:14px;"></i></button>
+    <div class="quantity-control pos-qty-control">
+      <button type="button" class="qty-btn" data-cart-qty="${index}" data-delta="-1" aria-label="Restar una unidad">−</button>
+      <span class="qty-display" data-cart-set-qty="${index}" style="cursor:pointer;" title="Tocar para editar">${item.quantity}</span>
+      <button type="button" class="qty-btn" data-cart-qty="${index}" data-delta="1" aria-label="Sumar una unidad">+</button>
+      <button type="button" class="qty-note-btn" data-cart-item-note="${index}" title="Agregar nota al plato" aria-label="Agregar nota">
+        <i data-lucide="message-square-plus"></i>
+      </button>
     </div>
-    <b>${formatMoney(item.unitPriceCents * item.quantity)}</b>
+    <b class="cart-line-total">${formatMoney(item.unitPriceCents * item.quantity)}</b>
   </div>`;
 }
 
@@ -458,11 +519,11 @@ export function renderCartTotals(items, discountState = { discount: 0, discountT
   }
   const res = calculateDocument(items, discountState || {});
   return `<div class="cart-totals">
-    <div><span>Subtotal</span><b>${formatMoney(res.subtotalCents)}</b></div>
-    ${res.discountCents > 0 ? `<div style="color:#d9534f;"><span>Descuento</span><b>-${formatMoney(res.discountCents)}</b></div>` : ''}
-    <div><span>ITBIS</span><b>${formatMoney(res.taxCents)}</b></div>
-    ${res.tipCents > 0 ? `<div style="color:var(--brand-2);"><span>Propina Ley (10%)</span><b>${formatMoney(res.tipCents)}</b></div>` : ''}
-    <div class="grand-total"><span>Total</span><strong>${formatMoney(res.totalCents)}</strong></div>
+    <div class="cart-total-row"><span>Subtotal</span><b>${formatMoney(res.subtotalCents)}</b></div>
+    ${res.discountCents > 0 ? `<div class="cart-total-row discount" style="color:#ef4444;"><span>Descuento</span><b>-${formatMoney(res.discountCents)}</b></div>` : ''}
+    <div class="cart-total-row"><span>ITBIS (18%)</span><b>${formatMoney(res.taxCents)}</b></div>
+    ${res.tipCents > 0 ? `<div class="cart-total-row tip" style="color:var(--brand-2);"><span>Propina Ley (10%)</span><b>${formatMoney(res.tipCents)}</b></div>` : ''}
+    <div class="grand-total"><span>Total a Pagar</span><strong>${formatMoney(res.totalCents)}</strong></div>
   </div>`;
 }
 

@@ -1,10 +1,12 @@
 import {
-  createIcons, BadgeCheck, BadgeDollarSign, Banknote, Barcode, BookOpen, Calculator, Calendar, ChartNoAxesCombined, CreditCard,
-  ChefHat, ChevronDown, CircleDollarSign, Clock3, Cpu, Download, Eye, FileCheck2, FileSpreadsheet, Globe, Landmark,
-  KeyRound, LayoutDashboard, Lock, LogOut, Menu, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Package, PackageOpen, Pencil,
-  Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, Save, ScanBarcode, Search, Send, Settings,
-  Sheet, ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, SlidersHorizontal, Smartphone, Sparkles, Trash2, TrendingDown, TrendingUp, Usb, UserPlus,
-  Users, Utensils, Volume2, Wallet, WalletCards, Wifi, WifiOff, X
+  createIcons, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, BookOpen, Cake, Calculator, Calendar,
+  ChartNoAxesCombined, ChefHat, ChevronDown, CircleDollarSign, Clock3, Coffee, Cpu, CreditCard, Download, Eye,
+  FileCheck2, FileSpreadsheet, Flame, Globe, KeyRound, Landmark, Layers, LayoutDashboard, Lock, LogOut, Menu,
+  MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Package, PackageOpen, PanelLeftClose, PanelLeftOpen,
+  Pencil, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, Salad, Sandwich, Save, ScanBarcode,
+  Search, Send, Settings, Sheet, ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, SlidersHorizontal,
+  Smartphone, Sparkles, Star, Trash2, TrendingDown, TrendingUp, Usb, UserPlus, Users, Utensils, Volume2,
+  Wallet, WalletCards, Wheat, Wifi, WifiOff, X
 } from 'lucide';
 import { can, allowedNavigation, primaryRole } from '../domain/roles.js';
 import { calculateDocument, toCents } from '../domain/billing.js';
@@ -33,18 +35,19 @@ const NAV = [
 ];
 
 const icons = {
-  BadgeCheck, BadgeDollarSign, Banknote, Barcode, BookOpen, Calculator, Calendar, ChartNoAxesCombined, ChefHat,
-  ChevronDown, CircleDollarSign, Clock3, Cpu, CreditCard, Download, Eye, FileCheck2, FileSpreadsheet, Globe, KeyRound, Landmark, LayoutDashboard,
-  Lock, LogOut, Menu, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Package, PackageOpen, Pencil, Plus, Printer,
-  QrCode, Radio, Receipt, ReceiptText, RefreshCw, Save, ScanBarcode, Search, Send, Settings, Sheet,
-  ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, SlidersHorizontal, Smartphone, Sparkles, Trash2, TrendingDown, TrendingUp, Usb, UserPlus, Users,
-  Utensils, Volume2, Wallet, WalletCards, Wifi, WifiOff, X
+  BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, BookOpen, Cake, Calculator, Calendar, ChartNoAxesCombined, ChefHat,
+  ChevronDown, CircleDollarSign, Clock3, Coffee, Cpu, CreditCard, Download, Eye, FileCheck2, FileSpreadsheet, Flame, Globe, KeyRound, Landmark,
+  Layers, LayoutDashboard, Lock, LogOut, Menu, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Package, PackageOpen, PanelLeftClose, PanelLeftOpen,
+  Pencil, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, Salad, Sandwich, Save, ScanBarcode, Search, Send, Settings, Sheet,
+  ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, SlidersHorizontal, Smartphone, Sparkles, Star, Trash2, TrendingDown, TrendingUp, Usb, UserPlus, Users,
+  Utensils, Volume2, Wallet, WalletCards, Wheat, Wifi, WifiOff, X
 };
 
 export function createApplication({ root, user, service, onLogout, onChangePassword, development = false }) {
   const state = {
     user, settings: {}, route: initialRoute(user), cart: [], selectedOrderId: '', selectedInvoiceId: '', preselectedTableId: '', modal: '',
     hardwareStatus: null, updateStatus: getEloUpdateStatus(), scannerActive: false, checkoutOpening: false, saleInProgress: false, pendingLiveRender: false, pendingPinDestination: '', mobileReportPeriod: 'day', posDiscountState: { discount: 0, discountType: 'amount', includeLegalTip: false }, posDraft: {}, posSearch: '', posCategory: 'Todos',
+    sidebarCollapsed: typeof localStorage !== 'undefined' && localStorage.getItem('panitas_sidebar_collapsed') === '1',
     products: [], clients: [], tables: [], orders: [], invoices: [], payments: [], cashSessions: [], cashMovements: [], users: [], auditLogs: [], development,
     capabilities: {
       bill: can(user, 'billing:create'), cancelInvoice: can(user, 'billing:cancel'), chargeOrder: can(user, 'orders:charge'),
@@ -153,18 +156,23 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   }
 
   function render() {
-    root.innerHTML = `<div class="app-shell">
-      <aside class="sidebar">
-        <a class="brand" href="#dashboard" data-route="dashboard">
-          <img src="/logo.png" alt="Logo de Los Panitas by Nechy">
-          <div><strong>Los Panitas</strong><span>by Nechy · POS</span></div>
-        </a>
-        <nav>${allowedNavigation(user).map((id) => { const entry=NAV.find((item)=>item[0]===id); return `<button data-route="${id}" class="${state.route===id?'active':''}"><i data-lucide="${entry[1]}"></i><span>${entry[2]}</span></button>`; }).join('')}</nav>
+    root.innerHTML = `<div class="app-shell ${state.sidebarCollapsed ? 'sidebar-collapsed' : ''}">
+      <aside class="sidebar ${state.sidebarCollapsed ? 'collapsed' : ''}">
+        <div class="sidebar-top-bar">
+          <a class="brand" href="#dashboard" data-route="dashboard">
+            <img src="/logo.png" alt="Logo de Los Panitas by Nechy">
+            <div class="brand-text"><strong>Los Panitas</strong><span>by Nechy · POS</span></div>
+          </a>
+          <button type="button" class="sidebar-collapse-btn" data-sidebar-toggle title="Contraer o expandir barra lateral" aria-label="Contraer o expandir menú">
+            <i data-lucide="${state.sidebarCollapsed ? 'panel-left-open' : 'panel-left-close'}"></i>
+          </button>
+        </div>
+        <nav>${allowedNavigation(user).map((id) => { const entry=NAV.find((item)=>item[0]===id); return `<button data-route="${id}" class="${state.route===id?'active':''}" title="${entry[2]}"><i data-lucide="${entry[1]}"></i><span>${entry[2]}</span></button>`; }).join('')}</nav>
         <div class="sidebar-footer">
           <div class="user-card"><span>${escapeHtml((user.displayName||user.username||'?').charAt(0).toUpperCase())}</span><div><strong>${escapeHtml(user.displayName||user.username)}</strong><small>${roleLabel(primaryRole(user))}</small></div></div>
-          ${state.capabilities.cashDrawer ? `<button class="drawer-kick-btn" style="width:100%;justify-content:center;" data-drawer-kick><i data-lucide="wallet"></i> Abrir gaveta</button>` : ''}
-          <button class="logout-button" data-password><i data-lucide="key-round"></i> Contraseña y PIN</button>
-          <button class="logout-button" data-logout><i data-lucide="log-out"></i> Cerrar sesión</button>
+          ${state.capabilities.cashDrawer ? `<button class="drawer-kick-btn" style="width:100%;justify-content:center;" data-drawer-kick><i data-lucide="wallet"></i> <span>Abrir gaveta</span></button>` : ''}
+          <button class="logout-button" data-password><i data-lucide="key-round"></i> <span>Contraseña y PIN</span></button>
+          <button class="logout-button" data-logout><i data-lucide="log-out"></i> <span>Cerrar sesión</span></button>
         </div>
       </aside>
       <header class="mobile-header">
@@ -238,6 +246,18 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelector('[data-menu]')?.addEventListener('click',()=>root.querySelector('.sidebar').classList.toggle('open'));
     root.querySelectorAll('[data-drawer-kick]').forEach((btn)=>btn.addEventListener('click', promptDrawerPin));
     root.querySelectorAll('[data-quick-open-cash]').forEach((btn)=>btn.addEventListener('click', () => { state.modal = 'quickCash'; renderModal(); }));
+    root.querySelectorAll('[data-sidebar-toggle]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.sidebarCollapsed = !state.sidebarCollapsed;
+        try { localStorage.setItem('panitas_sidebar_collapsed', state.sidebarCollapsed ? '1' : '0'); } catch {}
+        const sb = root.querySelector('.sidebar');
+        const sh = root.querySelector('.app-shell');
+        if (sb) sb.classList.toggle('collapsed', state.sidebarCollapsed);
+        if (sh) sh.classList.toggle('sidebar-collapsed', state.sidebarCollapsed);
+        btn.innerHTML = `<i data-lucide="${state.sidebarCollapsed ? 'panel-left-open' : 'panel-left-close'}"></i>`;
+        iconsRefresh();
+      });
+    });
     root.querySelector('[data-update-banner-action]')?.addEventListener('click', handleUpdateBannerAction);
     window.addEventListener('online', updateConnection); window.addEventListener('offline', updateConnection);
     root.removeEventListener('focusout', flushPendingLiveRender);
