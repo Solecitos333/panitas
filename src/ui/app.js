@@ -1825,7 +1825,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const payments = Number(invoice.paidCents || 0) > 0 ? [payment] : [];
     const builder = buildInvoiceEscPos(invoice, state.settings, payments, changeInfo);
     const plainText = buildInvoicePlainText(invoice, state.settings, payments, changeInfo);
-    const result = await sendEscPosToPrinter(builder, { plainText, openDrawer });
+    const result = await sendEscPosToPrinter(builder, { plainText, openDrawer, fallbackToBrowser: false });
     if (result.success) {
       toast('Factura enviada a impresión.', 'success');
     } else {

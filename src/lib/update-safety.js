@@ -84,6 +84,7 @@ export function createDeferredRefresh({ safety, refresh, canRefresh = () => true
   const unsubscribe = safety.subscribe(attempt);
   return {
     request() { pending = true; attempt(); },
+    hasPending() { return pending && !completed; },
     attempt,
     destroy: unsubscribe
   };

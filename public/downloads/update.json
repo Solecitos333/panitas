@@ -2,27 +2,26 @@
     "schemaVersion":  1,
     "channel":  "release-candidate",
     "packageName":  "com.panitas.pos",
-    "versionCode":  15,
-    "versionName":  "1.4.0-rc.8",
-    "publishedAt":  "2026-09-06T01:43:07Z",
+    "versionCode":  16,
+    "versionName":  "1.4.0-rc.9",
+    "publishedAt":  "2026-09-06T06:11:39Z",
     "minimumSupportedVersionCode":  10,
     "mandatory":  false,
     "artifact":  {
-                     "url":  "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.4.0-rc.8-code15.zip",
-                     "filename":  "LosPanitas-Elo-POS-v1.4.0-rc.8-code15.zip",
-                     "size":  271112,
-                     "sha256":  "C81F9E020A3E88D2EC3DE7FCF8C41433FF0CC7170C847635E03A4DF687357609"
+                     "url":  "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.4.0-rc.9-code16.zip",
+                     "filename":  "LosPanitas-Elo-POS-v1.4.0-rc.9-code16.zip",
+                     "size":  271060,
+                     "sha256":  "87DA5F94AD7C5E05E1C718CFE5F7A7CDC2D7313D5E78BB75914878737230AE4C"
                  },
     "apk":  {
                 "entry":  "LosPanitas-Elo-POS.apk",
-                "size":  275137,
-                "sha256":  "24CF4F0132A30BF6229B3EEBA2D5A1048B2E14560F500E57732CCEDB1601AE8C",
+                "size":  275135,
+                "sha256":  "8ED8D06CDDF523048DBFD7A2FDF7BF3C0C2A8298EDEB6D2AF399294310B11AC3",
                 "signingCertificateSha256":  "42DE27571244F0A23E533BF1C97D5D8587F4F12C3C34EA3209EDFBC67B8B3395"
             },
     "releaseNotes":  [
-                         "Tipografía térmica restaurada a tamaño cómodo, nítido y perfectamente legible.",
-                         "Modo continuo Star Raster (ESC * r P 0) para corte exacto sin colas ni saltos de página.",
-                         "Logotipo térmico de alta definición sin duplicación de cabeceras.",
-                         "Seguridad de caja con PIN personal, auditoría de gaveta e idempotencia."
+                         "Corrección de corte continuo Star TSP143 eliminando fragmentación de papel.",
+                         "Estabilización de pantalla de venta y eliminación de recargas automáticas no deseadas.",
+                         "Prevención de diálogos y redirecciones externas durante la operación del POS."
                      ]
 }

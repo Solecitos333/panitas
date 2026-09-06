@@ -1,13 +1,12 @@
 {
-  "versionName": "1.4.0-rc.8",
-  "versionCode": 15,
+  "versionName": "1.4.0-rc.9",
+  "versionCode": 16,
   "channel": "release-candidate",
   "minimumSupportedVersionCode": 10,
   "mandatory": false,
   "releaseNotes": [
-    "Tipografía térmica restaurada a tamaño cómodo, nítido y perfectamente legible.",
-    "Modo continuo Star Raster (ESC * r P 0) para corte exacto sin colas ni saltos de página.",
-    "Logotipo térmico de alta definición sin duplicación de cabeceras.",
-    "Seguridad de caja con PIN personal, auditoría de gaveta e idempotencia."
+    "Corrección de corte continuo Star TSP143 eliminando fragmentación de papel.",
+    "Estabilización de pantalla de venta y eliminación de recargas automáticas no deseadas.",
+    "Prevención de diálogos y redirecciones externas durante la operación del POS."
   ]
 }

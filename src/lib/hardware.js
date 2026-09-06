@@ -797,8 +797,8 @@ async function sendEscPosToPrinterInternal(builder, options = {}) {
     JSON.stringify({ type: 'print', data: base64, format: 'base64' }), 800);
   if (rawbtResult) return { success: true, method: 'rawbt-websocket' };
 
-  // 3. Intent Android rawbt: (sólo cuando RawBT está instalado pero el WS falló)
-  if (isAndroidDevice()) {
+  // 3. Intent Android rawbt: sólo si fue solicitado explícitamente y no en app nativa
+  if (isAndroidDevice() && options.allowIntent === true && !hasEloNativeBridge) {
     try {
       const intentUrl = `rawbt:data:base64,${base64}`;
       window.location.href = intentUrl;

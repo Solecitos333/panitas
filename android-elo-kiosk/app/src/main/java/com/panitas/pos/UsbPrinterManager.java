@@ -364,16 +364,6 @@ public class UsbPrinterManager {
             out.write(new byte[]{ (byte) 0x1B, (byte) 0x2A, (byte) 0x72, (byte) 0x52, (byte) 0x00 }); // ESC * r R \0 (Reset raster settings)
             out.write(new byte[]{ (byte) 0x1B, (byte) 0x2A, (byte) 0x72, (byte) 0x41 });       // ESC * r A (Begin raster mode)
 
-            // Configuración Star Raster para eliminación total del desperdicio de papel:
-            // ESC * r P '0' \0: Activa modo continuo (longitud de página 0 = longitud variable exacta sin salto de página fijo)
-            out.write(new byte[]{ 0x1B, 0x2A, 0x72, 0x50, 0x30, 0x00 });
-            // ESC * r T '0' \0: Margen superior en 0 puntos
-            out.write(new byte[]{ 0x1B, 0x2A, 0x72, 0x54, 0x30, 0x00 });
-            // ESC * r m l '0' \0: Margen izquierdo en 0 puntos
-            out.write(new byte[]{ 0x1B, 0x2A, 0x72, 0x6D, 0x6C, 0x30, 0x00 });
-            // ESC * r m r '0' \0: Margen derecho en 0 puntos
-            out.write(new byte[]{ 0x1B, 0x2A, 0x72, 0x6D, 0x72, 0x30, 0x00 });
-
             // 2. Scanlines de píxeles
             int[] pixels = new int[width * height];
             bitmap.getPixels(pixels, 0, width, 0, 0, width, height);

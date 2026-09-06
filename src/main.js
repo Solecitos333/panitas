@@ -88,7 +88,11 @@ function receiveNativeUpdate(event) {
 
 const webRefresh = createDeferredRefresh({
   safety: updateSafety,
-  canRefresh: () => navigator.onLine && !nativeInstallInProgress,
+  canRefresh: () => {
+    if (typeof window !== 'undefined' && (window._ELO_NATIVE || window.EloPOS)) return false;
+    if (application !== null) return false;
+    return navigator.onLine && !nativeInstallInProgress;
+  },
   refresh: () => location.reload()
 });
 window.addEventListener('elo-update-status', receiveNativeUpdate);
@@ -145,8 +149,19 @@ async function bootstrap() {
       if (!snapshot.exists()) return renderAccessDenied(root, 'Tu cuenta existe, pero todavía no tiene un perfil operativo asignado.', () => signOut(auth));
       const profile = { uid: firebaseUser.uid, username: emailToUsername(firebaseUser.email), authEmail: firebaseUser.email, ...snapshot.data() };
       if (!profile.active) return renderAccessDenied(root, 'Esta cuenta está desactivada. Contacta al propietario.', () => signOut(auth));
-      application?.destroy();
-      application = createApplication({ root, user: profile, service: new DataService(db, profile), onLogout: () => signOut(auth), onChangePassword: (currentPassword, newPassword) => changePassword(auth, currentPassword, newPassword) });
+      application = createApplication({
+        root,
+        user: profile,
+        service: new DataService(db, profile),
+        onLogout: () => {
+          if (webRefresh.hasPending?.()) {
+            location.reload();
+          } else {
+            signOut(auth);
+          }
+        },
+        onChangePassword: (currentPassword, newPassword) => changePassword(auth, currentPassword, newPassword)
+      });
     }, (error) => renderAccessDenied(root, `No pudimos validar tus permisos: ${error.message}`, () => signOut(auth)));
   });
 }
