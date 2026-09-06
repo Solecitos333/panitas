@@ -24,6 +24,55 @@
   --radius: 18px;
 }
 
+/* Touch-First Ergonomics & 0ms Tap Latency */
+*, *::before, *::after {
+  touch-action: manipulation;
+}
+
+html, body {
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+button, a, select, [role="button"], .restaurant-table, .product-card, .kds-card, .kds-action-btn, .pos-category-pill {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+}
+
+/* Respuesta táctil instantánea (0ms) en botones y tarjetas */
+button:active:not(:disabled),
+.button:active:not(:disabled),
+.product-card:active,
+.restaurant-table:active,
+.pos-category-pill:active,
+.kds-action-btn:active,
+.quick-cash-btn:active,
+.pos-bill-btn:active,
+.pin-num-btn:active,
+.qty-num-btn:active,
+.qty-btn:active,
+.pin-slot:active {
+  transform: scale(0.96) !important;
+  transition: transform 0.04s ease-out !important;
+}
+
+/* Aceleración por GPU en tarjetas interactivas */
+.product-card,
+.restaurant-table,
+.kds-card,
+.modal-card {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
 /* --- Actualizaciones de la aplicación nativa ELO --- */
 .elo-update-card {
   margin-top: 20px;

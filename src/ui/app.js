@@ -207,8 +207,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       terminal: () => renderTerminalDiag(), settings: renderSettings
     };
     const renderer = renderers[state.route] || renderDashboard;
-    root.querySelector('#main-content').innerHTML = renderer(state);
-    renderModal(); bindContent(); iconsRefresh(); syncNativeUpdateState();
+    const mainEl = root.querySelector('#main-content');
+    mainEl.innerHTML = renderer(state);
+    renderModal(); bindContent(); iconsRefresh(mainEl); syncNativeUpdateState();
     if (state.route === 'terminal') initTerminalDiag();
   }
 
@@ -236,7 +237,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     else if (state.modal === 'cancelOrder') modalRoot.innerHTML = cancellationModal('order');
     else if (state.modal === 'cancelInvoice') modalRoot.innerHTML = cancellationModal('invoice');
     else modalRoot.innerHTML = '';
-    iconsRefresh(); bindModal(); syncNativeUpdateState();
+    iconsRefresh(modalRoot); bindModal(); syncNativeUpdateState();
   }
 
   function bindShell() {
@@ -255,7 +256,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         if (sb) sb.classList.toggle('collapsed', state.sidebarCollapsed);
         if (sh) sh.classList.toggle('sidebar-collapsed', state.sidebarCollapsed);
         btn.innerHTML = `<i data-lucide="${state.sidebarCollapsed ? 'panel-left-open' : 'panel-left-close'}"></i>`;
-        iconsRefresh();
+        iconsRefresh(btn);
       });
     });
     root.querySelector('[data-update-banner-action]')?.addEventListener('click', handleUpdateBannerAction);
@@ -515,7 +516,22 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       state.preselectedTableId=button.dataset.tableStart;
       route('pos');
     }));
-    root.querySelectorAll('[data-kds-order]').forEach((button)=>button.addEventListener('click',()=>perform(()=>service.transitionOrder(button.dataset.kdsOrder,button.dataset.nextStatus),'Comanda actualizada.')));
+    root.querySelectorAll('[data-kds-order]').forEach((button) => button.addEventListener('click', async () => {
+      const orderId = button.dataset.kdsOrder;
+      const nextStatus = button.dataset.nextStatus;
+      setBusy(button, true);
+      const order = state.orders.find((o) => o.id === orderId);
+      const prevStatus = order ? order.status : null;
+      if (order) {
+        order.status = nextStatus;
+        renderContent();
+      }
+      const outcome = await perform(() => service.transitionOrder(orderId, nextStatus), 'Comanda actualizada.');
+      if (!outcome.ok && order && prevStatus) {
+        order.status = prevStatus;
+        renderContent();
+      }
+    }));
     root.querySelectorAll('[data-invoice-view]').forEach((button)=>button.addEventListener('click',()=>openInvoice(button.dataset.invoiceView)));
     root.querySelector('#invoice-search')?.addEventListener('input',filterInvoiceRows);
     root.querySelector('#invoice-status-filter')?.addEventListener('change',filterInvoiceRows);
@@ -571,7 +587,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     if (!replacement) return;
     current.replaceWith(replacement);
     bindUpdateActions(replacement);
-    iconsRefresh();
+    iconsRefresh(replacement);
   }
 
   function handleEloUpdateStatus(event) {
@@ -715,7 +731,21 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         if (input) input.value = Number(btn.dataset.setOpening).toFixed(2);
       });
     });
-    modalRoot?.querySelector('[data-order-transition]')?.addEventListener('click',(event)=>perform(()=>service.transitionOrder(state.selectedOrderId,event.currentTarget.dataset.orderTransition),'Comanda actualizada.',closeModal));
+    modalRoot?.querySelector('[data-order-transition]')?.addEventListener('click', async (event) => {
+      const nextStatus = event.currentTarget.dataset.orderTransition;
+      const order = state.orders.find((o) => o.id === state.selectedOrderId);
+      const prevStatus = order ? order.status : null;
+      if (order) {
+        order.status = nextStatus;
+        closeModal();
+        renderContent();
+      }
+      const outcome = await perform(() => service.transitionOrder(state.selectedOrderId, nextStatus), 'Comanda actualizada.');
+      if (!outcome.ok && order && prevStatus) {
+        order.status = prevStatus;
+        renderContent();
+      }
+    });
     modalRoot?.querySelector('[data-order-charge]')?.addEventListener('click',async()=>{
       try {
         const hasPin = await service.hasMyDrawerPin();
@@ -984,7 +1014,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     state.route=id;
     state.modal='';
     root.querySelector('.sidebar')?.classList.remove('open');
-    render();
+    root.querySelectorAll('.sidebar nav [data-route]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.route === id);
+    });
+    renderContent();
     history.replaceState(null,'',`#${id}`);
     if (id === 'pos') {
       vfdWelcome(state.settings?.name || 'Los Panitas');
@@ -1028,16 +1061,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       );
     }
 
-    const totalsEl = cartPanel.querySelector('.cart-totals-block');
-    if (totalsEl) {
-      totalsEl.innerHTML = renderCartTotals(state.cart, state.posDiscountState);
-    }
-
     const submitBtn = root.querySelector('#pos-submit-btn');
     if (submitBtn) {
       submitBtn.disabled = !state.cart.length;
     }
-    updatePosSubmitLabel();
 
     const mobileBtn = root.querySelector('.mobile-pos-charge');
     if (mobileBtn) {
@@ -1051,7 +1078,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 
     updatePosChange();
 
-    iconsRefresh();
+    iconsRefresh(cartPanel);
     syncNativeUpdateState();
   }
 
@@ -2397,7 +2424,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     updatePosSubmitLabel();
   }
   function updateConnection(){const online=navigator.onLine;const banner=root.querySelector('#offline-banner');if(banner)banner.hidden=online;root.querySelector('#connection-indicator')?.classList.toggle('offline',!online);}
-  function iconsRefresh(){createIcons({icons,attrs:{'aria-hidden':'true'}});}
+  function iconsRefresh(container = root){createIcons({icons,nameAttr:'data-lucide',rootNode:container||root,attrs:{'aria-hidden':'true'}});}
   function destroy(){
     destroyed=true;
     disposePinPad();
