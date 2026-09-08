@@ -6,10 +6,16 @@ const root = new URL('../', import.meta.url);
 const dist = new URL('../dist/', import.meta.url);
 const required = [
   'index.html', 'logo.png', 'manifest.webmanifest', 'sw.js',
-  'downloads/update.json', 'downloads/LosPanitas-Elo-POS-APK.zip', 'downloads/SHA256SUMS.txt'
+  'downloads/update.json', 'downloads/LosPanitas-Elo-POS-APK.zip', 'downloads/SHA256SUMS.txt',
+  'downloads/management.json', 'icons/app-192.png', 'icons/app-512.png', 'icons/apple-touch-icon.png'
 ];
 
 for (const name of required) await access(new URL(name, dist));
+const management = JSON.parse(await readFile(new URL('downloads/management.json', dist), 'utf8'));
+const firebase = JSON.parse(await readFile(new URL('firebase.json', root), 'utf8'));
+const redirect = firebase.hosting.redirects?.find(r => r.source === '/downloads/LosPanitas-Gestion-Android.apk');
+if (!redirect || redirect.destination !== management.url || !management.url.startsWith('https://github.com/Solecitos333/panitas/releases/download/')
+  || !/^[a-f0-9]{64}$/.test(management.sha256) || management.size < 1000) throw new Error('La descarga externa de gestión no está configurada.');
 
 const distPath = fileURLToPath(dist);
 const files = await walk(distPath);

@@ -83,36 +83,36 @@ test('la caja calcula su saldo esperado sin confiar en valores enviados por la i
   );
 });
 
-test('el PIN de cuatro dígitos pertenece al usuario que inició sesión', async () => {
+test('el PIN de seis dígitos pertenece al usuario que inició sesión', async () => {
   const service = new MemoryDataService(actor);
   assert.equal(await service.hasMyDrawerPin(), false);
-  await service.saveMyDrawerPin('4826');
+  await service.saveMyDrawerPin('482601');
   assert.equal(await service.hasMyDrawerPin(), true);
-  const authorized = await service.verifyDrawerPin('4826');
+  const authorized = await service.verifyDrawerPin('482601');
   assert.equal(authorized.user.id, actor.uid);
-  await assert.rejects(() => service.verifyDrawerPin('4827'), /PIN incorrecto/);
-  await assert.rejects(() => service.saveMyDrawerPin('12345'), /exactamente 4/);
-  await assert.rejects(() => service.saveMyDrawerPin('48x26'), /exactamente 4/);
-  service.data.users.push({ id: 'another', drawerPin: '7492' });
-  await assert.rejects(() => service.saveMyDrawerPin('7492'), /otra persona/);
-  await service.verifyDrawerPin('4826');
+  await assert.rejects(() => service.verifyDrawerPin('482701'), /PIN incorrecto/);
+  await assert.rejects(() => service.saveMyDrawerPin('12345'), /exactamente 6/);
+  await assert.rejects(() => service.saveMyDrawerPin('48x26'), /exactamente 6/);
+  service.data.users.push({ id: 'another', drawerPin: '749201' });
+  await assert.rejects(() => service.saveMyDrawerPin('749201'), /otra persona/);
+  await service.verifyDrawerPin('482601');
 });
 
-test('identifica al usuario que introduce su PIN independientemente del usuario con sesión activa', async () => {
+test('el PIN autoriza exclusivamente al usuario de la sesión personal', async () => {
   const service = new MemoryDataService(actor);
-  await service.saveMyDrawerPin('4826');
+  await service.saveMyDrawerPin('482601');
   service.data.users.push({
     id: 'jespinal-uid',
     username: 'JESPINAL',
     displayName: 'JESPINAL',
-    drawerPin: '1945',
+    drawerPin: '194501',
     roles: ['owner'],
     active: true
   });
-  const authorized = await service.verifyDrawerPin('1945', 'Apertura por PIN de JESPINAL');
+  await assert.rejects(service.verifyDrawerPin('194501', 'PIN de otra cuenta'), /PIN incorrecto/);
+  const authorized = await service.verifyDrawerPin('482601', 'Apertura personal');
   assert.equal(authorized.success, true);
-  assert.equal(authorized.user.id, 'jespinal-uid');
-  assert.equal(authorized.user.displayName, 'JESPINAL');
+  assert.equal(authorized.user.id, actor.uid);
 });
 
 test('un doble toque con el mismo requestId no duplica factura, pago ni descuento de inventario', async () => {

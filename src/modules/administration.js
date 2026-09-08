@@ -1,4 +1,5 @@
 import { escapeHtml, formatDate, formatMoney } from '../lib/format.js';
+import { getPendingDeliveryInvoices } from '../domain/billing.js';
 import releaseInfo from '../../release.json' with { type: 'json' };
 
 export function renderTerminalDiag() {
@@ -91,6 +92,10 @@ export function renderCash(state) {
   const cashIn = sessionMovements.filter((item) => item.type === 'in').reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
   const cashOut = sessionMovements.filter((item) => item.type === 'out').reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
   const expectedCash = active ? Number(active.openingCents) + cashCollected + cashIn - cashOut : 0;
+
+  const pendingDeliveries = getPendingDeliveryInvoices(state.invoices);
+  const deliveryPendingCents = pendingDeliveries.reduce((sum, inv) => sum + (Number(inv.totalCents || 0) - Number(inv.paidCents || 0)), 0);
+
   return `
     <section class="panel-heading">
       <div>
@@ -109,52 +114,55 @@ export function renderCash(state) {
         <article class="metric-card positive"><i data-lucide="badge-dollar-sign"></i><div><span>Ventas en efectivo</span><strong>${formatMoney(cashCollected)}</strong></div></article>
         <article class="metric-card positive"><i data-lucide="plus"></i><div><span>Entradas</span><strong>${formatMoney(cashIn)}</strong></div></article>
         <article class="metric-card"><i data-lucide="landmark"></i><div><span>Salidas</span><strong>${formatMoney(cashOut)}</strong></div></article>
-        <article class="metric-card"><i data-lucide="calculator"></i><div><span>Efectivo esperado</span><strong>${formatMoney(expectedCash)}</strong></div></article>
+        <article class="metric-card"><i data-lucide="calculator"></i><div><span>Efectivo en gaveta</span><strong>${formatMoney(expectedCash)}</strong></div></article>
+        <article class="metric-card ${deliveryPendingCents > 0 ? 'warning' : ''}"><i data-lucide="bike"></i><div><span>En Calle / Deliveries</span><strong style="${deliveryPendingCents > 0 ? 'color:#f59e0b;' : ''}">${formatMoney(deliveryPendingCents)}</strong></div></article>
       </div>
-      <section class="surface-card cash-movement-card">
+      <section class="surface-card" style="padding: 20px 24px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
         <div>
-          <span class="eyebrow">Libro de efectivo</span>
-          <h3>Registrar entrada o salida</h3>
-          <p>Cada movimiento queda asociado a esta sesión y no puede editarse ni eliminarse.</p>
+          <span class="eyebrow">Operaciones de Efectivo</span>
+          <h3 style="margin: 2px 0 4px; font-size: 1.15rem;">Entradas, Salidas y Cuadre de Turno</h3>
+          <p style="margin: 0; color: var(--muted); font-size: 0.85rem;">Registra compras menores, pago de delivery o realiza el arqueo y cierre definitivo (Corte Z).</p>
+          ${deliveryPendingCents > 0 ? `
+            <div style="margin-top:10px;padding:8px 12px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.3);border-radius:8px;display:inline-flex;align-items:center;gap:8px;font-size:0.82rem;color:#f59e0b;">
+              <i data-lucide="bike" style="width:16px;height:16px;flex-shrink:0;"></i>
+              <span>Atención: Hay <strong>${formatMoney(deliveryPendingCents)}</strong> en ${pendingDeliveries.length} entrega(s) en la calle pendientes de liquidar.</span>
+              <button type="button" class="button secondary compact" data-route="deliveries" style="font-size:0.75rem;padding:2px 8px;margin-left:6px;">Ver Deliveries</button>
+            </div>
+          ` : ''}
         </div>
-        <form id="cash-movement-form" class="inline-form cash-movement-form">
-          <label>Movimiento<select name="type" required><option value="in">Entrada de efectivo</option><option value="out">Salida de efectivo</option></select></label>
-          <label>Monto<input name="amount" type="number" min="0.01" step="0.01" required></label>
-          <label>Motivo<input name="reason" minlength="3" maxlength="300" placeholder="Compra menor, cambio, depósito…" required></label>
-          <label>PIN personal<input name="pin" type="password" inputmode="numeric" autocomplete="off" pattern="[0-9]{4}" maxlength="4" required></label>
-          <button class="button primary" type="submit">Registrar movimiento</button>
-        </form>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <button type="button" class="button secondary" data-cash-movement-open style="font-size: 0.9rem; padding: 10px 18px; font-weight: 600;">
+            <i data-lucide="arrow-left-right"></i> Registrar Entrada / Salida
+          </button>
+          <button type="button" class="button danger" data-cash-close-open style="font-size: 0.9rem; padding: 10px 18px; font-weight: 700;">
+            <i data-lucide="lock"></i> Cerrar Caja (Corte Z)
+          </button>
+        </div>
       </section>
-      <section class="surface-card cash-action">
-        <div>
-          <span class="eyebrow">Abierta por ${escapeHtml(active.openedByName)}</span>
-          <h3>${formatDate(active.openedAt,true)}</h3>
-          <p>${escapeHtml(active.notes || 'Sin notas de apertura.')}</p>
-          <div style="margin-top: 14px; display:flex; gap:8px; flex-wrap:wrap;">
+      <section class="surface-card cash-action" style="padding: 20px 24px; margin-bottom: 16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+          <div>
+            <span class="eyebrow">Turno abierto por ${escapeHtml(active.openedByName)}</span>
+            <h3 style="margin: 2px 0 4px; font-size: 1.1rem;">Iniciado el ${formatDate(active.openedAt,true)}</h3>
+            <p style="margin: 0; color: var(--muted); font-size: 0.85rem;">${escapeHtml(active.notes || 'Sin notas adicionales de apertura.')}</p>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button type="button" class="button secondary compact" data-cash-corte-x="${active.id}"><i data-lucide="receipt"></i> Imprimir Corte X (Parcial)</button>
-            <button type="button" class="button secondary compact" data-cash-report-print="${active.id}"><i data-lucide="printer"></i> Imprimir Arqueo</button>
+            <button type="button" class="button secondary compact" data-cash-report-print="${active.id}"><i data-lucide="printer"></i> Imprimir Arqueo Completo</button>
           </div>
         </div>
-        <form id="cash-close-form" class="inline-form">
-          <input type="hidden" name="expected" value="${expectedCash}">
-          <label>Efectivo contado<input name="closing" type="number" min="0" step="0.01" required></label>
-          <label>Nota de cierre<input name="notes" maxlength="500" placeholder="Obligatoria si hay diferencia"></label>
-          <label>PIN personal<input name="pin" type="password" inputmode="numeric" autocomplete="off" pattern="[0-9]{4}" maxlength="4" required></label>
-          <button class="button danger" type="submit"><i data-lucide="lock"></i> Cerrar caja (Corte Z)</button>
-        </form>
       </section>` : `
-      <section class="surface-card empty-action">
-        <i data-lucide="wallet-cards"></i>
-        <div>
-          <h3>Abre una caja para registrar cobros</h3>
-          <p>El fondo inicial formará parte del arqueo final.</p>
+      <section class="surface-card empty-action" style="padding: 36px 24px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 14px;">
+        <div style="width: 60px; height: 60px; border-radius: 50%; background: rgba(245, 158, 11, 0.14); color: var(--brand-2); display: flex; align-items: center; justify-content: center;">
+          <i data-lucide="wallet-cards" style="width: 32px; height: 32px;"></i>
         </div>
-        <form id="cash-open-form" class="inline-form">
-          <label>Fondo inicial<input name="opening" type="number" min="0" step="0.01" value="0" required></label>
-          <label>Nota<input name="notes" maxlength="500" placeholder="Turno, responsable…"></label>
-          <label>PIN personal<input name="pin" type="password" inputmode="numeric" autocomplete="off" pattern="[0-9]{4}" maxlength="4" required></label>
-          <button class="button primary" type="submit">Abrir caja</button>
-        </form>
+        <div>
+          <h3 style="margin: 0 0 6px; font-size: 1.25rem;">Caja Cerrada · Inicia un nuevo turno</h3>
+          <p style="color: var(--muted); max-width: 480px; margin: 0 auto; font-size: 0.9rem;">Registra el fondo inicial en efectivo y autoriza con tu PIN táctil para habilitar cobros, comandas y arqueo de jornada.</p>
+        </div>
+        <button type="button" class="button primary" data-quick-open-cash style="font-size: 1rem; padding: 12px 24px; font-weight: 700; margin-top: 6px;">
+          <i data-lucide="wallet"></i> Abrir caja (Iniciar turno)
+        </button>
       </section>`}
     ${active ? `<section class="surface-card data-surface">
       <header><div><span class="eyebrow">Trazabilidad</span><h3>Movimientos de la sesión</h3></div><strong>${sessionMovements.length} registro(s)</strong></header>
@@ -296,7 +304,7 @@ export function renderUsers(state) {
 export function renderUserForm(item = {}) {
   const profile = Boolean(item.id);
   const currentRole = Array.isArray(item.roles) ? item.roles[0] : 'waiter';
-  return `<div class="modal-backdrop" data-modal-close><form id="user-access-form" class="modal-card form-modal" data-modal-card><header><div><span class="eyebrow">Acceso protegido</span><h2>${profile ? 'Editar usuario' : 'Crear usuario'}</h2></div><button type="button" class="icon-button" data-modal-close aria-label="Cerrar"><i data-lucide="x"></i></button></header><div class="stack-form"><input type="hidden" name="uid" value="${profile ? escapeHtml(item.id) : ''}"><label>Nombre completo<input name="displayName" required maxlength="160" autocomplete="off" value="${escapeHtml(item.displayName || '')}"></label><label>Nombre de usuario<input name="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9._-]+" autocapitalize="characters" autocomplete="off" value="${escapeHtml(item.username || '')}" ${profile ? 'readonly' : ''}></label>${profile ? '' : '<div class="form-grid two"><label>Contraseña inicial<input name="password" type="password" minlength="8" autocomplete="new-password" required></label><label>Confirmar contraseña<input name="passwordConfirm" type="password" minlength="8" autocomplete="new-password" required></label></div>'}<label>Rol<select name="role">${roleOptions(currentRole)}</select></label><label class="check-field"><input name="active" type="checkbox" ${item.active === false ? '' : 'checked'}> Acceso habilitado</label><div class="form-note"><i data-lucide="shield-check"></i><span>Cada persona crea su PIN privado de cuatro dígitos al realizar su primer cobro. El propietario no puede verlo ni cambiarlo desde esta lista.</span></div></div><footer class="modal-actions"><button type="button" class="button secondary" data-modal-close>Cancelar</button><button class="button primary" type="submit">${profile ? 'Guardar acceso' : 'Crear usuario'}</button></footer></form></div>`;
+  return `<div class="modal-backdrop" data-modal-close><form id="user-access-form" class="modal-card form-modal" data-modal-card><header><div><span class="eyebrow">Acceso protegido</span><h2>${profile ? 'Editar usuario' : 'Crear usuario'}</h2></div><button type="button" class="icon-button" data-modal-close aria-label="Cerrar"><i data-lucide="x"></i></button></header><div class="stack-form"><input type="hidden" name="uid" value="${profile ? escapeHtml(item.id) : ''}"><label>Nombre completo<input name="displayName" required maxlength="160" autocomplete="off" value="${escapeHtml(item.displayName || '')}"></label><label>Nombre de usuario<input name="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9._-]+" autocapitalize="characters" autocomplete="off" value="${escapeHtml(item.username || '')}" ${profile ? 'readonly' : ''}></label>${profile ? '' : '<div class="form-grid two"><label>Contraseña inicial<input name="password" type="password" minlength="8" autocomplete="new-password" required></label><label>Confirmar contraseña<input name="passwordConfirm" type="password" minlength="8" autocomplete="new-password" required></label></div>'}<label>Rol<select name="role">${roleOptions(currentRole)}</select></label><label class="check-field"><input name="active" type="checkbox" ${item.active === false ? '' : 'checked'}> Acceso habilitado</label><div class="form-note"><i data-lucide="shield-check"></i><span>Cada persona crea su PIN privado de seis dígitos al realizar su primer cobro. El propietario no puede verlo ni cambiarlo desde esta lista.</span></div></div><footer class="modal-actions"><button type="button" class="button secondary" data-modal-close>Cancelar</button><button class="button primary" type="submit">${profile ? 'Guardar acceso' : 'Crear usuario'}</button></footer></form></div>`;
 }
 
 function userRow(item, self) {
@@ -315,6 +323,9 @@ function roleLabel(role) {
 
 export function renderAuditLogs(state) {
   const logs = state.auditLogs || [];
+  const limit = state.auditDisplayLimit || 50;
+  const visibleLogs = logs.slice(0, limit);
+  const hasMore = logs.length > limit;
   return `
     <section class="panel-heading">
       <div>
@@ -347,10 +358,11 @@ export function renderAuditLogs(state) {
             </tr>
           </thead>
           <tbody id="audit-table-body">
-            ${logs.length ? logs.map(auditRow).join('') : '<tr><td colspan="4"><div class="empty-state"><i data-lucide="shield-check"></i><strong>Sin registros</strong><p>Los eventos de seguridad y apertura de caja aparecerán aquí.</p></div></td></tr>'}
+            ${logs.length ? visibleLogs.map(auditRow).join('') : '<tr><td colspan="4"><div class="empty-state"><i data-lucide="shield-check"></i><strong>Sin registros</strong><p>Los eventos de seguridad y apertura de caja aparecerán aquí.</p></div></td></tr>'}
           </tbody>
         </table>
       </div>
+      ${hasMore ? `<div style="text-align:center;padding:12px;border-top:1px solid var(--line);"><button type="button" class="button secondary compact" data-load-more-audit style="font-size:0.85rem;"><i data-lucide="refresh-cw"></i> Ver más registros (${visibleLogs.length} de ${logs.length})</button></div>` : ''}
     </section>
   `;
 }

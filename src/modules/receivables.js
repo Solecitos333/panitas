@@ -200,7 +200,7 @@ export function renderFiaoPayModal(invoice, activeCash) {
           </div>
 
           <label>Monto a abonar o saldar (DOP)
-            <input name="amount" id="fiao-pay-amount" type="number" min="1" max="${(balanceCents / 100).toFixed(2)}" step="0.01" value="${(balanceCents / 100).toFixed(2)}" required style="font-size:1.2rem;font-weight:700;">
+            <input name="amount" id="fiao-pay-amount" type="text" data-touch-numpad="money" data-numpad-title="Monto a Abonar (Fiao)" min="1" max="${(balanceCents / 100).toFixed(2)}" value="${(balanceCents / 100).toFixed(2)}" required readonly inputmode="none" style="font-size:1.25rem;font-weight:700;color:var(--brand-2);cursor:pointer;">
           </label>
 
           <div class="form-grid two">
@@ -216,26 +216,9 @@ export function renderFiaoPayModal(invoice, activeCash) {
             </label>
           </div>
 
-          <label>PIN personal de 4 dígitos
-            <input
-              name="pin"
-              id="fiao-pay-pin"
-              type="password"
-              inputmode="numeric"
-              autocomplete="off"
-              pattern="[0-9]{4}"
-              minlength="4"
-              maxlength="4"
-              placeholder="• • • •"
-              required
-              style="font-size:1.35rem;font-weight:800;letter-spacing:.45rem;text-align:center;"
-            >
-            <small>Usa el mismo PIN con el que autorizas la caja.</small>
-          </label>
-
           <div id="fiao-cash-calculator" class="quick-cash-container" style="margin-top:4px;">
             <label>Efectivo entregado por el cliente</label>
-            <input id="fiao-cash-received" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Monto recibido">
+            <input id="fiao-cash-received" type="text" data-touch-numpad="money" data-numpad-title="Efectivo Entregado" placeholder="Toca para ingresar efectivo" readonly inputmode="none" style="cursor:pointer;">
             <div class="quick-cash-grid">
               <button type="button" class="quick-cash-btn exact" data-fiao-cash-val="exact">Exacto</button>
               <button type="button" class="quick-cash-btn" data-fiao-cash-val="100">RD$ 100</button>
@@ -249,10 +232,38 @@ export function renderFiaoPayModal(invoice, activeCash) {
               <strong id="fiao-change-amount">RD$ 0.00</strong>
             </div>
           </div>
+
+          <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#ddd;cursor:pointer;user-select:none;margin:6px 0 2px;">
+            <input type="checkbox" name="printInvoice" id="fiao-print-receipt" checked style="width:18px;height:18px;accent-color:var(--brand-2);cursor:pointer;">
+            <i data-lucide="printer" style="width:16px;height:16px;color:var(--brand-2);"></i>
+            <span>Imprimir comprobante de cobro</span>
+          </label>
+
+          <div class="fiao-pin-section" style="margin-top:8px;">
+            <label style="display:block;margin-bottom:4px;font-size:0.85rem;font-weight:600;color:var(--muted);text-align:center;">
+              Digita tu PIN de 6 dígitos para autorizar
+            </label>
+            <input id="fiao-pay-pin" name="pin" type="password" inputmode="none" pattern="[0-9]{6}" maxlength="6" placeholder="" required readonly tabindex="-1" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;">
+            <div class="pin-slots-container" id="fiao-pin-slots">
+              <span class="pin-slot" data-slot="0"></span>
+              <span class="pin-slot" data-slot="1"></span>
+              <span class="pin-slot" data-slot="2"></span>
+              <span class="pin-slot" data-slot="3"></span>
+              <span class="pin-slot" data-slot="4"></span>
+              <span class="pin-slot" data-slot="5"></span>
+            </div>
+            <div class="pin-pad" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;margin:6px 0 10px;">
+              ${[1,2,3,4,5,6,7,8,9].map((n) => `<button type="button" class="button secondary pin-num-btn" data-fiao-pin="${n}" data-pin-num="${n}" style="font-size:1.3rem;font-weight:700;padding:11px 0;">${n}</button>`).join('')}
+              <button type="button" class="button secondary pin-clear-btn" id="fiao-pin-clear" style="font-size:.85rem;font-weight:600;padding:11px 0;color:#f85149;">Borrar</button>
+              <button type="button" class="button secondary pin-num-btn" data-fiao-pin="0" data-pin-num="0" style="font-size:1.3rem;font-weight:700;padding:11px 0;">0</button>
+              <button type="button" class="button secondary pin-del-btn" id="fiao-pin-del" style="font-size:1.2rem;font-weight:700;padding:11px 0;">⌫</button>
+            </div>
+            <div id="fiao-pin-error" style="color:#f85149;font-size:0.82rem;min-height:18px;margin-bottom:4px;text-align:center;font-weight:600;"></div>
+          </div>
         </div>
-        <footer class="modal-actions" style="margin-top:12px;">
+        <footer class="modal-actions" style="margin-top:8px;">
           <button type="button" class="button secondary" data-modal-close>Cancelar</button>
-          <button class="button primary" type="submit"><i data-lucide="key-round"></i> Autorizar con PIN y Cobrar</button>
+          <button class="button primary" type="submit" id="fiao-pay-submit"><i data-lucide="key-round"></i> Autorizar y Cobrar</button>
         </footer>
       </form>
     </div>

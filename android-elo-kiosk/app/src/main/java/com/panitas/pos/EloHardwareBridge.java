@@ -20,6 +20,7 @@ public class EloHardwareBridge {
     private final String hardwareToken;
     private final WebView webView;
     private final ExecutorService hardwareQueue = Executors.newSingleThreadExecutor();
+    private CustomerDisplayManager customerDisplayManager;
 
     public EloHardwareBridge(Context context, UsbPrinterManager printerManager,
                              LocalCommandServer commandServer, AppUpdateManager updateManager,
@@ -30,6 +31,10 @@ public class EloHardwareBridge {
         this.updateManager = updateManager;
         this.hardwareToken = hardwareToken;
         this.webView = webView;
+    }
+
+    public void setCustomerDisplayManager(CustomerDisplayManager cdm) {
+        this.customerDisplayManager = cdm;
     }
 
     @JavascriptInterface
@@ -48,7 +53,9 @@ public class EloHardwareBridge {
         if (base64Data == null || base64Data.isEmpty()) return false;
         try {
             byte[] bytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT);
-            boolean isStarRaster = bytes.length > 4 && bytes[0] == 0x1B && bytes[1] == 0x40 && bytes[2] == 0x1B && bytes[3] == 0x2A;
+            boolean isStarRaster = bytes.length >= 4 && bytes[0] == 0x1B &&
+                    ((bytes[1] == 0x2A && bytes[2] == 0x72 && bytes[3] == 0x41)
+                    || (bytes[1] == 0x40 && bytes[2] == 0x1B && bytes[3] == 0x2A));
             if (!isStarRaster) {
                 String rawText = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
                 String cleanText = rawText.replaceAll("[\\x00-\\x09\\x0B-\\x1F\\x7F-\\x9F]", " ").trim();
@@ -176,5 +183,46 @@ public class EloHardwareBridge {
     @JavascriptInterface
     public void showToast(String message) {
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show();
+    }
+
+    /** Muestra texto directamente en el visor de cara al cliente (2 líneas x 20 caracteres). */
+    @JavascriptInterface
+    public boolean setCustomerDisplay(String line1, String line2) {
+        if (customerDisplayManager == null) return false;
+        return customerDisplayManager.setMessage(line1, line2);
+    }
+
+    /** Encola la actualización del visor en hilo de fondo para no bloquear JavaScript. */
+    @JavascriptInterface
+    public void setCustomerDisplayAsync(String line1, String line2) {
+        hardwareQueue.execute(() -> {
+            if (customerDisplayManager != null) {
+                customerDisplayManager.setMessage(line1, line2);
+            }
+        });
+    }
+
+    /** Limpia la pantalla trasera del cliente. */
+    @JavascriptInterface
+    public boolean clearCustomerDisplay() {
+        if (customerDisplayManager == null) return false;
+        customerDisplayManager.clear();
+        return true;
+    }
+
+    /** Muestra la bienvenida en la pantalla trasera. */
+    @JavascriptInterface
+    public void showCustomerWelcome(String businessName) {
+        hardwareQueue.execute(() -> {
+            if (customerDisplayManager != null) {
+                customerDisplayManager.showWelcome(businessName);
+            }
+        });
+    }
+
+    /** Indica si el visor cliente está inicializado. */
+    @JavascriptInterface
+    public boolean isCustomerDisplayConnected() {
+        return customerDisplayManager != null && customerDisplayManager.isConnected();
     }
 }

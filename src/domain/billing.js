@@ -13,7 +13,23 @@ export const ORDER_TRANSITIONS = Object.freeze({
 });
 
 export const DOCUMENT_TYPES = Object.freeze(['invoice', 'quote', 'proforma']);
-export const PAYMENT_METHODS = Object.freeze(['cash', 'card', 'transfer', 'check', 'credit']);
+export const PAYMENT_METHODS = Object.freeze(['cash', 'card', 'transfer', 'check', 'credit', 'delivery_cod']);
+
+export function getPendingDeliveryInvoices(invoices = [], driverId = '') {
+  return (invoices || []).filter((inv) => {
+    const balance = Number(inv.totalCents || 0) - Number(inv.paidCents || 0);
+    const isDelivery = (!inv.documentType || inv.documentType === 'invoice')
+      && inv.status !== 'paid'
+      && inv.status !== 'cancelled'
+      && balance > 0
+      && (inv.deliveryDriverId || inv.paymentMethod === 'delivery_cod' || inv.deliveryStatus === 'in_transit');
+    if (!isDelivery) return false;
+    if (driverId) {
+      return inv.deliveryDriverId === driverId || (!inv.deliveryDriverId && inv.deliveryDriverName === driverId);
+    }
+    return true;
+  });
+}
 
 export function toCents(value) {
   const amount = typeof value === 'string' ? Number(value.replace(/,/g, '').trim()) : Number(value);

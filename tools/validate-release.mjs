@@ -54,6 +54,27 @@ assert(entries.has(update.apk.entry), 'El ZIP no contiene LosPanitas-Elo-POS.apk
 const apk = entries.get(update.apk.entry);
 assert(apk.length === update.apk.size, 'El tamaño del APK no coincide con update.json.');
 assert(sha256(apk) === update.apk.sha256, 'El SHA-256 del APK no coincide con update.json.');
+if (release.versionCode >= 18) {
+  const bundled = readZipEntries(apk);
+  const prefix = 'assets/www/';
+  for (const name of ['index.html', 'compat.js', 'logo.png', 'receipt_logo.png', 'shell-version.json']) {
+    assert(bundled.has(prefix + name), `APK sin interfaz local: falta ${name}.`);
+  }
+  const shell = JSON.parse(bundled.get(prefix + 'shell-version.json').toString('utf8'));
+  assert(shell.versionCode === release.versionCode && shell.versionName === release.versionName,
+    'La interfaz empaquetada no coincide con la versión nativa.');
+  const html = bundled.get(prefix + 'index.html').toString('utf8');
+  for (const [, path] of html.matchAll(/(?:src|href)="(\/assets\/[^"?#]+)"/g)) {
+    assert(bundled.has(prefix + path.slice(1)), `Referencia local ausente: ${path}`);
+  }
+  for (const [name, data] of bundled) {
+    assert(!name.includes('\\'), 'La APK contiene rutas Windows no válidas en Android.');
+    if (!name.startsWith(prefix)) continue;
+    assert(!name.startsWith(prefix + 'downloads/') && !name.endsWith('/sw.js') && !name.endsWith('.map')
+      && !name.includes('/.env'), `Archivo no permitido dentro de la interfaz: ${name}`);
+    if (name.endsWith('.css')) assert(!data.toString('utf8').includes('fonts.googleapis.com'), 'La interfaz local descarga fuentes externas.');
+  }
+}
 
 const friendly = readFileSync(join(downloads, 'LosPanitas-Elo-POS-APK.zip'));
 assert(sha256(friendly) === update.artifact.sha256, 'El ZIP amigable no coincide con el artefacto versionado.');

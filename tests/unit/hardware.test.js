@@ -12,8 +12,10 @@ import {
   buildCashReportPlainText,
   buildPrebillEscPos,
   buildPrebillPlainText,
-  resolveReceiptQrUrl
+  resolveReceiptQrUrl,
+  calculateClientTotalDebt
 } from '../../src/lib/hardware.js';
+
 
 test('EscPosBuilder inicializa con comando ESC @', () => {
   const b = new EscPosBuilder();
@@ -364,4 +366,116 @@ test('factura incluye el teléfono del cliente cuando se registra un fiao', () =
   assert.ok(escText.includes('Cliente: Pedro Mecánico'));
   assert.ok(escText.includes('Teléfono: 809-555-1234'));
 });
+
+test('calculateClientTotalDebt acumula facturas pendientes excluyendo anuladas y cotizaciones', () => {
+  const stateInvoices = [
+    { id: 'inv_1', documentType: 'invoice', clientName: 'Pedro Mecánico', totalCents: 150000, paidCents: 0, status: 'issued' },
+    { id: 'inv_2', documentType: 'invoice', clientName: 'Pedro Mecánico', totalCents: 50000, paidCents: 20000, status: 'partially_paid' },
+    { id: 'inv_cancelled', documentType: 'invoice', clientName: 'Pedro Mecánico', totalCents: 80000, paidCents: 0, status: 'cancelled' },
+    { id: 'quote_1', documentType: 'quote', clientName: 'Pedro Mecánico', totalCents: 30000, paidCents: 0, status: 'draft' },
+    { id: 'inv_other', documentType: 'invoice', clientName: 'Otro Cliente', totalCents: 90000, paidCents: 0, status: 'issued' }
+  ];
+
+  // Caso 1: Pedro hace una nueva compra de RD$ 200.00 (20000 centavos) aún no guardada en stateInvoices
+  const newInvoice = {
+    id: 'inv_new',
+    documentType: 'invoice',
+    clientName: 'Pedro Mecánico',
+    totalCents: 20000,
+    paidCents: 0
+  };
+  // Deuda previa: 150000 + 30000 = 180000. Total con la nueva compra = 200000
+  const totalDebt = calculateClientTotalDebt(newInvoice, stateInvoices);
+  assert.equal(totalDebt, 200000);
+
+  // Caso 2: Consumidor final no acumula deuda con otros consumidores finales
+  const walkInInvoice = {
+    id: 'walk_in',
+    documentType: 'invoice',
+    clientName: 'Consumidor final',
+    totalCents: 15000,
+    paidCents: 0
+  };
+  assert.equal(calculateClientTotalDebt(walkInInvoice, stateInvoices), 15000);
+});
+
+test('factura de fiao imprime desglose de compra, deuda anterior y total acumulado cuando hay deuda previa', () => {
+  const invoiceWithPriorDebt = {
+    id: 'fiao_current',
+    documentType: 'invoice',
+    invoiceNumber: 'FAC-000101',
+    clientName: 'Pedro Mecánico',
+    totalCents: 20000, // Balance de esta compra: RD$ 200.00
+    paidCents: 0,
+    clientTotalDebtCents: 170000, // Deuda total acumulada: RD$ 1,700.00 (RD$ 1,500 previa + RD$ 200 actual)
+    items: [{ name: 'Desayuno Panita', quantity: 1, unitPriceCents: 20000 }]
+  };
+
+  // 1. Star Raster / Texto Plano
+  const rasterText = buildInvoicePlainText(invoiceWithPriorDebt);
+  assert.ok(rasterText.includes('Balance de esta compra:'));
+  assert.ok(rasterText.includes('Balance anterior pendiente:'));
+  assert.ok(rasterText.includes('TOTAL DEUDA PENDIENTE:'));
+  assert.ok(rasterText.includes('200.00'));
+  assert.ok(rasterText.includes('1,500.00'));
+  assert.ok(rasterText.includes('1,700.00'));
+
+  // 2. ESC/POS
+  const escBuilder = buildInvoiceEscPos(invoiceWithPriorDebt);
+  const escText = new TextDecoder().decode(escBuilder.getBytes());
+  assert.ok(escText.includes('Balance de esta compra:'));
+  assert.ok(escText.includes('Balance anterior pendiente:'));
+  assert.ok(escText.includes('TOTAL DEUDA PENDIENTE:'));
+  assert.ok(escText.includes('200.00'));
+  assert.ok(escText.includes('1,500.00'));
+  assert.ok(escText.includes('1,700.00'));
+
+});
+
+test('factura de fiao sin deuda previa muestra únicamente BALANCE PENDIENTE', () => {
+  const singleInvoice = {
+    id: 'fiao_first',
+    documentType: 'invoice',
+    invoiceNumber: 'FAC-000102',
+    clientName: 'Nuevo Cliente',
+    totalCents: 20000,
+    paidCents: 0,
+    clientTotalDebtCents: 20000, // Sin deuda anterior
+    items: [{ name: 'Jugo Natural', quantity: 1, unitPriceCents: 20000 }]
+  };
+
+  const rasterText = buildInvoicePlainText(singleInvoice);
+  assert.ok(rasterText.includes('BALANCE PENDIENTE:'));
+  assert.equal(rasterText.includes('Balance anterior pendiente:'), false);
+
+  const escBuilder = buildInvoiceEscPos(singleInvoice);
+  const escText = new TextDecoder().decode(escBuilder.getBytes());
+  assert.ok(escText.includes('BALANCE PENDIENTE:'));
+  assert.equal(escText.includes('Balance anterior pendiente:'), false);
+});
+
+test('factura de fiao saldada muestra DEUDA PENDIENTE RESTANTE si el cliente aún tiene otras cuentas', () => {
+  const paidInvoiceWithRemainingDebt = {
+    id: 'fiao_paid',
+    documentType: 'invoice',
+    invoiceNumber: 'FAC-000103',
+    clientName: 'Pedro Mecánico',
+    method: 'credit',
+    totalCents: 50000,
+    paidCents: 50000, // Saldada esta factura
+    clientTotalDebtCents: 120000, // Aún debe RD$ 1,200.00 en otras facturas
+    items: [{ name: 'Almuerzo Ejecutivo', quantity: 1, unitPriceCents: 50000 }]
+  };
+
+  const rasterText = buildInvoicePlainText(paidInvoiceWithRemainingDebt);
+  assert.ok(rasterText.includes('DEUDA PENDIENTE RESTANTE:'));
+  assert.ok(rasterText.includes('1,200.00'));
+
+  const escBuilder = buildInvoiceEscPos(paidInvoiceWithRemainingDebt);
+  const escText = new TextDecoder().decode(escBuilder.getBytes());
+  assert.ok(escText.includes('DEUDA PENDIENTE RESTANTE:'));
+  assert.ok(escText.includes('1,200.00'));
+
+});
+
 

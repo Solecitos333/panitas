@@ -72,6 +72,63 @@ export function resolveReceiptQrUrl(settings = {}) {
   return 'https://los-panitas-by-nechy.web.app';
 }
 
+/**
+ * Calcula la deuda total acumulada de un cliente sumando facturas pendientes no canceladas.
+ * Si el cliente no tiene ID y es genérico (Consumidor final), solo se computa la factura actual.
+ * @param {object} invoice - Factura actual (se usan sus valores en memoria si está presente)
+ * @param {Array} [invoices] - Lista de facturas del sistema (state.invoices)
+ * @param {Array} [clients] - Lista de clientes registrados (state.clients)
+ * @returns {number} Centavos de deuda total acumulada
+ */
+export function calculateClientTotalDebt(invoice, invoices = [], clients = []) {
+  if (!invoice) return 0;
+  let targetId = invoice.clientId ? String(invoice.clientId).trim() : '';
+  const targetName = invoice.clientName ? String(invoice.clientName).trim().toLowerCase() : '';
+  const isGenericName = !targetName ||
+    targetName === 'consumidor final' ||
+    targetName === 'contado' ||
+    targetName === 'cliente de prueba elo';
+
+  if (!targetId && targetName && !isGenericName && Array.isArray(clients) && clients.length > 0) {
+    const regClient = clients.find(c => c && c.name && String(c.name).trim().toLowerCase() === targetName);
+    if (regClient?.id) targetId = String(regClient.id).trim();
+  }
+
+  if (!targetId && isGenericName) {
+    return Math.max(0, Number(invoice.totalCents || 0) - Number(invoice.paidCents || 0));
+  }
+
+  let totalDebt = 0;
+  let currentInvoiceCounted = false;
+
+  for (const inv of (invoices || [])) {
+    if (!inv || inv.status === 'cancelled') continue;
+    if (inv.documentType && inv.documentType !== 'invoice') continue;
+
+    const invId = inv.clientId ? String(inv.clientId).trim() : '';
+    const invName = inv.clientName ? String(inv.clientName).trim().toLowerCase() : '';
+
+    const matchById = Boolean(targetId && invId && targetId === invId);
+    const matchByName = Boolean(!isGenericName && invName && targetName === invName);
+
+    if (matchById || matchByName) {
+      if (inv.id && invoice.id && inv.id === invoice.id) {
+        currentInvoiceCounted = true;
+        totalDebt += Math.max(0, Number(invoice.totalCents || 0) - Number(invoice.paidCents || 0));
+      } else {
+        totalDebt += Math.max(0, Number(inv.totalCents || 0) - Number(inv.paidCents || 0));
+      }
+    }
+  }
+
+  if (!currentInvoiceCounted) {
+    totalDebt += Math.max(0, Number(invoice.totalCents || 0) - Number(invoice.paidCents || 0));
+  }
+
+  return totalDebt;
+}
+
+
 // Comandos ESC/POS estándar
 export const ESC_POS = {
   INIT: [0x1B, 0x40],                     // ESC @ - Inicializar impresora
@@ -274,6 +331,20 @@ export function buildInvoiceEscPos(invoice, settings = {}, payments = [], change
   if (invoice.tableName) b.line(`Mesa: ${invoice.tableName}`);
   if (invoice.cashierName) b.line(`Atendido por: ${invoice.cashierName}`);
 
+  if (invoice.deliveryDriverName || invoice.paymentMethod === 'delivery_cod') {
+    b.separator('*');
+    b.align('center').bold(true).line('*** PAGO CONTRA ENTREGA (DELIVERY) ***').bold(false).align('left');
+    b.bold(true).line(`REPARTIDOR: ${invoice.deliveryDriverName || 'Asignado'}`).bold(false);
+    if (invoice.deliveryAddress) b.line(`DIRECCION: ${invoice.deliveryAddress}`);
+    if (invoice.deliveryPhone) b.line(`TEL. ENTREGA: ${invoice.deliveryPhone}`);
+    if (Number(invoice.deliveryChangeForCents || 0) > Number(invoice.totalCents || 0)) {
+      const devuelta = Number(invoice.deliveryChangeForCents) - Number(invoice.totalCents);
+      b.line(`LLEVAR CAMBIO PARA: ${formatMoney(invoice.deliveryChangeForCents)} (Dev: ${formatMoney(devuelta)})`);
+    }
+    if (invoice.deliveryNotes) b.line(`NOTA ENTREGA: ${invoice.deliveryNotes}`);
+    b.separator('*');
+  }
+
   b.separator('-');
 
   // Detalle de productos
@@ -324,9 +395,21 @@ export function buildInvoiceEscPos(invoice, settings = {}, payments = [], change
     b.row('  Efectivo recibido:', formatMoney(resolvedChangeInfo.receivedCents));
     b.row('  Devuelta / Cambio:', formatMoney(resolvedChangeInfo.changeCents));
   }
+  const totalDebt = invoice.clientTotalDebtCents != null ? Number(invoice.clientTotalDebtCents) : balance;
+  const previousDebt = Math.max(0, totalDebt - balance);
+
   if (balance > 0) {
-    b.bold(true).row('BALANCE PENDIENTE:', formatMoney(balance)).bold(false);
+    if (previousDebt > 0) {
+      b.row('  Balance de esta compra:', formatMoney(balance));
+      b.row('  Balance anterior pendiente:', formatMoney(previousDebt));
+      b.bold(true).row('TOTAL DEUDA PENDIENTE:', formatMoney(totalDebt)).bold(false);
+    } else {
+      b.bold(true).row('BALANCE PENDIENTE:', formatMoney(balance)).bold(false);
+    }
+  } else if (totalDebt > 0 && (invoice.method === 'credit' || (invoice.notes && String(invoice.notes).toLowerCase().includes('fiao')))) {
+    b.bold(true).row('DEUDA PENDIENTE RESTANTE:', formatMoney(totalDebt)).bold(false);
   }
+
 
   b.separator('=');
 
@@ -408,14 +491,30 @@ export function buildInvoicePlainText(invoice, settings = {}, payments = [], cha
   lines.push(`[B]${docLabel}: ${receiptText(invoice.invoiceNumber || invoice.id || 'N/A')}`);
   if (invoice.ncf) lines.push(`NCF: ${receiptText(invoice.ncf)}`);
   lines.push(`Fecha: ${formatDate(invoice.createdAt || new Date(), true)}`);
-  lines.push(`Cliente: ${receiptText(invoice.clientName || 'Consumidor final')}`);
+  const client = receiptText(invoice.clientName || '');
+  const isGenericClient = !client || client.toLowerCase() === 'consumidor final' || client.toLowerCase() === 'cliente de prueba elo';
+  if (!isGenericClient) {
+    lines.push(`Cliente: ${client}`);
+  }
   if (invoice.clientPhone) lines.push(`Teléfono: ${receiptText(invoice.clientPhone)}`);
   if (invoice.clientRnc) lines.push(`RNC/Cédula: ${receiptText(invoice.clientRnc)}`);
   if (invoice.tableName) lines.push(`Mesa: ${receiptText(invoice.tableName)}`);
   if (invoice.cashierName) lines.push(`Atendido por: ${receiptText(invoice.cashierName)}`);
-  lines.push('[SEP]');
 
-  lines.push(receiptRow('CANT. / DESCRIPCIÓN', 'IMPORTE'));
+  if (invoice.deliveryDriverName || invoice.paymentMethod === 'delivery_cod') {
+    lines.push('[SEP]');
+    lines.push('[C][B]*** PAGO CONTRA ENTREGA (DELIVERY) ***');
+    lines.push(`[B]REPARTIDOR: ${receiptText(invoice.deliveryDriverName || 'Asignado')}`);
+    if (invoice.deliveryAddress) lines.push(`DIRECCION: ${receiptText(invoice.deliveryAddress)}`);
+    if (invoice.deliveryPhone) lines.push(`TEL. ENTREGA: ${receiptText(invoice.deliveryPhone)}`);
+    if (Number(invoice.deliveryChangeForCents || 0) > Number(invoice.totalCents || 0)) {
+      const devuelta = Number(invoice.deliveryChangeForCents) - Number(invoice.totalCents);
+      lines.push(`LLEVAR CAMBIO PARA: ${formatMoney(invoice.deliveryChangeForCents)} (Dev: ${formatMoney(devuelta)})`);
+    }
+    if (invoice.deliveryNotes) lines.push(`NOTA ENTREGA: ${receiptText(invoice.deliveryNotes)}`);
+  }
+
+  lines.push('[SEP]');
 
   for (const item of (invoice.items || [])) {
     const qty = Number(item.quantity ?? 1);
@@ -437,19 +536,33 @@ export function buildInvoicePlainText(invoice, settings = {}, payments = [], cha
     lines.push(receiptRow('Propina legal:', formatMoney(invoice.tipCents)));
   }
   lines.push(`[B]${receiptRow('TOTAL A PAGAR:', formatMoney(invoice.totalCents || 0))}`);
-  lines.push('[SEP]');
 
-  for (const payment of relatedPayments) {
-    const methodLabel = ({ cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', check: 'Cheque', credit: 'Crédito' })[payment.method] || payment.method;
-    lines.push(receiptRow(`Pago ${methodLabel}:`, formatMoney(payment.amountCents)));
-    if (payment.reference) lines.push(`Referencia: ${receiptText(payment.reference)}`);
-  }
   if (resolvedChangeInfo && Number(resolvedChangeInfo.receivedCents || 0) > 0) {
     lines.push(receiptRow('Efectivo recibido:', formatMoney(resolvedChangeInfo.receivedCents)));
     lines.push(receiptRow('Devuelta / Cambio:', formatMoney(resolvedChangeInfo.changeCents)));
+  } else {
+    for (const payment of relatedPayments) {
+      const methodLabel = ({ cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', check: 'Cheque', credit: 'Crédito' })[payment.method] || payment.method;
+      lines.push(receiptRow(`Pago ${methodLabel}:`, formatMoney(payment.amountCents)));
+      if (payment.reference) lines.push(`Referencia: ${receiptText(payment.reference)}`);
+    }
   }
   const balance = Number(invoice.totalCents || 0) - Number(invoice.paidCents || 0);
-  if (balance > 0) lines.push(`[B]${receiptRow('BALANCE PENDIENTE:', formatMoney(balance))}`);
+  const totalDebt = invoice.clientTotalDebtCents != null ? Number(invoice.clientTotalDebtCents) : balance;
+  const previousDebt = Math.max(0, totalDebt - balance);
+
+  if (balance > 0) {
+    if (previousDebt > 0) {
+      lines.push(receiptRow('Balance de esta compra:', formatMoney(balance)));
+      lines.push(receiptRow('Balance anterior pendiente:', formatMoney(previousDebt)));
+      lines.push(`[B]${receiptRow('TOTAL DEUDA PENDIENTE:', formatMoney(totalDebt))}`);
+    } else {
+      lines.push(`[B]${receiptRow('BALANCE PENDIENTE:', formatMoney(balance))}`);
+    }
+  } else if (totalDebt > 0 && (invoice.method === 'credit' || (invoice.notes && String(invoice.notes).toLowerCase().includes('fiao')))) {
+    lines.push(`[B]${receiptRow('DEUDA PENDIENTE RESTANTE:', formatMoney(totalDebt))}`);
+  }
+
 
   if (lines[lines.length - 1] !== '[SEP]') lines.push('[SEP]');
   lines.push(`[C]${receiptText(settings.receiptFooter || '¡Gracias por su compra!')}`);
@@ -638,7 +751,7 @@ export function buildPrebillPlainText(orderOrInvoice, settings = {}) {
 /**
  * Construye el ticket ESC/POS para el Arqueo / Cierre de Turno de Caja (Corte X o Corte Z)
  */
-export function buildCashReportEscPos(session, payments = [], settings = {}, movements = [], mode = 'Z') {
+export function buildCashReportEscPos(session, payments = [], settings = {}, movements = [], mode = 'Z', inventoryMovements = []) {
   const b = new EscPosBuilder();
   const sessionPayments = payments.filter((item) => item.cashSessionId === session.id);
   const sessionMovements = movements.filter((item) => item.cashSessionId === session.id);
@@ -707,6 +820,16 @@ export function buildCashReportEscPos(session, payments = [], settings = {}, mov
     b.line(`Notas de cierre: ${session.notes}`);
   }
 
+  const sessionWaste = (inventoryMovements || []).filter((item) => (item.isWaste || item.operation === 'waste'));
+  if (sessionWaste.length > 0) {
+    const totalWasteUnits = sessionWaste.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+    const totalWasteCost = sessionWaste.reduce((sum, item) => sum + Number(item.wasteCostCents || 0), 0);
+    b.separator('-');
+    b.bold(true).line('MERMAS Y DESPERDICIOS DEL TURNO:').bold(false);
+    b.row('Artículos mermados:', `${totalWasteUnits} uds`);
+    b.row('Pérdida económica:', formatMoney(totalWasteCost));
+  }
+
   b.feed(2);
   b.align('center');
   b.row('____________________', '____________________');
@@ -717,7 +840,7 @@ export function buildCashReportEscPos(session, payments = [], settings = {}, mov
   return b;
 }
 
-export function buildCashReportPlainText(session, payments = [], settings = {}, movements = [], mode = 'Z') {
+export function buildCashReportPlainText(session, payments = [], settings = {}, movements = [], mode = 'Z', inventoryMovements = []) {
   const sessionPayments = payments.filter((item) => item.cashSessionId === session.id);
   const sessionMovements = movements.filter((item) => item.cashSessionId === session.id);
   const sum = (entries) => entries.reduce((total, item) => total + Number(item.amountCents || 0), 0);
@@ -753,7 +876,170 @@ export function buildCashReportPlainText(session, payments = [], settings = {}, 
     lines.push('[SEP]', '[B]MOVIMIENTOS:');
     sessionMovements.forEach((movement) => lines.push(receiptRow(`${movement.type === 'in' ? '+' : '-'} ${movement.reason || 'Movimiento'}`, formatMoney(movement.amountCents))));
   }
+  const sessionWaste = (inventoryMovements || []).filter((item) => (item.isWaste || item.operation === 'waste'));
+  if (sessionWaste.length > 0) {
+    const totalWasteUnits = sessionWaste.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+    const totalWasteCost = sessionWaste.reduce((sum, item) => sum + Number(item.wasteCostCents || 0), 0);
+    lines.push('[SEP]', '[B]MERMAS Y DESPERDICIOS DEL TURNO:', receiptRow('Artículos mermados:', `${totalWasteUnits} uds`), receiptRow('Pérdida económica:', formatMoney(totalWasteCost)));
+  }
   lines.push('[SEP]', `[C]Generado: ${formatDate(new Date(), true)}`);
+  return lines.join('\n');
+}
+
+/**
+ * Construye el ticket ESC/POS para la liquidación de un repartidor (Delivery)
+ */
+export function buildDeliverySettlementEscPos(settlement, settings = {}) {
+  const b = new EscPosBuilder();
+  b.init().align('center');
+  b.bold(true).size('double-height').line(settings.name || 'LOS PANITAS').bold(false).size('normal');
+  b.bold(true).line('LIQUIDACION DE REPARTIDOR').bold(false);
+  b.line(`Fecha: ${formatDate(settlement.createdAt || new Date(), true)}`);
+  b.separator('=');
+  b.align('left');
+  b.bold(true).line(`REPARTIDOR: ${settlement.driverName || 'Repartidor'}`).bold(false);
+  if (settlement.driverPhone) b.line(`Telefono: ${settlement.driverPhone}`);
+  b.line(`Cajero Receptor: ${settlement.cashierName || 'Caja'}`);
+  b.separator('-');
+  b.row('FACTURA / CLIENTE', 'COBRADO');
+  for (const inv of (settlement.invoices || [])) {
+    const invNum = inv.invoiceNumber || 'FACTURA';
+    const client = String(inv.clientName || 'Cliente').slice(0, 18);
+    const amount = formatMoney(inv.paidAmountCents || inv.totalCents || 0);
+    b.row(`${invNum} ${client}`, amount);
+  }
+  b.separator('-');
+  b.align('right');
+  b.bold(true).size('double-height');
+  b.row('TOTAL RECIBIDO:', formatMoney(settlement.totalCents || 0));
+  b.bold(false).size('normal');
+  b.separator('=');
+  b.align('center');
+  b.line('ENTREGAS LIQUIDADAS SATISFACTORIAMENTE');
+  b.line('Balance pendiente del repartidor: RD$ 0.00');
+  b.feed(3);
+  b.cut();
+  return b;
+}
+
+/**
+ * Construye el texto para el renderizador Star Raster nativo de la terminal ELO
+ */
+export function buildDeliverySettlementPlainText(settlement, settings = {}) {
+  const lines = [
+    `[TITLE]LIQUIDACIÓN DE REPARTIDOR`,
+    `[C]${receiptText(settings.name || 'Los Panitas by Nechy')}`,
+    '[SEP]',
+    `Fecha: ${formatDate(settlement.createdAt || new Date(), true)}`,
+    `[B]REPARTIDOR: ${receiptText(settlement.driverName || 'Repartidor')}`,
+    ...(settlement.driverPhone ? [`Teléfono: ${receiptText(settlement.driverPhone)}`] : []),
+    `Cajero Receptor: ${receiptText(settlement.cashierName || 'Caja')}`,
+    '[SEP]',
+    receiptRow('FACTURA / CLIENTE', 'COBRADO')
+  ];
+  for (const inv of (settlement.invoices || [])) {
+    const invNum = inv.invoiceNumber || 'FACTURA';
+    const client = String(inv.clientName || 'Cliente').slice(0, 18);
+    const amount = formatMoney(inv.paidAmountCents || inv.totalCents || 0);
+    lines.push(receiptRow(`${invNum} ${receiptText(client)}`, amount));
+  }
+  lines.push('[SEP]');
+  lines.push(`[B]${receiptRow('TOTAL RECIBIDO:', formatMoney(settlement.totalCents || 0))}`);
+  lines.push('[SEP]');
+  lines.push('[C]ENTREGAS LIQUIDADAS SATISFACTORIAMENTE');
+  lines.push('[C]Balance pendiente del repartidor: RD$ 0.00');
+  return lines.join('\n');
+}
+
+/**
+ * Construye el ticket ESC/POS para el Comprobante de Pago de Nómina / Adelanto de Empleado
+ */
+export function buildPayrollReceiptEscPos(payment, settings = {}) {
+  const b = new EscPosBuilder();
+  b.init().align('center');
+  b.bold(true).size('double-height').line(settings.name || 'LOS PANITAS').bold(false).size('normal');
+  const isAdvance = payment.concept === 'salary_advance';
+  b.bold(true).line(isAdvance ? 'VALE DE ADELANTO DE SUELDO' : 'COMPROBANTE DE PAGO DE NOMINA').bold(false);
+  b.line(`Comprobante: ${payment.receiptNumber || 'NOM-000000'}`);
+  b.line(`Fecha: ${formatDate(payment.createdAt || new Date(), true)}`);
+  b.separator('=');
+
+  b.align('left');
+  b.bold(true).line(`EMPLEADO: ${payment.employeeName || 'Empleado'}`).bold(false);
+  if (payment.employeeCedula) b.line(`Documento/Cedula: ${payment.employeeCedula}`);
+  if (payment.employeeRole) b.line(`Cargo / Puesto:   ${payment.employeeRole}`);
+  b.line(`Periodo:          ${payment.period || 'Periodo actual'}`);
+  b.line(`Concepto:         ${payment.conceptLabel || payment.concept || 'Pago'}`);
+  b.separator('-');
+
+  b.row('Monto Base:', formatMoney(payment.baseSalaryCents || 0));
+  if (Number(payment.bonusCents || 0) > 0) {
+    b.row('Bonos / Adicionales:', `+${formatMoney(payment.bonusCents)}`);
+  }
+  if (Number(payment.deductionsCents || 0) > 0) {
+    b.row('Deducciones / Descuentos:', `-${formatMoney(payment.deductionsCents)}`);
+  }
+  b.separator('-');
+  b.align('right');
+  b.bold(true).size('double-height');
+  b.row('TOTAL NETO PAGADO:', formatMoney(payment.netAmountCents || 0));
+  b.bold(false).size('normal');
+  b.separator('=');
+
+  b.align('left');
+  b.line(`Forma de Pago:  ${payment.paymentMethodLabel || (payment.paymentMethod === 'cash' ? 'Efectivo (Caja)' : 'Transferencia')}`);
+  b.line(`Autorizado por: ${payment.authorizedByName || 'Administracion'}`);
+  if (payment.notes) {
+    b.line(`Observaciones:  ${payment.notes}`);
+  }
+
+  b.separator('-');
+  b.feed(2);
+  b.align('center');
+  b.line('___________________________________');
+  b.line('Firma del Empleado (Recibi Conforme)');
+  b.feed(2);
+  b.line('___________________________________');
+  b.line('Firma Autorizada');
+  b.feed(3);
+  b.cut();
+  return b;
+}
+
+/**
+ * Construye el texto legible para el renderizador nativo / vista previa de nómina
+ */
+export function buildPayrollReceiptPlainText(payment, settings = {}) {
+  const isAdvance = payment.concept === 'salary_advance';
+  const lines = [
+    `[TITLE]${isAdvance ? 'VALE DE ADELANTO' : 'COMPROBANTE DE NÓMINA'}`,
+    `[C]${receiptText(settings.name || 'Los Panitas by Nechy')}`,
+    '[SEP]',
+    `Comprobante: ${payment.receiptNumber || 'NOM-000000'}`,
+    `Fecha: ${formatDate(payment.createdAt || new Date(), true)}`,
+    `[B]EMPLEADO: ${receiptText(payment.employeeName || 'Empleado')}`,
+    ...(payment.employeeCedula ? [`Cédula/Doc: ${receiptText(payment.employeeCedula)}`] : []),
+    ...(payment.employeeRole ? [`Puesto: ${receiptText(payment.employeeRole)}`] : []),
+    `Período: ${receiptText(payment.period || 'Actual')}`,
+    `Concepto: ${receiptText(payment.conceptLabel || payment.concept || 'Pago')}`,
+    '[SEP]',
+    receiptRow('Monto Base:', formatMoney(payment.baseSalaryCents || 0)),
+    ...(Number(payment.bonusCents || 0) > 0 ? [receiptRow('Bonos/Extras:', `+${formatMoney(payment.bonusCents)}`)] : []),
+    ...(Number(payment.deductionsCents || 0) > 0 ? [receiptRow('Deducciones:', `-${formatMoney(payment.deductionsCents)}`)] : []),
+    '[SEP]',
+    `[B]${receiptRow('TOTAL NETO PAGADO:', formatMoney(payment.netAmountCents || 0))}`,
+    '[SEP]',
+    `Forma de Pago: ${receiptText(payment.paymentMethodLabel || payment.paymentMethod || 'Efectivo')}`,
+    `Autorizado por: ${receiptText(payment.authorizedByName || 'Administración')}`,
+    ...(payment.notes ? [`Nota: ${receiptText(payment.notes)}`] : []),
+    '[SEP]',
+    '[SPACE]',
+    '[C]___________________________________',
+    '[C]Firma del Empleado (Recibí Conforme)',
+    '[SPACE]',
+    '[C]___________________________________',
+    '[C]Firma Autorizada'
+  ];
   return lines.join('\n');
 }
 
@@ -1093,16 +1379,36 @@ export async function stopEloScanner() {
   return res && res.ok === true;
 }
 
-// ─── VISOR DE CARA AL CLIENTE (VFD) ────────────────────────────────────────
+// ─── VISOR DE CARA AL CLIENTE (VFD / CFD) ───────────────────────────────────
 
 /**
- * Muestra un mensaje en las dos líneas del visor del cliente.
+ * Muestra un mensaje en las dos líneas del visor del cliente (2x20 caracteres).
+ * Prioriza el puente JavascriptInterface nativo de EloPOS y recurre al servidor local HTTP como respaldo.
  * @param {string} line1 - Primera línea (máx. 20 chars)
  * @param {string} line2 - Segunda línea (máx. 20 chars)
  * @returns {Promise<boolean>}
  */
 export async function setVFDMessage(line1, line2 = '') {
-  const res = await sendEloCommand({ cmd: 'setVFD', l1: line1, l2: line2 }, 800);
+  const l1 = String(line1 || '');
+  const l2 = String(line2 || '');
+
+  // 1. Puente JavascriptInterface nativo (ejecución directa y no bloqueante en WebView)
+  if (typeof window !== 'undefined' && window.EloPOS) {
+    if (typeof window.EloPOS.setCustomerDisplayAsync === 'function') {
+      window.EloPOS.setCustomerDisplayAsync(l1, l2);
+      return true;
+    }
+    if (typeof window.EloPOS.setCustomerDisplay === 'function') {
+      try {
+        return Boolean(window.EloPOS.setCustomerDisplay(l1, l2));
+      } catch (err) {
+        console.warn('[CFD] Fallo llamada síncrona nativa:', err);
+      }
+    }
+  }
+
+  // 2. Servidor local HTTP (respaldo para PWA o navegador externo)
+  const res = await sendEloCommand({ cmd: 'setVFD', l1, l2 }, 800);
   return res && res.ok === true;
 }
 
@@ -1110,14 +1416,35 @@ export async function setVFDMessage(line1, line2 = '') {
  * Limpia el visor del cliente.
  */
 export async function clearVFD() {
+  if (typeof window !== 'undefined' && window.EloPOS) {
+    if (typeof window.EloPOS.clearCustomerDisplay === 'function') {
+      try {
+        window.EloPOS.clearCustomerDisplay();
+        return true;
+      } catch (err) {
+        console.warn('[CFD] Fallo limpiar pantalla nativo:', err);
+      }
+    }
+  }
   await sendEloCommand({ cmd: 'clearVFD' }, 500);
 }
 
 /**
- * Muestra el mensaje de bienvenida en el VFD.
+ * Muestra el mensaje de bienvenida en el visor de cara al cliente.
  */
 export async function vfdWelcome(businessName = 'Los Panitas') {
-  await sendEloCommand({ cmd: 'vfdWelcome', name: businessName }, 500);
+  const name = String(businessName || 'Los Panitas');
+  if (typeof window !== 'undefined' && window.EloPOS) {
+    if (typeof window.EloPOS.showCustomerWelcome === 'function') {
+      try {
+        window.EloPOS.showCustomerWelcome(name);
+        return true;
+      } catch (err) {
+        console.warn('[CFD] Fallo bienvenida nativa:', err);
+      }
+    }
+  }
+  await sendEloCommand({ cmd: 'vfdWelcome', name }, 500);
 }
 
 // ─── AUDIO FEEDBACK ────────────────────────────────────────────────────────
@@ -1138,7 +1465,23 @@ export async function beepHardware(type = 'ok') {
  * @returns {Promise<{printerConnected, scannerActive, vfdConnected, wifiIp, model}|null>}
  */
 export async function getHardwareStatus() {
-  return sendEloCommand({ cmd: 'status' }, 1200);
+  const serverStatus = await sendEloCommand({ cmd: 'status' }, 1200);
+  if (typeof window !== 'undefined' && window.EloPOS) {
+    const isVfd = typeof window.EloPOS.isCustomerDisplayConnected === 'function'
+      ? Boolean(window.EloPOS.isCustomerDisplayConnected())
+      : false;
+    if (serverStatus) {
+      serverStatus.vfdConnected = Boolean(serverStatus.vfdConnected || isVfd);
+      return serverStatus;
+    }
+    return {
+      ok: true,
+      printerConnected: typeof window.EloPOS.isPrinterConnected === 'function' ? window.EloPOS.isPrinterConnected() : true,
+      vfdConnected: isVfd,
+      model: typeof window.EloPOS.getTerminalModel === 'function' ? window.EloPOS.getTerminalModel() : 'Elo POS'
+    };
+  }
+  return serverStatus;
 }
 
 /**
@@ -1148,3 +1491,4 @@ export async function getHardwareStatus() {
 export async function checkPaperStatus() {
   return sendEloCommand({ cmd: 'checkPaper' }, 1200);
 }
+

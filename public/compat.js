@@ -2,6 +2,7 @@
 // terminales ELO. Debe ejecutarse antes de los módulos de Firebase.
 (function installLegacyWebViewCompatibility(scope) {
   if (!scope) return;
+  if (scope.EloPOS && scope.document) scope.document.documentElement.classList.add('elo-terminal');
   if (typeof scope.globalThis === 'undefined') scope.globalThis = scope;
 
   if (typeof Object.fromEntries !== 'function') {

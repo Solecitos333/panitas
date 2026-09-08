@@ -9,6 +9,10 @@ import {
 import { can, ROLES } from '../domain/roles.js';
 import { createUsernameIdentity } from './firebase.js';
 import { isValidUsername, normalizeUsername, usernameToEmail } from '../lib/identity.js';
+import { calculateWasteCostCents, getInventoryReason, validateInventoryAdjustment } from '../domain/inventory.js';
+import { validateEmployeeData, validatePayrollPayment } from '../domain/payroll.js';
+import { createOperationId } from '../lib/id.js';
+import { payrollFingerprint } from '../domain/payroll.js';
 
 const DEFAULT_SETTINGS = Object.freeze({
   name: 'Los Panitas by Nechy',
@@ -67,8 +71,20 @@ export class DataService {
     this.watchAllowed('cash:*', 'cashSessions', 'openedAt', callbacks.cashSessions);
     this.watchAllowed('cash:*', 'cashMovements', 'createdAt', callbacks.cashMovements);
     this.watchAllowed('users:manage', 'users', 'displayName', callbacks.users, 'asc');
+    if (callbacks.deliveryDrivers) {
+      this.watchAllowed('deliveries:*', 'deliveryDrivers', 'name', callbacks.deliveryDrivers, 'asc');
+    }
+    if (callbacks.inventoryMovements) {
+      this.watchAllowed('catalog:view', 'inventoryMovements', 'createdAt', callbacks.inventoryMovements, 'desc');
+    }
     if (callbacks.auditLogs) {
       this.watchAllowed('audit:view', 'auditLogs', 'createdAt', callbacks.auditLogs, 'desc');
+    }
+    if (callbacks.employees) {
+      this.watchAllowed('payroll:view', 'employees', 'name', callbacks.employees, 'asc');
+    }
+    if (callbacks.payrollPayments) {
+      this.watchAllowed('payroll:view', 'payrollPayments', 'createdAt', callbacks.payrollPayments, 'desc');
     }
   }
 
@@ -130,42 +146,17 @@ export class DataService {
       getDoc(doc(this.db, 'userSecrets', this.actor.uid)),
       getDoc(doc(this.db, 'users', this.actor.uid))
     ]);
-    return /^\d{4}$/.test(String(secretSnapshot.data()?.drawerPin || profileSnapshot.data()?.drawerPin || ''));
+    return /^\d{6}$/.test(String(secretSnapshot.data()?.drawerPin || profileSnapshot.data()?.drawerPin || ''));
   }
 
   async verifyDrawerPin(pin, reason = 'Apertura manual') {
     const cleanPin = String(pin || '').trim();
-    if (!/^\d{4}$/.test(cleanPin)) throw new Error('El PIN debe tener exactamente 4 dígitos.');
+    if (!/^\d{6}$/.test(cleanPin)) throw new Error('El PIN debe tener exactamente 6 dígitos.');
 
+    // Personal-session mode: never resolve another person's PIN or silently
+    // impersonate them. Firebase Authentication remains the identity boundary.
     let authorizingUser = null;
-
-    // 1. Intentar resolver el PIN mediante la reserva única en pinClaims
-    try {
-      const claimSnapshot = await getDoc(doc(this.db, 'pinClaims', cleanPin));
-      if (claimSnapshot.exists()) {
-        const targetUserId = claimSnapshot.data()?.userId;
-        if (targetUserId) {
-          const userSnapshot = await getDoc(doc(this.db, 'users', targetUserId));
-          if (userSnapshot.exists()) {
-            const userData = userSnapshot.data();
-            if (userData.active === false) {
-              throw new Error('El usuario asociado a este PIN está inhabilitado.');
-            }
-            authorizingUser = {
-              id: targetUserId,
-              displayName: userData.displayName || userData.username || 'Usuario',
-              username: userData.username || '',
-              roles: userData.roles || []
-            };
-          }
-        }
-      }
-    } catch (err) {
-      if (err.message?.includes('inhabilitado')) throw err;
-    }
-
-    // 2. Fallback para el usuario activo en la sesión si aún no está en pinClaims
-    if (!authorizingUser) {
+    {
       const [secretSnapshot, profileSnapshot] = await Promise.all([
         getDoc(doc(this.db, 'userSecrets', this.actor.uid)),
         getDoc(doc(this.db, 'users', this.actor.uid))
@@ -175,7 +166,7 @@ export class DataService {
       if (storedPin === cleanPin) {
         if (!account?.active) throw new Error('Tu usuario no está habilitado.');
         authorizingUser = {
-          id: this.actor.uid,
+          id: this.actor.uid, uid: this.actor.uid,
           displayName: account.displayName || this.actor.displayName,
           username: account.username || this.actor.username || '',
           roles: account.roles || this.actor.roles || []
@@ -183,8 +174,8 @@ export class DataService {
         if (secretSnapshot.data()?.pinUnique !== true) {
           await this.saveMyDrawerPin(cleanPin).catch(() => {});
         }
-      } else if (!authorizingUser && !/^\d{4}$/.test(storedPin)) {
-        throw new Error('Configura primero tu PIN de 4 dígitos.');
+      } else if (!/^\d{6}$/.test(storedPin)) {
+        throw new Error('Configura primero tu PIN de 6 dígitos.');
       }
     }
 
@@ -202,7 +193,7 @@ export class DataService {
 
   async saveMyDrawerPin(pin) {
     const drawerPin = String(pin || '').trim();
-    if (!/^\d{4}$/.test(drawerPin)) throw new Error('El PIN debe tener exactamente 4 dígitos.');
+    if (!/^\d{6}$/.test(drawerPin)) throw new Error('El PIN debe tener exactamente 6 dígitos.');
     const profileRef = doc(this.db, 'users', this.actor.uid);
     const secretRef = doc(this.db, 'userSecrets', this.actor.uid);
     try {
@@ -252,7 +243,9 @@ export class DataService {
   }
 
   async registerInventoryCount(input) {
-    if (!can(this.actor, 'catalog:*')) throw new Error('No tienes permiso para modificar el inventario.');
+    if (!can(this.actor, 'catalog:*') && !can(this.actor, 'inventory:*')) {
+      throw new Error('No tienes permiso para modificar el inventario.');
+    }
     const productId = String(input.productId || '').trim();
     const rawTarget = Number(input.targetStock);
     if (!productId || !Number.isFinite(rawTarget) || rawTarget < 0) throw new Error('El conteo de inventario no es válido.');
@@ -268,7 +261,7 @@ export class DataService {
       const previousStock = Math.round(Number(product.stock || 0) * 1000) / 1000;
       const delta = Math.round((targetStock - previousStock) * 1000) / 1000;
       if (delta === 0) throw new Error('El conteo coincide con la existencia actual; no hay cambios que registrar.');
-      const reason = String(input.reason || '').trim().slice(0, 300) || 'Conteo físico desde el panel móvil';
+      const reason = String(input.reason || '').trim().slice(0, 300) || 'Conteo físico de inventario';
       movement = {
         productId, productName: String(product.name || '').slice(0, 160),
         type: delta > 0 ? 'increase' : 'decrease', operation: 'count',
@@ -281,6 +274,121 @@ export class DataService {
     });
     await this.audit('inventory.counted', `${movement.productName}: ${movement.previousStock} → ${movement.resultingStock}. ${movement.reason}`);
     return { id: movementRef.id, ...movement };
+  }
+
+  async adjustInventoryItem(input) {
+    if (!can(this.actor, 'catalog:*') && !can(this.actor, 'inventory:*')) {
+      throw new Error('No tienes permiso para modificar el inventario.');
+    }
+    const productId = String(input.productId || '').trim();
+    if (!productId) throw new Error('Producto no especificado.');
+    const productRef = doc(this.db, 'products', productId);
+    const movementRef = doc(collection(this.db, 'inventoryMovements'));
+    let movement = null;
+
+    await runTransaction(this.db, async (transaction) => {
+      const snapshot = await transaction.get(productRef);
+      if (!snapshot.exists() || snapshot.data().active === false) {
+        throw new Error('El producto ya no está disponible.');
+      }
+      const product = snapshot.data();
+      const previousStock = Math.round(Number(product.stock || 0) * 1000) / 1000;
+      const op = String(input.operation || 'count');
+
+      const { delta, resultingStock, quantity, type } = validateInventoryAdjustment({
+        currentStock: previousStock,
+        targetStock: input.targetStock,
+        quantity: input.quantity,
+        operation: op
+      });
+
+      const reasonMeta = getInventoryReason(input.reasonCategory);
+      const reasonText = String(input.reason || reasonMeta.label).trim().slice(0, 300);
+      const notes = String(input.notes || '').trim().slice(0, 300);
+      const wasteCostCents = (op === 'waste' || reasonMeta.isWaste)
+        ? calculateWasteCostCents(product.costCents, product.priceCents, quantity)
+        : 0;
+
+      movement = {
+        productId,
+        productName: String(product.name || '').slice(0, 160),
+        type,
+        operation: op,
+        quantity,
+        delta,
+        previousStock,
+        resultingStock,
+        reason: reasonText,
+        reasonCategory: input.reasonCategory || (op === 'waste' ? 'waste_damaged' : 'audit_count'),
+        wasteCostCents,
+        notes,
+        actorId: this.actor.uid,
+        actorName: this.actor.displayName || this.actor.username || '',
+        createdAt: serverTimestamp()
+      };
+
+      transaction.update(productRef, { stock: resultingStock, updatedAt: serverTimestamp(), updatedBy: this.actor.uid });
+      transaction.set(movementRef, movement);
+    });
+
+    await this.audit('inventory.adjusted', `${movement.productName}: ${movement.previousStock} → ${movement.resultingStock} (${movement.reason})`);
+    return { id: movementRef.id, ...movement };
+  }
+
+  async batchWasteAdjustment({ items = [], reasonCategory = 'waste_unsold', reason = 'Sobrante no vendido - Cierre de jornada', notes = '' }) {
+    if (!can(this.actor, 'catalog:*') && !can(this.actor, 'inventory:*')) {
+      throw new Error('No tienes permiso para modificar el inventario.');
+    }
+    if (!Array.isArray(items) || !items.length) {
+      throw new Error('No hay productos seleccionados para ajustar.');
+    }
+
+    const results = [];
+    const batch = writeBatch(this.db);
+    const now = serverTimestamp();
+    const reasonMeta = getInventoryReason(reasonCategory);
+    const reasonText = String(reason || reasonMeta.label).trim().slice(0, 300);
+
+    for (const item of items) {
+      const productId = String(item.productId || '').trim();
+      if (!productId) continue;
+      const productRef = doc(this.db, 'products', productId);
+      const movementRef = doc(collection(this.db, 'inventoryMovements'));
+      const prev = Math.max(0, Math.round(Number(item.previousStock || 0) * 1000) / 1000);
+      const target = Math.max(0, Math.round(Number(item.targetStock || 0) * 1000) / 1000);
+      const delta = Math.round((target - prev) * 1000) / 1000;
+      if (delta === 0) continue;
+
+      const qty = Math.abs(delta);
+      const wasteCostCents = calculateWasteCostCents(item.costCents, item.priceCents, qty);
+      const movement = {
+        productId,
+        productName: String(item.productName || item.name || '').slice(0, 160),
+        type: delta < 0 ? 'decrease' : 'increase',
+        operation: 'waste',
+        quantity: qty,
+        delta,
+        previousStock: prev,
+        resultingStock: target,
+        reason: reasonText,
+        reasonCategory,
+        wasteCostCents,
+        notes: String(notes || '').trim().slice(0, 300),
+        actorId: this.actor.uid,
+        actorName: this.actor.displayName || this.actor.username || '',
+        createdAt: now
+      };
+
+      batch.update(productRef, { stock: target, updatedAt: now, updatedBy: this.actor.uid });
+      batch.set(movementRef, movement);
+      results.push({ id: movementRef.id, ...movement });
+    }
+
+    if (results.length > 0) {
+      await batch.commit();
+      await this.audit('inventory.batch_waste', `Cierre de jornada: ${results.length} producto(s) ajustados. ${reasonText}`);
+    }
+    return results;
   }
 
   async saveClient(client) {
@@ -301,6 +409,119 @@ export class DataService {
     await setDoc(ref, { ...payload, ...(client.id ? {} : { createdAt: serverTimestamp(), createdBy: this.actor.uid }) }, { merge: true });
     await this.audit(client.id ? 'client.updated' : 'client.created', `${payload.name} (${ref.id})`);
     return ref.id;
+  }
+
+  async saveDeliveryDriver(driver) {
+    const payload = {
+      name: String(driver.name || '').trim().slice(0, 160),
+      phone: String(driver.phone || '').trim().slice(0, 30),
+      vehicle: String(driver.vehicle || '').trim().slice(0, 80),
+      notes: String(driver.notes || '').trim().slice(0, 300),
+      active: driver.active !== false,
+      updatedAt: serverTimestamp(),
+      updatedBy: this.actor.uid
+    };
+    if (!payload.name) throw new Error('El nombre del repartidor es obligatorio.');
+    const ref = driver.id ? doc(this.db, 'deliveryDrivers', driver.id) : doc(collection(this.db, 'deliveryDrivers'));
+    await setDoc(ref, { ...payload, ...(driver.id ? {} : { createdAt: serverTimestamp(), createdBy: this.actor.uid }) }, { merge: true });
+    await this.audit(driver.id ? 'delivery_driver.updated' : 'delivery_driver.created', `${payload.name} (${ref.id})`);
+    return ref.id;
+  }
+
+  async deleteDeliveryDriver(id) {
+    if (!id) return;
+    const ref = doc(this.db, 'deliveryDrivers', id);
+    await setDoc(ref, { active: false, updatedAt: serverTimestamp(), updatedBy: this.actor.uid }, { merge: true });
+    await this.audit('delivery_driver.deactivated', `Repartidor desactivado (${id})`);
+  }
+
+  async saveEmployee(employee) {
+    if (!can(this.actor, 'payroll:*') && !can(this.actor, 'payroll:view')) {
+      throw new Error('No tienes permisos para gestionar empleados.');
+    }
+    const validated = validateEmployeeData(employee);
+    const id = employee.id || doc(collection(this.db, 'employees')).id;
+    const ref = doc(this.db, 'employees', id);
+    await setDoc(ref, {
+      ...validated,
+      updatedAt: serverTimestamp(),
+      updatedBy: this.actor.uid,
+      ...(employee.id ? {} : { createdAt: serverTimestamp(), createdBy: this.actor.uid })
+    }, { merge: true });
+    await this.audit(employee.id ? 'employee.updated' : 'employee.created', `${validated.name} (${id})`);
+    return id;
+  }
+
+  async deleteEmployee(id) {
+    if (!id) return;
+    if (!can(this.actor, 'payroll:*')) {
+      throw new Error('No tienes permisos para desactivar empleados.');
+    }
+    const ref = doc(this.db, 'employees', id);
+    await setDoc(ref, { active: false, updatedAt: serverTimestamp(), updatedBy: this.actor.uid }, { merge: true });
+    await this.audit('employee.deactivated', `Empleado desactivado (${id})`);
+  }
+
+  async createPayrollPayment(input, activeCash = null) {
+    if (!can(this.actor, 'payroll:*')) {
+      throw new Error('No tienes permisos para emitir pagos de nómina.');
+    }
+    const cashSessionId = input.paymentMethod === 'cash' || !input.paymentMethod
+      ? String(input.cashSessionId || activeCash?.id || '') : null;
+    const validated = validatePayrollPayment(input, cashSessionId ? { id: cashSessionId } : null);
+    const requestId = String(input.requestId || createOperationId('payroll'));
+    if (!/^[a-zA-Z0-9_-]{12,100}$/.test(requestId)) throw new Error('Identificador de nómina inválido.');
+    const fingerprint = payrollFingerprint(validated, cashSessionId);
+    const paymentRef = doc(this.db, 'payrollPayments', requestId);
+    const employeeRef = doc(this.db, 'employees', validated.employeeId);
+    const sessionRef = cashSessionId ? doc(this.db, 'cashSessions', cashSessionId) : null;
+    const movementRef = sessionRef ? doc(this.db, 'cashMovements', `${requestId}-cash`) : null;
+    const auditRef = doc(this.db, 'auditLogs', `payroll-${requestId}`);
+    const matches = (record) => record.authorizedByUid === this.actor.uid && record.fingerprint === fingerprint;
+    let result;
+    try { await runTransaction(this.db, async (transaction) => {
+      const previous = await transaction.get(paymentRef);
+      if (previous.exists()) {
+        if (!matches(previous.data())) throw new Error('Este identificador ya corresponde a otro pago de nómina.');
+        result = { id: requestId, ...previous.data() };
+        return;
+      }
+      const [employeeSnap, sessionSnap] = await Promise.all([
+        transaction.get(employeeRef), sessionRef ? transaction.get(sessionRef) : Promise.resolve(null)
+      ]);
+      if (!employeeSnap.exists() || employeeSnap.data().active === false) throw new Error('Empleado no disponible.');
+      const employee = employeeSnap.data();
+      if (sessionRef) {
+        if (!sessionSnap.exists() || sessionSnap.data().status !== 'open') throw new Error('La caja seleccionada ya no está abierta.');
+        if (sessionSnap.data().openedBy !== this.actor.uid) throw new Error('No puedes pagar nómina desde la caja de otro usuario.');
+        const expectedCents = Number(sessionSnap.data().expectedCents ?? sessionSnap.data().openingCents ?? 0) - validated.netAmountCents;
+        if (!Number.isSafeInteger(expectedCents) || expectedCents < 0) throw new Error('La salida supera el efectivo esperado en la caja.');
+        transaction.set(movementRef, {
+          cashSessionId, type: 'out', amountCents: validated.netAmountCents,
+          reason: `Nómina: ${employee.name} (${validated.conceptLabel})`.slice(0, 300),
+          payrollPaymentId: requestId, createdAt: serverTimestamp(), createdBy: this.actor.uid,
+          createdByName: this.actor.displayName || this.actor.username || ''
+        });
+        transaction.update(sessionRef, { expectedCents, lastCashActivityId: movementRef.id,
+          lastCashActivityType: 'movement', updatedAt: serverTimestamp(), updatedBy: this.actor.uid });
+      }
+      const record = {
+        ...validated, requestId, fingerprint, receiptNumber: `NOM-${requestId}`,
+        employeeName: employee.name, employeeRole: employee.roleTitle || '', employeeCedula: employee.cedula || '',
+        cashSessionId, cashMovementId: movementRef?.id || null,
+        authorizedByUid: this.actor.uid, authorizedByName: this.actor.displayName || this.actor.username || '',
+        createdAt: serverTimestamp()
+      };
+      transaction.set(paymentRef, record);
+      transaction.set(auditRef, { action: 'payroll.payment_issued', details: record.receiptNumber,
+        actorId: this.actor.uid, actorName: record.authorizedByName, createdAt: serverTimestamp() });
+      result = { id: requestId, ...record, createdAt: new Date() };
+    }); } catch (error) {
+      const confirmed = await getDocFromServer(paymentRef).catch(() => null);
+      if (!confirmed?.exists() || !matches(confirmed.data())) throw error;
+      result = { id: requestId, ...confirmed.data() };
+    }
+    return result;
   }
 
   async createOrder(input) {
@@ -501,7 +722,7 @@ export class DataService {
         if (stock < quantity) throw new Error(`Inventario insuficiente para ${product.name}.`);
         transaction.update(ref, { stock: Math.round((stock - quantity) * 1000) / 1000, updatedAt: serverTimestamp(), updatedBy: this.actor.uid });
       });
-      const cashierName = String(input.cashierName || input.payment?.cashierName || this.actor.displayName || this.actor.username || 'Cajero').trim();
+      const cashierName = String(this.actor.displayName || this.actor.username || 'Cajero').trim();
       transaction.set(invoiceRef, {
         ...(hasRequestId ? { requestId } : {}),
         documentType, invoiceNumber, ncf, ncfType,
@@ -514,7 +735,15 @@ export class DataService {
         lastPaymentId: amountCents > 0 ? paymentRef.id : '',
         status: documentType === 'invoice' ? paymentStatus(totals.totalCents, amountCents) : 'pending',
         orderId: input.orderId || '', tableId: input.tableId || '',
-        cashierId: input.cashierId || input.payment?.cashierId || this.actor.uid,
+        paymentMethod: paymentMethod || 'cash',
+        deliveryDriverId: String(input.deliveryDriverId || '').slice(0, 60),
+        deliveryDriverName: String(input.deliveryDriverName || '').slice(0, 160),
+        deliveryAddress: String(input.deliveryAddress || input.clientAddress || '').slice(0, 300),
+        deliveryPhone: String(input.deliveryPhone || input.clientPhone || '').slice(0, 30),
+        deliveryNotes: String(input.deliveryNotes || '').slice(0, 300),
+        deliveryChangeForCents: Math.max(0, Number(input.deliveryChangeForCents || 0)),
+        deliveryStatus: (input.deliveryDriverName || paymentMethod === 'delivery_cod') ? (input.deliveryStatus || 'in_transit') : '',
+        cashierId: this.actor.uid,
         cashierName,
         createdAt: serverTimestamp(), createdBy: this.actor.uid, updatedAt: serverTimestamp(), updatedBy: this.actor.uid
       });
@@ -527,7 +756,7 @@ export class DataService {
         invoiceId: invoiceRef.id, invoiceNumber, amountCents,
         method: paymentMethod, reference: String(input.payment.reference || '').slice(0, 120),
         tenderedCents, changeCents,
-        cashierId: input.cashierId || input.payment?.cashierId || this.actor.uid,
+        cashierId: this.actor.uid,
         cashierName,
         cashSessionId: input.payment.cashSessionId || '', createdAt: serverTimestamp(), createdBy: this.actor.uid
       });
@@ -596,16 +825,23 @@ export class DataService {
       const tenderedCents = payment.method === 'cash' ? Number(payment.tenderedCents || amountCents) : 0;
       const changeCents = payment.method === 'cash' ? tenderedCents - amountCents : 0;
       if (payment.method === 'cash' && (!Number.isInteger(tenderedCents) || tenderedCents < amountCents)) throw new Error('Efectivo recibido inválido.');
+      const isSettlingDelivery = (invoice.deliveryDriverName || invoice.paymentMethod === 'delivery_cod')
+        && paidCents >= Number(invoice.totalCents);
       transaction.update(invoiceRef, {
         paidCents, status: paymentStatus(invoice.totalCents, paidCents), lastPaymentId: paymentRef.id,
+        ...(isSettlingDelivery ? {
+          deliveryStatus: 'settled',
+          deliverySettledAt: serverTimestamp(),
+          deliverySettledBy: this.actor.uid
+        } : {}),
         updatedAt: serverTimestamp(), updatedBy: this.actor.uid
       });
       transaction.set(paymentRef, {
         ...(hasRequestId ? { requestId } : {}),
         invoiceId, invoiceNumber: invoice.invoiceNumber, amountCents, method: payment.method,
         reference: String(payment.reference || '').slice(0, 120), tenderedCents, changeCents,
-        cashierId: payment.cashierId || this.actor.uid,
-        cashierName: payment.cashierName || this.actor.displayName || this.actor.username || '',
+        cashierId: this.actor.uid,
+        cashierName: this.actor.displayName || this.actor.username || '',
         cashSessionId: payment.cashSessionId || '',
         createdAt: serverTimestamp(), createdBy: this.actor.uid
       });
@@ -689,7 +925,7 @@ export class DataService {
         openingCents, expectedCents: openingCents,
         lastCashActivityId: '', lastCashActivityType: '',
         notes: String(input.notes || '').slice(0, 500), status: 'open',
-        openedAt: serverTimestamp(), openedBy: this.actor.uid, openedByName: this.actor.displayName || this.actor.email
+        openedAt: serverTimestamp(), openedBy: this.actor.uid, openedByName: this.actor.displayName || this.actor.username || this.actor.email || ''
       });
       transaction.set(lockRef, { activeSessionId: ref.id, updatedAt: serverTimestamp(), updatedBy: this.actor.uid }, { merge: true });
       transaction.set(doc(collection(this.db, 'auditLogs')), {
@@ -780,7 +1016,7 @@ export class DataService {
         reason,
         createdAt: serverTimestamp(),
         createdBy: this.actor.uid,
-        createdByName: this.actor.displayName || this.actor.email
+        createdByName: this.actor.displayName || this.actor.username || this.actor.email || ''
       });
       const previousExpected = Number(sessionSnapshot.data().expectedCents
         ?? sessionSnapshot.data().openingCents ?? 0);
@@ -837,6 +1073,29 @@ export class DataService {
     await addDoc(collection(this.db, 'auditLogs'), {
       action, details: String(details || '').slice(0, 1000),
       actorId: this.actor.uid, actorName: this.actor.displayName || this.actor.username || '', actorEmail: this.actor.email || '', createdAt: serverTimestamp()
+    });
+  }
+
+  watchWhatsAppBot(callback) {
+    const ref = doc(this.db, 'system', 'whatsappBot');
+    const unsubscribe = onSnapshot(ref, (snapshot) => {
+      callback(snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null);
+    }, (error) => {
+      console.warn('Error observando estado de WhatsApp Bot:', error);
+      callback(null, error);
+    });
+    this.unsubscribers.push(unsubscribe);
+    return unsubscribe;
+  }
+
+  async sendWhatsAppBotCommand(command, payload = {}) {
+    const ref = doc(this.db, 'system', 'whatsappBotCommand');
+    await setDoc(ref, {
+      command,
+      payload,
+      requestedBy: this.actor.uid,
+      requestedByName: this.actor.displayName || this.actor.username || '',
+      createdAt: serverTimestamp()
     });
   }
 }

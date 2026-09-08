@@ -60,6 +60,30 @@ service cloud.firestore {
       return value is int && value >= 0 && value <= 100000000000;
     }
 
+    function validPayrollCashLink(paymentId, data) {
+      return (data.paymentMethod in ['transfer', 'other'] && data.cashMovementId == null && data.cashSessionId == null)
+        || (data.paymentMethod == 'cash'
+          && ownsOpenCashSession(data.cashSessionId)
+          && data.cashMovementId == paymentId + '-cash'
+          && !exists(/databases/$(database)/documents/cashMovements/$(data.cashMovementId))
+          && existsAfter(/databases/$(database)/documents/cashMovements/$(data.cashMovementId))
+          && getAfter(/databases/$(database)/documents/cashMovements/$(data.cashMovementId)).data.payrollPaymentId == paymentId
+          && getAfter(/databases/$(database)/documents/cashMovements/$(data.cashMovementId)).data.amountCents == data.netAmountCents
+          && getAfter(/databases/$(database)/documents/cashMovements/$(data.cashMovementId)).data.type == 'out'
+          && getAfter(/databases/$(database)/documents/cashMovements/$(data.cashMovementId)).data.cashSessionId == data.cashSessionId
+          && getAfter(/databases/$(database)/documents/cashMovements/$(data.cashMovementId)).data.createdBy == request.auth.uid);
+    }
+
+    function validMovementPayrollLink(movementId, data) {
+      return (isOwner() || isManager())
+        && data.type == 'out'
+        && !exists(/databases/$(database)/documents/payrollPayments/$(data.payrollPaymentId))
+        && existsAfter(/databases/$(database)/documents/payrollPayments/$(data.payrollPaymentId))
+        && getAfter(/databases/$(database)/documents/payrollPayments/$(data.payrollPaymentId)).data.cashMovementId == movementId
+        && getAfter(/databases/$(database)/documents/payrollPayments/$(data.payrollPaymentId)).data.netAmountCents == data.amountCents
+        && getAfter(/databases/$(database)/documents/payrollPayments/$(data.payrollPaymentId)).data.authorizedByUid == request.auth.uid;
+    }
+
     function validPaymentTender(data) {
       let tendered = data.get('tenderedCents', data.amountCents);
       let change = data.get('changeCents', 0);
@@ -264,6 +288,7 @@ service cloud.firestore {
 
     function validClosedOrderLink(orderId) {
       return request.resource.data.status != 'closed'
+        || resource.data.get('source', '') == 'whatsapp'
         || (request.resource.data.linkedInvoiceId is string
           && request.resource.data.tableId is string
           && existsAfter(/databases/$(database)/documents/invoices/$(request.resource.data.linkedInvoiceId))
@@ -289,8 +314,16 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/tables/$(data.tableId)).data.currentOrderId == orderId;
     }
 
+    function validWhatsAppOrderLink(orderId, data) {
+      return data.get('source', '') == 'whatsapp'
+        && data.tableId == ''
+        && data.tableName is string
+        && data.clientName is string;
+    }
+
     function validCancelledOrderLink() {
       return request.resource.data.status != 'cancelled'
+        || resource.data.get('source', '') == 'whatsapp'
         || (request.resource.data.tableId is string
           && existsAfter(/databases/$(database)/documents/tables/$(request.resource.data.tableId))
           && getAfter(/databases/$(database)/documents/tables/$(request.resource.data.tableId)).data.status == 'available'
@@ -329,7 +362,7 @@ service cloud.firestore {
     }
 
     function validDrawerPin(value) {
-      return value is string && value.matches('^[0-9]{4}$');
+      return value is string && value.matches('^[0-9]{6}$');
     }
 
     function selfLegacyPinRemoval(userId) {
@@ -394,10 +427,12 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // No client can list these IDs. Only active users can look up an exact PIN
-    // to identify the authorizer at the terminal.
+    // Reservations enforce uniqueness without exposing another user's identity.
+    // This delivery uses personal authenticated sessions, not shared PIN lookup.
     match /pinClaims/{pin} {
-      allow get: if active();
+      // An authenticated browser must not be able to enumerate PIN -> employee.
+      // A shared terminal needs a separately tested authorization protocol.
+      allow get: if false;
       allow list: if false;
       allow create, update: if active() && validDrawerPin(pin)
         && request.resource.data.keys().hasOnly(['userId'])
@@ -437,20 +472,19 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'updatedAt', 'updatedBy'])
         && request.resource.data.stock is number
         && request.resource.data.stock >= 0
-        && request.resource.data.stock < resource.data.stock
         && request.resource.data.updatedBy == request.auth.uid
       );
       allow delete: if false;
     }
 
     match /inventoryMovements/{movementId} {
-      allow read: if canManageCatalog();
-      allow create: if canManageCatalog()
+      allow read: if canManageCatalog() || canBill();
+      allow create: if (canManageCatalog() || canBill())
         && request.resource.data.actorId == request.auth.uid
         && request.resource.data.productId is string
         && request.resource.data.productName is string
         && request.resource.data.type in ['increase', 'decrease']
-        && request.resource.data.operation == 'count'
+        && request.resource.data.operation in ['count', 'waste', 'prep', 'restock', 'adjustment']
         && request.resource.data.quantity is number
         && request.resource.data.quantity > 0
         && request.resource.data.delta is number
@@ -469,13 +503,48 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/products/$(request.resource.data.productId)).data.stock == request.resource.data.previousStock
         && getAfter(/databases/$(database)/documents/products/$(request.resource.data.productId)).data.stock == request.resource.data.resultingStock
         && request.resource.data.reason is string
-        && request.resource.data.reason.size() <= 300;
+        && request.resource.data.reason.size() <= 300
+        && (!('reasonCategory' in request.resource.data) || request.resource.data.reasonCategory is string)
+        && (!('wasteCostCents' in request.resource.data) || request.resource.data.wasteCostCents is number)
+        && (!('notes' in request.resource.data) || request.resource.data.notes is string);
       allow update, delete: if false;
     }
 
     match /clients/{clientId} {
       allow read, create, update: if canManageClients();
       allow delete: if false;
+    }
+
+    match /deliveryDrivers/{driverId} {
+      allow read: if active();
+      allow create, update: if canBill();
+      allow delete: if isOwner() || isManager();
+    }
+
+    match /employees/{employeeId} {
+      allow read: if isOwner() || isManager();
+      allow create, update: if isOwner() || isManager();
+      allow delete: if isOwner();
+    }
+
+    match /payrollPayments/{paymentId} {
+      allow read: if isOwner() || isManager();
+      allow create: if (isOwner() || isManager())
+        && validMoney(request.resource.data.netAmountCents)
+        && request.resource.data.netAmountCents > 0
+        && request.resource.data.requestId == paymentId
+        && request.resource.data.fingerprint is string
+        && validMoney(request.resource.data.baseSalaryCents)
+        && validMoney(request.resource.data.bonusCents)
+        && validMoney(request.resource.data.deductionsCents)
+        && request.resource.data.netAmountCents == request.resource.data.baseSalaryCents
+          + request.resource.data.bonusCents - request.resource.data.deductionsCents
+        && exists(/databases/$(database)/documents/employees/$(request.resource.data.employeeId))
+        && get(/databases/$(database)/documents/employees/$(request.resource.data.employeeId)).data.active == true
+        && validPayrollCashLink(paymentId, request.resource.data)
+        && request.resource.data.authorizedByUid == request.auth.uid
+        && writtenNow(request.resource.data.createdAt);
+      allow update, delete: if false;
     }
 
     match /tables/{tableId} {
@@ -502,7 +571,7 @@ service cloud.firestore {
         && validMoney(request.resource.data.subtotalCents)
         && validMoney(request.resource.data.taxCents)
         && validMoney(request.resource.data.totalCents)
-        && validCreatedOrderLink(orderId, request.resource.data);
+        && (validCreatedOrderLink(orderId, request.resource.data) || validWhatsAppOrderLink(orderId, request.resource.data));
       allow update: if canOperateOrders()
         && orderChangedOnly()
         && request.resource.data.revision == resource.data.revision + 1
@@ -543,7 +612,7 @@ service cloud.firestore {
         && request.resource.data.requestId == invoiceId
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.updatedBy == request.auth.uid
-        && (request.resource.data.cashierId == request.auth.uid || (request.resource.data.cashierId is string && exists(/databases/$(database)/documents/users/$(request.resource.data.cashierId))))
+        && request.resource.data.cashierId == request.auth.uid
         && writtenNow(request.resource.data.createdAt)
         && writtenNow(request.resource.data.updatedAt)
         && request.resource.data.invoiceNumber is string
@@ -558,7 +627,10 @@ service cloud.firestore {
         && validInvoiceOrderLink(invoiceId, request.resource.data);
       allow update: if (
         canBill()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paidCents', 'status', 'lastPaymentId', 'updatedAt', 'updatedBy'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'paidCents', 'status', 'lastPaymentId', 'updatedAt', 'updatedBy',
+          'deliveryStatus', 'deliverySettledAt', 'deliverySettledBy'
+        ])
         && request.resource.data.paidCents >= resource.data.paidCents
         && request.resource.data.paidCents <= resource.data.totalCents
         && request.resource.data.updatedBy == request.auth.uid
@@ -586,7 +658,7 @@ service cloud.firestore {
         && validMoney(request.resource.data.amountCents)
         && request.resource.data.amountCents > 0
         && request.resource.data.createdBy == request.auth.uid
-        && (request.resource.data.cashierId == request.auth.uid || (request.resource.data.cashierId is string && exists(/databases/$(database)/documents/users/$(request.resource.data.cashierId))))
+        && request.resource.data.cashierId == request.auth.uid
         && writtenNow(request.resource.data.createdAt)
         && ownsOpenCashSession(request.resource.data.cashSessionId)
         && request.resource.data.method in ['cash', 'card', 'transfer', 'check']
@@ -640,6 +712,7 @@ service cloud.firestore {
         && request.resource.data.reason.size() <= 300
         && request.resource.data.createdBy == request.auth.uid
         && writtenNow(request.resource.data.createdAt)
+        && (!('payrollPaymentId' in request.resource.data) || validMovementPayrollLink(movementId, request.resource.data))
         && cashMovementIsAccounted(movementId, request.resource.data);
       allow update, delete: if false;
     }
@@ -651,6 +724,11 @@ service cloud.firestore {
         && writtenNow(request.resource.data.createdAt)
         && request.resource.data.action is string;
       allow update, delete: if false;
+    }
+
+    match /system/{docId} {
+      allow read: if active();
+      allow write: if isOwner() || isManager() || canBill();
     }
 
     match /{document=**} {

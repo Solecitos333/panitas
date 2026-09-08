@@ -26,6 +26,22 @@
   --panitas-perf: '2026-09-06-v2';
 }
 
+/* Custom Sleek Scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.32);
+}
+
 /* Touch-First Ergonomics & 0ms Tap Latency */
 *, *::before, *::after {
   touch-action: manipulation;
@@ -1210,9 +1226,11 @@ tbody tr:hover { background: rgba(255,255,255,.018); }
 .form-section + .form-section { margin-top: 10px; padding-top: 22px; border-top: 1px solid var(--line); }
 .form-footer { display: flex; justify-content: flex-end; padding-top: 8px; }
 
-.modal-backdrop { position: fixed; top: 0; right: 0; bottom: 0; left: 0; inset: 0; z-index: 80; display: grid; padding: 22px; overflow-y: auto; place-items: center; background: rgba(0,0,0,.78); animation: fade .14s ease; }
-.modal-card { width: min(680px,100%); max-height: calc(100vh - 44px); overflow: auto; border: 1px solid var(--line); border-radius: 22px; background: #121615; box-shadow: var(--shadow); animation: rise .18s ease; }
-.modal-card > header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 21px 23px; border-bottom: 1px solid var(--line); background: #121615; }
+.modal-backdrop { position: fixed; top: 0; right: 0; bottom: 0; left: 0; inset: 0; z-index: 80; display: grid; padding: 22px; overflow-y: auto; place-items: center; background: rgba(5, 8, 14, 0.76); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); animation: fade .14s ease; }
+.modal-backdrop.keyboard-active { align-items: flex-start !important; padding-top: 14px !important; padding-bottom: 280px !important; }
+.modal-card { width: min(680px,100%); max-height: calc(100vh - 44px); overflow: auto; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 22px; background: #131822; box-shadow: 0 24px 60px rgba(0,0,0,.65); animation: rise .18s ease; }
+.modal-card.keyboard-active { max-height: calc(100vh - 20px) !important; margin-bottom: 260px !important; }
+.modal-card > header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 21px 23px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); background: #131822; }
 .modal-card > header h2 { margin: 0; }
 .form-modal .stack-form { padding: 23px; }
 .modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; padding: 18px 23px; border-top: 1px solid var(--line); }
@@ -1240,9 +1258,12 @@ tbody tr:hover { background: rgba(255,255,255,.018); }
 .payment-history > div { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: .78rem; }
 .muted { color: var(--muted); }
 
-.toast-root { position: fixed; right: 22px; bottom: 22px; z-index: 100; display: grid; width: min(360px,calc(100% - 44px)); gap: 10px; }
-.toast { display: flex; align-items: center; gap: 11px; padding: 14px 16px; border: 1px solid var(--line); border-left: 4px solid var(--green); border-radius: 13px; background: #1a201e; box-shadow: var(--shadow); animation: rise .2s ease; }
-.toast.danger { border-left-color: var(--red); }
+.toast-root { position: fixed; right: 22px; bottom: 22px; z-index: 1000; display: grid; width: min(400px,calc(100% - 44px)); gap: 10px; pointer-events: none; }
+.toast { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid rgba(255,255,255,.12); border-left: 5px solid #3fb950; border-radius: 14px; background: #131920; box-shadow: 0 14px 36px rgba(0,0,0,.65); animation: rise .2s cubic-bezier(0.16, 1, 0.3, 1); pointer-events: auto; font-size: 0.88rem; line-height: 1.4; color: #f0f6fc; }
+.toast.success { border-left-color: #3fb950; }
+.toast.warning { border-left-color: #f59e0b; background: #1a1712; }
+.toast.danger, .toast.error { border-left-color: #f85149; background: #1c1314; }
+.toast.info { border-left-color: #38bdf8; }
 
 .login-page { display: grid; min-height: 100vh; grid-template-columns: minmax(0,1.25fr) minmax(420px,.75fr); }
 .login-story { position: relative; display: flex; min-height: 100vh; flex-direction: column; justify-content: space-between; padding: 48px; padding: clamp(30px,5vw,70px); overflow: hidden; background: radial-gradient(circle at 70% 35%,rgba(215,154,60,.2),transparent 25rem), linear-gradient(145deg,#121817,#080a0a); }
@@ -1459,15 +1480,15 @@ tbody tr:hover { background: rgba(255,255,255,.018); }
 
 /* Grid de métodos de pago — botones táctiles grandes */
 .pos-pay-method-grid {
-  display: grid; grid-template-columns: repeat(4, 1fr);
-  gap: 8px; padding: 6px 20px 10px;
+  display: grid; grid-template-columns: repeat(5, 1fr);
+  gap: 6px; padding: 6px 16px 10px;
 }
 .pos-pay-btn {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 6px; min-height: 64px; padding: 10px 6px;
+  gap: 6px; min-height: 64px; padding: 8px 4px;
   border: 1.5px solid var(--line); border-radius: 14px;
   background: rgba(255,255,255,.035); color: #aaa;
-  font-size: 0.75rem; font-weight: 700; cursor: pointer;
+  font-size: 0.72rem; font-weight: 700; cursor: pointer;
   transition: border-color .15s, background .15s, color .15s, transform .1s;
   -webkit-tap-highlight-color: transparent;
 }
@@ -1482,6 +1503,8 @@ tbody tr:hover { background: rgba(255,255,255,.018); }
 .pos-pay-btn.active svg { color: var(--brand-2); }
 .pos-pay-btn.fiao.active { border-color: #f85149; background: rgba(248,81,73,.18); box-shadow: 0 0 0 1px rgba(248,81,73,.25); }
 .pos-pay-btn.fiao.active svg { color: #f85149; }
+.pos-pay-btn.delivery.active { border-color: #f59e0b; background: rgba(245,158,11,.2); box-shadow: 0 0 0 1px rgba(245,158,11,.3); }
+.pos-pay-btn.delivery.active svg { color: #f59e0b; }
 
 /* Paneles de métodos */
 .pos-method-panel { display: none; padding: 0 20px 10px; }
@@ -1665,6 +1688,126 @@ tbody tr:hover { background: rgba(255,255,255,.018); }
     size: 80mm auto;
     margin: 0;
   }
+}
+
+/* Stable touch targets on the ELO: feedback without shrink/bounce or one GPU layer per tile. */
+.elo-terminal { font-family: system-ui, sans-serif; }
+.elo-terminal h1, .elo-terminal h2, .elo-terminal h3, .elo-terminal strong,
+.elo-terminal b, .elo-terminal .product-tile-price, .elo-terminal .cart-line-total { font-family: system-ui, sans-serif; }
+.elo-terminal button, .elo-terminal .button, .elo-terminal .product-card,
+.elo-terminal .restaurant-table, .elo-terminal .kds-card, .elo-terminal .modal-card {
+  transition: none !important;
+  transform: none !important;
+  backface-visibility: visible;
+  will-change: auto;
+}
+.elo-terminal button:active:not(:disabled), .elo-terminal .product-card:active,
+.elo-terminal .restaurant-table:active {
+  transform: none !important;
+  box-shadow: inset 0 0 0 2px #f59e0b !important;
+  filter: none !important;
+}
+.elo-terminal .modal-card, .elo-terminal .modal-backdrop, .elo-terminal .toast,
+.elo-terminal .pos-cart-line, .elo-terminal .pos-method-panel,
+.elo-terminal .live-indicator span { animation: none !important; }
+.elo-terminal .sidebar, .elo-terminal .app-shell > main { transition: none; will-change: auto; }
+
+/* --- Diálogos táctiles profesionales de Caja y Cuadre --- */
+.cash-type-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.cash-type-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 0.92rem;
+  border: 1px solid rgba(255,255,255,.1);
+  background: rgba(255,255,255,.04);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.cash-type-btn.active.type-in {
+  background: rgba(63, 185, 80, 0.15);
+  border-color: rgba(63, 185, 80, 0.5);
+  color: #3fb950;
+}
+.cash-type-btn.active.type-out {
+  background: rgba(248, 81, 73, 0.15);
+  border-color: rgba(248, 81, 73, 0.5);
+  color: #f85149;
+}
+.quick-reason-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 12px;
+}
+.quick-reason-chip {
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  color: #ccc;
+  cursor: pointer;
+}
+.quick-reason-chip:active {
+  background: rgba(245, 158, 11, 0.2);
+  border-color: var(--brand-2);
+  color: #fff;
+}
+.cash-variance-box {
+  border-radius: 14px;
+  padding: 16px;
+  margin: 10px 0 14px;
+  text-align: center;
+  border: 1px solid rgba(255,255,255,.1);
+  background: rgba(255,255,255,.03);
+}
+.cash-variance-box.exact {
+  border-color: rgba(63, 185, 80, 0.4);
+  background: rgba(63, 185, 80, 0.08);
+}
+.cash-variance-box.difference {
+  border-color: rgba(248, 81, 73, 0.4);
+  background: rgba(248, 81, 73, 0.08);
+}
+
+/* Touch Numeric Keypad Styles (Elo Terminal) */
+.touch-numpad-backdrop {
+  animation: fadeIn 0.12s ease-out;
+}
+.touch-numpad-card {
+  transform: translateZ(0);
+  animation: rise 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.numpad-key-btn {
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  transition: transform 0.06s ease, background 0.06s ease;
+}
+.numpad-key-btn:active {
+  transform: scale(0.92) !important;
+  background: rgba(245, 158, 11, 0.28) !important;
+  border-color: var(--brand-2) !important;
+}
+.numpad-chip-btn:active {
+  transform: scale(0.94) !important;
+  background: rgba(245, 158, 11, 0.24) !important;
+  border-color: var(--brand-2) !important;
+}
+input[data-touch-numpad] {
+  cursor: pointer;
+  pointer-events: auto;
 }
 
 @media (prefers-reduced-motion: reduce) {

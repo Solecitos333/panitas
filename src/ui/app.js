@@ -1,11 +1,11 @@
 import {
-  createIcons, AlertTriangle, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, BookOpen, Cake, Calculator, Calendar,
-  ChartNoAxesCombined, Check, ChefHat, ChevronDown, CircleDollarSign, Clock3, Coffee, Cpu, CreditCard, Download, Eye,
-  FileCheck2, FileSpreadsheet, Flame, Globe, KeyRound, Landmark, Layers, LayoutDashboard, Lock, LogOut, Menu,
-  MessageSquare, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Package, PackageOpen, PanelLeftClose, PanelLeftOpen,
+  createIcons, AlertTriangle, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, Bike, BookOpen, Cake, Calculator, Calendar,
+  CalendarX, ChartNoAxesCombined, Check, CheckCircle2, CheckSquare, ChefHat, ChevronDown, CircleDollarSign, ClipboardCheck, ClipboardPen, Clock3, Coffee, Cpu, CreditCard, Download, Eye,
+  FileCheck2, FileSpreadsheet, Flame, Globe, History, KeyRound, Landmark, Layers, LayoutDashboard, Lock, LogOut, Menu,
+  MessageSquare, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Moon, Package, PackageOpen, PanelLeftClose, PanelLeftOpen,
   Pencil, Phone, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, Salad, Sandwich, Save, ScanBarcode,
   Search, Send, Settings, Sheet, ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, SlidersHorizontal,
-  Smartphone, Sparkles, Star, Timer, Trash2, TrendingDown, TrendingUp, Usb, UserPlus, Users, Utensils, Volume2,
+  Smartphone, Sparkles, Star, Timer, Trash2, TrendingDown, TrendingUp, Truck, Usb, UserPlus, Users, Utensils, Volume2,
   Wallet, WalletCards, Wheat, Wifi, WifiOff, X
 } from 'lucide';
 import { can, allowedNavigation, primaryRole } from '../domain/roles.js';
@@ -13,29 +13,43 @@ import { calculateDocument, toCents } from '../domain/billing.js';
 import { renderCartLines, renderCartTotals, renderDashboard, renderKds, renderOrderDrawer, renderPos, renderTables } from '../modules/operations.js';
 import { exportReport, renderInvoiceModal, renderInvoices, renderReports } from '../modules/billing.js';
 import { renderReceivables, renderFiaoPayModal } from '../modules/receivables.js';
-import { renderClientForm, renderClients, renderProductForm, renderProducts } from '../modules/directory.js';
+import { renderDeliveries, renderDriverFormModal, renderDeliverySettleModal } from '../modules/deliveries.js';
+import { renderWhatsApp, bindWhatsAppEvents } from '../modules/whatsapp.js';
+import { renderClientForm, renderClients, renderProductForm, renderProducts, renderStockAdjustModal, renderEndDayWasteModal } from '../modules/directory.js';
+import { getInventoryReason } from '../domain/inventory.js';
+import { renderPayroll, renderEmployeeFormModal, renderPayrollPaymentModal } from '../modules/payroll.js';
+import { calculatePayrollNetCents } from '../domain/payroll.js';
 import { renderCash, renderSettings, renderUserForm, renderUsers, renderTerminalDiag, renderAuditLogs } from '../modules/administration.js';
 import { escapeHtml, formatMoney } from '../lib/format.js';
 import { createOperationId } from '../lib/id.js';
+import { affectsCurrentView } from '../lib/live-view.js';
 import {
   openCashDrawerHardware, buildInvoiceEscPos, buildInvoicePlainText, buildKitchenEscPos, buildKitchenPlainText,
-  buildCashReportEscPos, buildCashReportPlainText, buildPrebillEscPos, buildPrebillPlainText, sendEscPosToPrinter, EscPosBuilder, checkEloNativeServer,
+  buildCashReportEscPos, buildCashReportPlainText, buildPrebillEscPos, buildPrebillPlainText,
+  buildDeliverySettlementEscPos, buildDeliverySettlementPlainText, buildPayrollReceiptEscPos, buildPayrollReceiptPlainText,
+  sendEscPosToPrinter, EscPosBuilder, checkEloNativeServer,
+  calculateClientTotalDebt,
+
   startEloScanner, stopEloScanner, setVFDMessage, clearVFD, vfdWelcome,
   beepHardware, getHardwareStatus, checkPaperStatus, sendEloCommand,
   getEloUpdateStatus, checkEloAppUpdate, installEloAppUpdate, openEloUpdatePermission
 } from '../lib/hardware.js';
-import { bindPinPad } from '../lib/pin-pad.js';
+import { bindPinPad, renderPinPadHtml } from '../lib/pin-pad.js';
 import { updateForms, updateSafety } from '../lib/update-safety.js';
+import { setupTouchNumericInputs } from '../lib/touch-numpad.js';
 
 const NAV = [
   ['dashboard','layout-dashboard','Resumen'], ['pos','shopping-cart','Punto de venta'], ['tables','utensils','Mesas'],
-  ['kds','chef-hat','Cocina KDS'], ['invoices','receipt-text','Facturación'], ['receivables','book-open','Fiao / Por Cobrar'], ['clients','users','Clientes'],
-  ['products','package','Productos'], ['cash','wallet-cards','Caja'], ['reports','chart-no-axes-combined','Reportes'],
+  ['kds','chef-hat','Cocina KDS'], ['invoices','receipt-text','Facturación'], ['receivables','book-open','Fiao / Por Cobrar'],
+  ['deliveries','bike','Deliveries'], ['clients','users','Clientes'],
+  ['products','package','Productos'], ['whatsapp','smartphone','Bot WhatsApp'], ['cash','wallet-cards','Caja'],
+  ['payroll','badge-dollar-sign','Nómina y Personal'],
+  ['reports','chart-no-axes-combined','Reportes'],
   ['users','user-plus','Usuarios'], ['audit','shield-check','Auditoría'], ['terminal','cpu','Terminal ELO'], ['settings','settings','Configuración']
 ];
 
 const icons = {
-  AlertTriangle, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, BookOpen, Cake, Calculator, Calendar, ChartNoAxesCombined, Check, ChefHat,
+  AlertTriangle, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, Bike, BookOpen, Cake, Calculator, Calendar, ChartNoAxesCombined, Check, ChefHat,
   ChevronDown, CircleDollarSign, Clock3, Coffee, Cpu, CreditCard, Download, Eye, FileCheck2, FileSpreadsheet, Flame, Globe, KeyRound, Landmark,
   Layers, LayoutDashboard, Lock, LogOut, Menu, MessageSquare, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Package, PackageOpen, PanelLeftClose, PanelLeftOpen,
   Pencil, Phone, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, Salad, Sandwich, Save, ScanBarcode, Search, Send, Settings, Sheet,
@@ -51,19 +65,53 @@ if (typeof document !== 'undefined') {
       setTimeout(() => interactive.blur(), 0);
     }
   }, { passive: true });
+
+  // Desplazamiento inteligente cuando se despliega el teclado del sistema para campos de texto
+  document.addEventListener('focusin', (e) => {
+    const target = e.target;
+    if (!target || !['INPUT', 'TEXTAREA'].includes(target.tagName)) return;
+    if (target.readOnly || target.getAttribute('inputmode') === 'none' || target.type === 'hidden') return;
+
+    const modalBackdrop = target.closest('.modal-backdrop');
+    const modalCard = target.closest('.modal-card');
+    if (modalBackdrop) modalBackdrop.classList.add('keyboard-active');
+    if (modalCard) modalCard.classList.add('keyboard-active');
+
+    // Desplazar el elemento al centro visible tras la animación del teclado de Android (220ms)
+    setTimeout(() => {
+      try {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+      } catch (_) {
+        target.scrollIntoView(true);
+      }
+    }, 220);
+  }, { passive: true });
+
+  document.addEventListener('focusout', () => {
+    setTimeout(() => {
+      const active = document.activeElement;
+      const stillInText = active && ['INPUT', 'TEXTAREA'].includes(active.tagName) && !active.readOnly && active.getAttribute('inputmode') !== 'none';
+      if (!stillInText) {
+        document.querySelectorAll('.keyboard-active').forEach(el => el.classList.remove('keyboard-active'));
+      }
+    }, 150);
+  }, { passive: true });
 }
 
 export function createApplication({ root, user, service, onLogout, onChangePassword, development = false }) {
+  const managementMode = !window.EloPOS && new URLSearchParams(location.search).get('mode') === 'management';
   const state = {
     user, settings: {}, route: initialRoute(user), cart: [], selectedOrderId: '', selectedInvoiceId: '', preselectedTableId: '', modal: '',
-    hardwareStatus: null, updateStatus: getEloUpdateStatus(), scannerActive: false, checkoutOpening: false, saleInProgress: false, pendingLiveRender: false, pendingPinDestination: '', mobileReportPeriod: 'day', posDiscountState: { discount: 0, discountType: 'amount', includeLegalTip: false }, posDraft: {}, posSearch: '', posCategory: 'Todos',
+    hardwareStatus: null, updateStatus: getEloUpdateStatus(), scannerActive: false, checkoutOpening: false, saleInProgress: false, pendingLiveRender: false, pendingPinDestination: '', mobileReportPeriod: 'day', posDiscountState: { discount: 0, discountType: 'amount', includeLegalTip: false }, posDraft: {}, posSearch: '', posCategory: 'Todos', posPaymentMethod: 'cash',
     sidebarCollapsed: typeof localStorage !== 'undefined' && localStorage.getItem('panitas_sidebar_collapsed') === '1',
-    products: [], clients: [], tables: [], orders: [], invoices: [], payments: [], cashSessions: [], cashMovements: [], users: [], auditLogs: [], development,
+    products: [], clients: [], tables: [], orders: [], invoices: [], payments: [], cashSessions: [], cashMovements: [], users: [], auditLogs: [], deliveryDrivers: [], selectedDeliveryDriver: null, selectedDeliveryInvoices: [], editingDriver: null, whatsappBot: null, development,
+    inventoryMovements: [], productsTab: 'catalog', editingStockProduct: null,
+    employees: [], payrollPayments: [], payrollTab: 'payments', editingEmployee: null, payingEmployeeId: null,
     capabilities: {
       bill: can(user, 'billing:create'), cancelInvoice: can(user, 'billing:cancel'), chargeOrder: can(user, 'orders:charge'),
       createOrder: can(user, 'orders:create'), updateOrder: can(user, 'orders:update'), serveOrder: can(user, 'orders:serve'),
       kitchenOrder: can(user, 'orders:kitchen'), viewKds: can(user, 'kds:view'), manageCatalog: can(user, 'catalog:*'), manageClients: can(user, 'clients:*'), manageUsers: can(user, 'users:manage'),
-      cashDrawer: can(user, 'billing:create') || can(user, 'orders:charge') || can(user, 'cash:*')
+      cashDrawer: !managementMode && (can(user, 'billing:create') || can(user, 'orders:charge') || can(user, 'cash:*'))
     }
   };
   let destroyed = false;
@@ -84,10 +132,22 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     service.watchAll({
       products: update('products'), clients: update('clients'), tables: update('tables'), orders: updateOrders,
       invoices: update('invoices'), payments: update('payments'), cashSessions: update('cashSessions'),
-      cashMovements: update('cashMovements'), users: update('users'), auditLogs: update('auditLogs')
+      cashMovements: update('cashMovements'), users: update('users'), auditLogs: update('auditLogs'),
+      deliveryDrivers: update('deliveryDrivers'),
+      inventoryMovements: update('inventoryMovements'),
+      employees: update('employees'),
+      payrollPayments: update('payrollPayments')
+    });
+    service.watchWhatsAppBot?.((botData) => {
+      state.whatsappBot = botData;
+      if (state.route === 'whatsapp') {
+        requestLiveRender();
+      }
     });
     render();
     syncNativeUpdateState();
+    // The management app has no printer/drawer bridge to poll every eight seconds.
+    if (!window.EloPOS && new URLSearchParams(location.search).get('mode') === 'management') return;
     getHardwareStatus().then((status) => {
       if (!destroyed && status?.ok) {
         state.hardwareStatus = status;
@@ -118,7 +178,11 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     }, 8000);
   }
 
-  function update(key) { return (items, error) => { if (error) toast(`No se pudo sincronizar ${key}.`, 'danger'); state[key] = items; requestLiveRender(); }; }
+  function update(key) { return (items, error) => {
+    if (error) toast(`No se pudo sincronizar ${key}.`, 'danger');
+    state[key] = items;
+    if (affectsCurrentView(state.route, key, state.modal)) requestLiveRender();
+  }; }
 
   let liveRenderRaf = null;
   function requestLiveRender() {
@@ -160,7 +224,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     }
     previousKdsOrders = new Set(newItems.map(o => o.id));
     state.orders = newItems;
-    requestLiveRender();
+    if (affectsCurrentView(state.route, 'orders', state.modal)) requestLiveRender();
   }
 
   function activeCash() {
@@ -219,8 +283,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     state.activeCash = activeCash();
     const renderers = {
       dashboard: renderDashboard, pos: renderPos, tables: renderTables, kds: renderKds,
-      invoices: renderInvoices, receivables: renderReceivables, clients: renderClients, products: renderProducts,
-      cash: renderCash, reports: renderReports, users: renderUsers, audit: renderAuditLogs,
+      invoices: renderInvoices, receivables: renderReceivables, deliveries: renderDeliveries, clients: renderClients, products: renderProducts,
+      whatsapp: renderWhatsApp, cash: renderCash, payroll: renderPayroll, reports: renderReports, users: renderUsers, audit: renderAuditLogs,
       terminal: () => renderTerminalDiag(), settings: renderSettings
     };
     const renderer = renderers[state.route] || renderDashboard;
@@ -236,8 +300,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         disposePinPad = () => {};
       }
     }
-    bindContent(); iconsRefresh(mainEl); syncNativeUpdateState();
+    bindContent(); iconsRefresh(mainEl); syncNativeUpdateState(); setupTouchNumericInputs(mainEl);
     if (state.route === 'terminal') initTerminalDiag();
+    if (state.route === 'whatsapp') bindWhatsAppEvents(state, root, service, toast);
   }
 
   function renderModal() {
@@ -252,19 +317,27 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     else if (state.modal === 'payment') modalRoot.innerHTML = paymentModal();
     else if (state.modal === 'charge') modalRoot.innerHTML = chargeModal();
     else if (state.modal === 'quickCash') modalRoot.innerHTML = quickCashModal();
+    else if (state.modal === 'cashMovement') modalRoot.innerHTML = cashMovementModal();
+    else if (state.modal === 'cashClose') modalRoot.innerHTML = cashCloseModal();
     else if (state.modal === 'drawerPin') modalRoot.innerHTML = drawerPinModal();
     else if (state.modal === 'checkoutPin') modalRoot.innerHTML = checkoutPinModal();
     else if (state.modal === 'setupCheckoutPin') modalRoot.innerHTML = setupCheckoutPinModal();
     else if (state.modal === 'saleSuccess') modalRoot.innerHTML = saleSuccessModal();
     else if (state.modal === 'fiaoPay') modalRoot.innerHTML = renderFiaoPayModal(state.selectedFiaoInvoice, state.activeCash);
+    else if (state.modal === 'driverForm') modalRoot.innerHTML = renderDriverFormModal(state.editingDriver);
+    else if (state.modal === 'deliverySettle') modalRoot.innerHTML = renderDeliverySettleModal(state.selectedDeliveryDriver, state.selectedDeliveryInvoices || [], state.activeCash);
+    else if (state.modal === 'employeeForm') modalRoot.innerHTML = renderEmployeeFormModal(state.editingEmployee);
+    else if (state.modal === 'payrollPayment') modalRoot.innerHTML = renderPayrollPaymentModal({ employees: state.employees, selectedEmployeeId: state.payingEmployeeId, activeCash: state.activeCash });
     else if (state.modal === 'itemNote') modalRoot.innerHTML = itemNoteModal();
     else if (state.modal === 'quantity') modalRoot.innerHTML = quantityModal();
     else if (state.modal === 'user') modalRoot.innerHTML = renderUserForm(state.editingUser);
     else if (state.modal === 'password') modalRoot.innerHTML = passwordModal();
     else if (state.modal === 'cancelOrder') modalRoot.innerHTML = cancellationModal('order');
     else if (state.modal === 'cancelInvoice') modalRoot.innerHTML = cancellationModal('invoice');
+    else if (state.modal === 'stockAdjust') modalRoot.innerHTML = renderStockAdjustModal(state.editingStockProduct || {});
+    else if (state.modal === 'endDayWaste') modalRoot.innerHTML = renderEndDayWasteModal(state.products || []);
     else modalRoot.innerHTML = '';
-    iconsRefresh(modalRoot); bindModal(); syncNativeUpdateState();
+    iconsRefresh(modalRoot); bindModal(); syncNativeUpdateState(); setupTouchNumericInputs(modalRoot);
   }
 
   function bindShell() {
@@ -274,6 +347,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelector('[data-menu]')?.addEventListener('click',()=>root.querySelector('.sidebar').classList.toggle('open'));
     root.querySelectorAll('[data-drawer-kick]').forEach((btn)=>btn.addEventListener('click', promptDrawerPin));
     root.querySelectorAll('[data-quick-open-cash]').forEach((btn)=>btn.addEventListener('click', () => { state.modal = 'quickCash'; renderModal(); }));
+    root.querySelectorAll('[data-cash-movement-open]').forEach((btn)=>btn.addEventListener('click', () => { state.modal = 'cashMovement'; renderModal(); }));
+    root.querySelectorAll('[data-cash-close-open]').forEach((btn)=>btn.addEventListener('click', () => { state.modal = 'cashClose'; renderModal(); }));
     root.querySelectorAll('[data-sidebar-toggle]').forEach((btn) => {
       btn.addEventListener('click', () => {
         state.sidebarCollapsed = !state.sidebarCollapsed;
@@ -346,6 +421,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   }
 
   function bindContent() {
+    root.querySelector('[data-personal-settings]')?.addEventListener('click', () => { state.modal = 'password'; renderModal(); });
     root.querySelectorAll('#main-content [data-route]').forEach((button)=>button.addEventListener('click',()=>route(button.dataset.route)));
     root.querySelector('[data-refresh]')?.addEventListener('click',()=>renderContent());
     root.querySelectorAll('[data-product-add]').forEach((button)=>button.addEventListener('click',()=>addProduct(button.dataset.productAdd)));
@@ -382,13 +458,18 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           p.style.color = isMatch ? 'var(--brand-2)' : '#ccc';
         });
         const query = (root.querySelector('#product-search')?.value || '').toLowerCase().trim();
+        let visibleCount = 0;
         root.querySelectorAll('#pos-products .product-card').forEach((card) => {
           const cardSearch = (card.dataset.search || '').toLowerCase();
           const cardCat = card.dataset.category || 'General';
           const matchesCat = cat === 'Todos' || cardCat === cat;
           const matchesQuery = !query || cardSearch.includes(query);
-          card.hidden = !(matchesCat && matchesQuery);
+          const isVisible = matchesCat && matchesQuery;
+          card.hidden = !isVisible;
+          if (isVisible) visibleCount++;
         });
+        const emptyState = root.querySelector('#pos-no-matches');
+        if (emptyState) emptyState.hidden = visibleCount > 0;
       });
     });
 
@@ -469,6 +550,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     });
     root.querySelector('#pos-checkout-form')?.addEventListener('input', capturePosDraft);
     root.querySelector('#pos-checkout-form')?.addEventListener('change', capturePosDraft);
+    root.querySelector('#pos-print-receipt')?.addEventListener('change', () => {
+      updatePosSubmitLabel();
+      capturePosDraft();
+    });
     root.querySelectorAll('#pos-checkout-form details').forEach((details) => details.addEventListener('toggle', capturePosDraft));
     root.querySelector('#pos-checkout-form [name=tableId], #pos-table-select')?.addEventListener('change', updatePosFields);
     root.querySelector('#pos-cash-received')?.addEventListener('input', updatePosChange);
@@ -498,7 +583,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 
         // Mostrar el panel correspondiente
         root.querySelectorAll('.pos-method-panel').forEach((p) => p.classList.remove('visible'));
-        const panelMap = { cash: '#pos-cash-panel', card: '#pos-card-panel', transfer: '#pos-transfer-panel', credit: '#pos-fiao-panel' };
+        const panelMap = { cash: '#pos-cash-panel', card: '#pos-card-panel', transfer: '#pos-transfer-panel', credit: '#pos-fiao-panel', delivery_cod: '#pos-delivery-panel' };
         const targetPanel = root.querySelector(panelMap[method]);
         if (targetPanel) targetPanel.classList.add('visible');
 
@@ -575,6 +660,23 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       }
     });
 
+    // Selector de repartidor en POS
+    root.querySelector('#pos-delivery-driver-select')?.addEventListener('change', (e) => {
+      const select = e.target;
+      const opt = select.selectedOptions?.[0];
+      const nameInput = root.querySelector('#pos-delivery-driver-name');
+      if (nameInput) {
+        nameInput.value = opt ? (opt.dataset.name || '') : '';
+      }
+      capturePosDraft();
+    });
+    root.querySelector('[data-driver-quick-new]')?.addEventListener('click', () => {
+      capturePosDraft();
+      state.editingDriver = null;
+      state.modal = 'driverForm';
+      renderModal();
+    });
+
     // Fiao / Cuentas por Cobrar
     root.querySelector('#fiao-search')?.addEventListener('input', (e) => {
       const q = e.target.value.toLowerCase().trim();
@@ -588,6 +690,50 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         const invId = btn.dataset.fiaoPay;
         state.selectedFiaoInvoice = state.invoices.find(i => i.id === invId);
         state.modal = 'fiaoPay';
+        renderModal();
+      });
+    });
+
+    // Deliveries y Mensajeros
+    root.querySelectorAll('[data-driver-new]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        capturePosDraft();
+        state.editingDriver = null;
+        state.modal = 'driverForm';
+        renderModal();
+      });
+    });
+    root.querySelectorAll('[data-driver-edit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const driverId = btn.dataset.driverEdit;
+        state.editingDriver = (state.deliveryDrivers || []).find(d => d.id === driverId) || null;
+        state.modal = 'driverForm';
+        renderModal();
+      });
+    });
+    root.querySelectorAll('[data-delivery-settle]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const driverId = btn.dataset.deliverySettle;
+        const driver = (state.deliveryDrivers || []).find(d => d.id === driverId || d.name === driverId) || { id: driverId, name: driverId || 'Mensajero' };
+        const pendingInvoices = (state.invoices || []).filter(inv =>
+          (inv.deliveryDriverId === driverId || inv.deliveryDriverName === driverId || (!inv.deliveryDriverId && inv.paymentMethod === 'delivery_cod')) &&
+          inv.status !== 'paid' && inv.status !== 'cancelled'
+        );
+        state.selectedDeliveryDriver = driver;
+        state.selectedDeliveryInvoices = pendingInvoices;
+        state.modal = 'deliverySettle';
+        renderModal();
+      });
+    });
+    root.querySelectorAll('[data-delivery-settle-single]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const invId = btn.dataset.deliverySettleSingle;
+        const inv = (state.invoices || []).find(i => i.id === invId);
+        if (!inv) return;
+        const driver = (state.deliveryDrivers || []).find(d => d.id === inv.deliveryDriverId) || { id: inv.deliveryDriverId, name: inv.deliveryDriverName || 'Mensajero', phone: inv.deliveryPhone || '' };
+        state.selectedDeliveryDriver = driver;
+        state.selectedDeliveryInvoices = [inv];
+        state.modal = 'deliverySettle';
         renderModal();
       });
     });
@@ -622,7 +768,39 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelectorAll('[data-invoice-view]').forEach((button)=>button.addEventListener('click',()=>openInvoice(button.dataset.invoiceView)));
     root.querySelector('#invoice-search')?.addEventListener('input',filterInvoiceRows);
     root.querySelector('#invoice-status-filter')?.addEventListener('change',filterInvoiceRows);
+    root.querySelector('[data-load-more-invoices]')?.addEventListener('click', () => {
+      state.invoiceDisplayLimit = (state.invoiceDisplayLimit || 60) + 60;
+      renderContent();
+    });
+    root.querySelector('[data-load-more-audit]')?.addEventListener('click', () => {
+      state.auditDisplayLimit = (state.auditDisplayLimit || 50) + 50;
+      renderContent();
+    });
     root.querySelectorAll('[data-product-new]').forEach((button)=>button.addEventListener('click',()=>openForm('product')));
+    root.querySelectorAll('[data-products-tab]').forEach((button) => {
+      button.addEventListener('click', () => {
+        state.productsTab = button.dataset.productsTab;
+        renderContent();
+      });
+    });
+    root.querySelectorAll('[data-stock-adjust]').forEach((button) => {
+      button.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const pid = button.dataset.stockAdjust;
+        const p = (state.products || []).find((x) => x.id === pid);
+        if (p) {
+          state.editingStockProduct = p;
+          state.modal = 'stockAdjust';
+          renderModal();
+        }
+      });
+    });
+    root.querySelectorAll('[data-end-day-waste]').forEach((button) => {
+      button.addEventListener('click', () => {
+        state.modal = 'endDayWaste';
+        renderModal();
+      });
+    });
     root.querySelectorAll('[data-client-new]').forEach((button)=>button.addEventListener('click',()=>openForm('client')));
     root.querySelector('[data-user-new]')?.addEventListener('click',()=>openUserForm());
     root.querySelectorAll('[data-user-edit]').forEach((button)=>button.addEventListener('click',()=>openUserForm(button.dataset.userEdit)));
@@ -636,6 +814,72 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         renderModal();
       });
     });
+    // Nómina y Personal
+    root.querySelectorAll('[data-payroll-tab]').forEach((button) => {
+      button.addEventListener('click', () => {
+        state.payrollTab = button.dataset.payrollTab;
+        renderContent();
+      });
+    });
+    root.querySelector('#payroll-payments-search')?.addEventListener('input', (e) => {
+      const q = (e.target.value || '').toLowerCase().trim();
+      root.querySelectorAll('#main-content [data-payroll-row]').forEach((row) => {
+        const text = row.dataset.search || '';
+        row.style.display = !q || text.includes(q) ? '' : 'none';
+      });
+    });
+    root.querySelector('#payroll-employees-search')?.addEventListener('input', (e) => {
+      const q = (e.target.value || '').toLowerCase().trim();
+      root.querySelectorAll('#main-content [data-employee-row]').forEach((row) => {
+        const text = row.dataset.search || '';
+        row.style.display = !q || text.includes(q) ? '' : 'none';
+      });
+    });
+    root.querySelectorAll('[data-employee-new]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.editingEmployee = {};
+        state.modal = 'employeeForm';
+        renderModal();
+      });
+    });
+    root.querySelectorAll('[data-employee-edit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const empId = btn.dataset.employeeEdit;
+        state.editingEmployee = (state.employees || []).find((e) => e.id === empId) || {};
+        state.modal = 'employeeForm';
+        renderModal();
+      });
+    });
+    root.querySelectorAll('[data-employee-delete]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const empId = btn.dataset.employeeDelete;
+        const emp = (state.employees || []).find((e) => e.id === empId);
+        if (!emp) return;
+        if (!confirm(`¿Estás seguro de desactivar al colaborador ${emp.name}?`)) return;
+        await perform(() => service.deleteEmployee(empId), 'Colaborador desactivado.');
+      });
+    });
+    root.querySelectorAll('[data-payroll-pay-new]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.payingEmployeeId = null;
+        state.modal = 'payrollPayment';
+        renderModal();
+      });
+    });
+    root.querySelectorAll('[data-payroll-pay-emp]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.payingEmployeeId = btn.dataset.payrollPayEmp;
+        state.modal = 'payrollPayment';
+        renderModal();
+      });
+    });
+    root.querySelectorAll('[data-payroll-print]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const paymentId = btn.dataset.payrollPrint;
+        const payment = (state.payrollPayments || []).find((p) => p.id === paymentId);
+        if (payment) printPayrollPayment(payment);
+      });
+    });
     root.querySelector('#directory-search')?.addEventListener('input',filterDirectory);
     root.querySelector('#cash-open-form')?.addEventListener('submit',openCash);
     root.querySelector('#cash-close-form')?.addEventListener('submit',closeCash);
@@ -643,6 +887,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelector('#settings-form')?.addEventListener('submit',saveSettings);
     root.querySelectorAll('[data-drawer-kick]').forEach((btn)=>btn.addEventListener('click', promptDrawerPin));
     root.querySelectorAll('[data-quick-open-cash]').forEach((btn)=>btn.addEventListener('click', () => { state.modal = 'quickCash'; renderModal(); }));
+    root.querySelectorAll('[data-cash-movement-open]').forEach((btn)=>btn.addEventListener('click', () => { state.modal = 'cashMovement'; renderModal(); }));
+    root.querySelectorAll('[data-cash-close-open]').forEach((btn)=>btn.addEventListener('click', () => { state.modal = 'cashClose'; renderModal(); }));
     root.querySelectorAll('[data-test-drawer]').forEach((btn)=>btn.addEventListener('click', promptDrawerPin));
     root.querySelectorAll('[data-test-print]').forEach((btn)=>btn.addEventListener('click', testPrint));
     bindUpdateActions(root);
@@ -651,6 +897,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelectorAll('[data-export]').forEach((button)=>button.addEventListener('click',()=>exportReport(button.dataset.export,state)));
     updatePosFields();
     if (searchInput) filterCards({ target: searchInput });
+    setupTouchNumericInputs(root);
   }
 
   function updateIsBusy() {
@@ -775,7 +1022,12 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       });
     }
     modalRoot?.querySelector('#product-form')?.addEventListener('submit',saveProduct);
+    bindStockAdjustModal(modalRoot);
+    bindEndDayWasteModal(modalRoot);
+    modalRoot?.querySelector('#employee-form')?.addEventListener('submit', saveEmployee);
+    bindPayrollPaymentModal(modalRoot);
     modalRoot?.querySelector('#client-form')?.addEventListener('submit',saveClient);
+    modalRoot?.querySelector('#driver-form')?.addEventListener('submit',saveDeliveryDriver);
     modalRoot?.querySelector('#user-access-form')?.addEventListener('submit',saveUserAccess);
     modalRoot?.querySelector('#password-change-form')?.addEventListener('submit',submitPasswordChange);
     modalRoot?.querySelector('#drawer-pin-update-form')?.addEventListener('submit',submitDrawerPinChange);
@@ -785,7 +1037,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       const data = new FormData(event.currentTarget);
       const pin = String(data.get('pin') || '');
       const confirm = String(data.get('confirmPin') || '');
-      if (!/^\d{4}$/.test(pin)) return toast('Elige un PIN de exactamente 4 dígitos.', 'warning');
+      if (!/^\d{6}$/.test(pin)) return toast('Elige un PIN de exactamente 6 dígitos.', 'warning');
       if (pin !== confirm) return toast('Los PINes no coinciden.', 'warning');
       const outcome = await perform(() => service.saveMyDrawerPin(pin), 'PIN configurado.', null);
       if (!outcome.ok) return;
@@ -881,6 +1133,164 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     modalRoot?.querySelector('#payment-form')?.addEventListener('submit',submitPayment);
     modalRoot?.querySelector('#charge-form')?.addEventListener('submit',submitCharge);
 
+    // Formulario de cobro de factura individual con teclado táctil
+    const paymentForm = modalRoot?.querySelector('#payment-form');
+    if (paymentForm && paymentForm.querySelector('.pin-slots-container')) {
+      const pinInput = paymentForm.querySelector('#payment-pin-input') || paymentForm.querySelector('input[name="pin"]');
+      const errBox = paymentForm.querySelector('#payment-pin-error') || paymentForm.querySelector('.pin-error-box');
+      const submitBtn = paymentForm.querySelector('button[type="submit"]');
+      disposePinPad = bindPinPad({
+        form: paymentForm,
+        input: pinInput,
+        slots: [...paymentForm.querySelectorAll('.pin-slot')],
+        digits: [...paymentForm.querySelectorAll('.pin-num-btn')],
+        clear: paymentForm.querySelector('.pin-clear-btn'),
+        backspace: paymentForm.querySelector('.pin-del-btn'),
+        submit: submitBtn,
+        error: errBox,
+        isBusy: () => state.saleInProgress
+      });
+    }
+
+    // Formulario de cobro de mesa con teclado táctil
+    const chargeForm = modalRoot?.querySelector('#charge-form');
+    if (chargeForm && chargeForm.querySelector('.pin-slots-container')) {
+      const pinInput = chargeForm.querySelector('#charge-pin-input') || chargeForm.querySelector('input[name="pin"]');
+      const errBox = chargeForm.querySelector('#charge-pin-error') || chargeForm.querySelector('.pin-error-box');
+      const submitBtn = chargeForm.querySelector('button[type="submit"]');
+      disposePinPad = bindPinPad({
+        form: chargeForm,
+        input: pinInput,
+        slots: [...chargeForm.querySelectorAll('.pin-slot')],
+        digits: [...chargeForm.querySelectorAll('.pin-num-btn')],
+        clear: chargeForm.querySelector('.pin-clear-btn'),
+        backspace: chargeForm.querySelector('.pin-del-btn'),
+        submit: submitBtn,
+        error: errBox,
+        isBusy: () => state.saleInProgress
+      });
+    }
+
+    // Formulario de apertura de caja rápida con teclado táctil
+    const quickCashForm = modalRoot?.querySelector('#quick-cash-form');
+    if (quickCashForm && quickCashForm.querySelector('.pin-slots-container')) {
+      const pinInput = quickCashForm.querySelector('#quick-cash-pin-input') || quickCashForm.querySelector('input[name="pin"]');
+      const errBox = quickCashForm.querySelector('#quick-cash-pin-error') || quickCashForm.querySelector('.pin-error-box');
+      const submitBtn = quickCashForm.querySelector('button[type="submit"]');
+      disposePinPad = bindPinPad({
+        form: quickCashForm,
+        input: pinInput,
+        slots: [...quickCashForm.querySelectorAll('.pin-slot')],
+        digits: [...quickCashForm.querySelectorAll('.pin-num-btn')],
+        clear: quickCashForm.querySelector('.pin-clear-btn'),
+        backspace: quickCashForm.querySelector('.pin-del-btn'),
+        submit: submitBtn,
+        error: errBox,
+        isBusy: () => cashFormInProgress
+      });
+    }
+
+    // Formulario de movimiento de caja (Entrada / Salida) con teclado táctil
+    const cashMovementForm = modalRoot?.querySelector('#cash-movement-form');
+    if (cashMovementForm) {
+      modalRoot.querySelectorAll('[data-movement-type]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const type = btn.dataset.movementType;
+          modalRoot.querySelector('#cash-movement-type').value = type;
+          modalRoot.querySelectorAll('[data-movement-type]').forEach((b) => {
+            const isMatch = b.dataset.movementType === type;
+            b.classList.toggle('active', isMatch);
+          });
+          const submitText = type === 'in' ? 'Registrar Entrada' : 'Registrar Salida';
+          const submitBtn = modalRoot.querySelector('#cash-movement-submit');
+          if (submitBtn) submitBtn.innerHTML = `<i data-lucide="${type === 'in' ? 'plus-circle' : 'minus-circle'}"></i> ${submitText}`;
+          iconsRefresh(submitBtn);
+        });
+      });
+
+      modalRoot.querySelectorAll('[data-set-reason]').forEach((chip) => {
+        chip.addEventListener('click', () => {
+          const reasonInput = modalRoot.querySelector('#cash-movement-reason');
+          if (reasonInput) reasonInput.value = chip.dataset.setReason;
+        });
+      });
+
+      const pinInput = cashMovementForm.querySelector('#cash-movement-pin-input') || cashMovementForm.querySelector('input[name="pin"]');
+      const errBox = cashMovementForm.querySelector('#cash-movement-pin-error') || cashMovementForm.querySelector('.pin-error-box');
+      const submitBtn = cashMovementForm.querySelector('#cash-movement-submit');
+      disposePinPad = bindPinPad({
+        form: cashMovementForm,
+        input: pinInput,
+        slots: [...cashMovementForm.querySelectorAll('.pin-slot')],
+        digits: [...cashMovementForm.querySelectorAll('.pin-num-btn')],
+        clear: cashMovementForm.querySelector('.pin-clear-btn'),
+        backspace: cashMovementForm.querySelector('.pin-del-btn'),
+        submit: submitBtn,
+        error: errBox,
+        isBusy: () => cashFormInProgress
+      });
+
+      cashMovementForm.addEventListener('submit', createCashMovement);
+    }
+
+    // Formulario de cierre de caja (Corte Z) con cálculo de diferencia y teclado táctil
+    const cashCloseForm = modalRoot?.querySelector('#cash-close-form');
+    if (cashCloseForm) {
+      const closingInput = modalRoot.querySelector('#cash-closing-amount');
+      const expectedCents = Number(cashCloseForm.querySelector('input[name="expected"]')?.value || 0);
+      const varianceBox = modalRoot.querySelector('#cash-variance-box');
+      const varianceVal = modalRoot.querySelector('#cash-variance-val');
+      const varianceLabel = modalRoot.querySelector('#cash-variance-label');
+      const varianceHint = modalRoot.querySelector('#cash-variance-hint');
+
+      const updateVariance = () => {
+        if (!closingInput || !varianceBox) return;
+        const val = closingInput.value.trim();
+        if (val === '') {
+          varianceBox.style.display = 'none';
+          return;
+        }
+        varianceBox.style.display = 'block';
+        const countedCents = toCents(val);
+        const diffCents = countedCents - expectedCents;
+        if (diffCents === 0) {
+          varianceBox.className = 'cash-variance-box exact';
+          if (varianceLabel) { varianceLabel.textContent = 'Cuadre Perfecto'; varianceLabel.style.color = '#3fb950'; }
+          if (varianceVal) { varianceVal.textContent = 'RD$ 0.00'; varianceVal.style.color = '#3fb950'; }
+          if (varianceHint) varianceHint.textContent = 'El efectivo contado coincide exactamente con el sistema.';
+        } else if (diffCents > 0) {
+          varianceBox.className = 'cash-variance-box difference';
+          if (varianceLabel) { varianceLabel.textContent = 'Sobrante en Caja'; varianceLabel.style.color = 'var(--brand-2)'; }
+          if (varianceVal) { varianceVal.textContent = `+${formatMoney(diffCents)}`; varianceVal.style.color = 'var(--brand-2)'; }
+          if (varianceHint) varianceHint.textContent = 'Hay más efectivo contado del registrado en el sistema. Explica la nota.';
+        } else {
+          varianceBox.className = 'cash-variance-box difference';
+          if (varianceLabel) { varianceLabel.textContent = 'Faltante en Caja'; varianceLabel.style.color = '#f85149'; }
+          if (varianceVal) { varianceVal.textContent = formatMoney(diffCents); varianceVal.style.color = '#f85149'; }
+          if (varianceHint) varianceHint.textContent = 'Falta dinero respecto al cálculo del sistema. Justifica el motivo en la nota.';
+        }
+      };
+
+      closingInput?.addEventListener('input', updateVariance);
+
+      const pinInput = cashCloseForm.querySelector('#cash-close-pin-input') || cashCloseForm.querySelector('input[name="pin"]');
+      const errBox = cashCloseForm.querySelector('#cash-close-pin-error') || cashCloseForm.querySelector('.pin-error-box');
+      const submitBtn = cashCloseForm.querySelector('#cash-close-submit');
+      disposePinPad = bindPinPad({
+        form: cashCloseForm,
+        input: pinInput,
+        slots: [...cashCloseForm.querySelectorAll('.pin-slot')],
+        digits: [...cashCloseForm.querySelectorAll('.pin-num-btn')],
+        clear: cashCloseForm.querySelector('.pin-clear-btn'),
+        backspace: cashCloseForm.querySelector('.pin-del-btn'),
+        submit: submitBtn,
+        error: errBox,
+        isBusy: () => cashFormInProgress
+      });
+
+      cashCloseForm.addEventListener('submit', closeCash);
+    }
+
     // Formulario y teclado táctil de PIN para abrir gaveta manual
     const drawerPinForm = modalRoot?.querySelector('#drawer-pin-form');
     if (drawerPinForm) {
@@ -908,8 +1318,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         if (drawerInProgress) return;
         const pin = (pinInput?.value || '').trim();
         const reason = modalRoot.querySelector('#drawer-pin-reason')?.value || 'Apertura manual';
-        if (!/^\d{4}$/.test(pin)) {
-          if (errBox) errBox.textContent = 'Ingresa tu PIN de 4 dígitos.';
+        if (!/^\d{6}$/.test(pin)) {
+          if (errBox) errBox.textContent = 'Ingresa tu PIN de 6 dígitos.';
           return;
         }
         try {
@@ -957,12 +1367,29 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         submit: submitBtn, error: chkErrBox, isBusy: () => state.saleInProgress
       });
 
+      const togglePrintBtn = modalRoot.querySelector('#chk-toggle-print');
+      if (togglePrintBtn) {
+        togglePrintBtn.addEventListener('click', () => {
+          if (!state.pendingPosPayload) return;
+          const current = state.pendingPosPayload.printReceipt !== false;
+          state.pendingPosPayload.printReceipt = !current;
+          const nowPrint = state.pendingPosPayload.printReceipt;
+          togglePrintBtn.textContent = nowPrint ? '✓ Sí, imprimir' : '✕ No imprimir';
+          togglePrintBtn.style.background = nowPrint ? 'rgba(63,185,80,.18)' : 'rgba(255,255,255,.08)';
+          togglePrintBtn.style.color = nowPrint ? '#3fb950' : 'var(--muted)';
+          togglePrintBtn.style.border = nowPrint ? '1px solid rgba(63,185,80,.4)' : '1px solid var(--line)';
+          const posPrintCheck = root.querySelector('#pos-print-receipt');
+          if (posPrintCheck) posPrintCheck.checked = nowPrint;
+          updatePosSubmitLabel();
+        });
+      }
+
       checkoutPinForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         if (state.saleInProgress) return;
         const pin = (chkPinInput?.value || '').trim();
-        if (!/^\d{4}$/.test(pin)) {
-          if (chkErrBox) chkErrBox.textContent = 'Digita tu PIN de 4 dígitos.';
+        if (!/^\d{6}$/.test(pin)) {
+          if (chkErrBox) chkErrBox.textContent = 'Digita tu PIN de 6 dígitos.';
           updatePinSlots();
           return;
         }
@@ -1054,6 +1481,22 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         });
       });
 
+      const pinInput = fiaoPayForm.querySelector('#fiao-pay-pin');
+      const errBox = fiaoPayForm.querySelector('#fiao-pin-error');
+      const submitBtn = fiaoPayForm.querySelector('#fiao-pay-submit') || fiaoPayForm.querySelector('button[type="submit"]');
+
+      disposePinPad = bindPinPad({
+        form: fiaoPayForm,
+        input: pinInput,
+        slots: [...fiaoPayForm.querySelectorAll('#fiao-pin-slots .pin-slot')],
+        digits: [...fiaoPayForm.querySelectorAll('.pin-num-btn')],
+        clear: fiaoPayForm.querySelector('#fiao-pin-clear'),
+        backspace: fiaoPayForm.querySelector('#fiao-pin-del'),
+        submit: submitBtn,
+        error: errBox,
+        isBusy: () => state.saleInProgress
+      });
+
       fiaoPayForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         if (state.saleInProgress) return toast('Ya se está registrando este cobro.', 'warning');
@@ -1064,8 +1507,12 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         const reference = form.get('reference') || '';
         const pin = String(form.get('pin') || '').trim();
         const received = Number(receivedInput?.value || amount);
+        const shouldPrint = form.get('printInvoice') === 'on' || form.get('printInvoice') === 'true' || Boolean(fiaoPayForm.querySelector('#fiao-print-receipt')?.checked);
         if (!amount || amount <= 0) return toast('Ingresa un monto válido.', 'warning');
-        if (!/^\d{4}$/.test(pin)) return toast('Digita tu PIN personal de 4 dígitos.', 'warning');
+        if (!/^\d{6}$/.test(pin)) {
+          if (errBox) errBox.textContent = 'Digita tu PIN personal de 6 dígitos.';
+          return toast('Digita tu PIN personal de 6 dígitos.', 'warning');
+        }
         const amountCents = Math.round(amount * 100);
         const tenderedCents = method === 'cash' ? Math.round(received * 100) : amountCents;
 
@@ -1073,7 +1520,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           return toast('El efectivo recibido es menor al monto a abonar.', 'warning');
         }
 
-        const button = e.submitter || fiaoPayForm.querySelector('button[type="submit"]');
+        const button = e.submitter || submitBtn;
         state.saleInProgress = true;
         setBusy(button, true);
         try {
@@ -1107,15 +1554,152 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           closeModal();
           setTimeout(() => {
             if (method === 'cash' && state.settings?.autoOpenDrawer !== false) void kickDrawer({ silentFailure: true });
-            if (state.settings?.autoPrintInvoice) void printInvoice(invoiceId);
+            if (shouldPrint && state.settings?.autoPrintInvoice !== false) void printInvoice(invoiceId);
           }, 350);
         } catch (err) {
           beepHardware('error');
           toast(err.message, 'danger');
-          const pinInput = fiaoPayForm.querySelector('#fiao-pay-pin');
+          if (errBox) errBox.textContent = err.message || 'PIN incorrecto.';
           if (pinInput) {
             pinInput.value = '';
-            pinInput.focus();
+            fiaoPayForm.querySelectorAll('#fiao-pin-slots .pin-slot').forEach(s => s.classList.remove('filled'));
+          }
+        } finally {
+          state.saleInProgress = false;
+          setBusy(button, false);
+          if (!destroyed) renderContent();
+        }
+      });
+    }
+
+    // Formulario de Liquidación de Deliveries
+    const deliverySettleForm = modalRoot?.querySelector('#delivery-settle-form');
+    if (deliverySettleForm) {
+      const updateSettleTotal = () => {
+        let total = 0;
+        deliverySettleForm.querySelectorAll('input[name="invoiceIds"]:checked').forEach(cb => {
+          total += Number(cb.dataset.balanceCents || 0);
+        });
+        const totalDisplay = modalRoot.querySelector('#settle-total-display');
+        if (totalDisplay) totalDisplay.textContent = formatMoney(total);
+      };
+      deliverySettleForm.querySelectorAll('input[name="invoiceIds"]').forEach(cb => {
+        cb.addEventListener('change', updateSettleTotal);
+      });
+
+      const pinInput = deliverySettleForm.querySelector('#settle-pay-pin');
+      const errBox = deliverySettleForm.querySelector('#settle-pin-error');
+      const submitBtn = deliverySettleForm.querySelector('#settle-submit-btn') || deliverySettleForm.querySelector('button[type="submit"]');
+
+      disposePinPad = bindPinPad({
+        form: deliverySettleForm,
+        input: pinInput,
+        slots: [...deliverySettleForm.querySelectorAll('#settle-pin-slots .pin-slot')],
+        digits: [...deliverySettleForm.querySelectorAll('.pin-num-btn')],
+        clear: deliverySettleForm.querySelector('#settle-pin-clear'),
+        backspace: deliverySettleForm.querySelector('#settle-pin-del'),
+        submit: submitBtn,
+        error: errBox,
+        isBusy: () => state.saleInProgress
+      });
+
+      deliverySettleForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (state.saleInProgress) return toast('Ya se está procesando una liquidación.', 'warning');
+        const form = new FormData(deliverySettleForm);
+        const selectedCbs = [...deliverySettleForm.querySelectorAll('input[name="invoiceIds"]:checked')];
+        if (!selectedCbs.length) return toast('Selecciona al menos una entrega a liquidar.', 'warning');
+
+        const driverId = form.get('driverId');
+        const driverName = form.get('driverName') || 'Repartidor';
+        const driverPhone = form.get('driverPhone') || '';
+        const method = form.get('method') || 'cash';
+        const reference = form.get('reference') || '';
+        const pin = String(form.get('pin') || '').trim();
+        const shouldPrint = form.get('printSettlement') === 'on' || Boolean(deliverySettleForm.querySelector('#settle-print-receipt')?.checked);
+
+        if (!/^\d{6}$/.test(pin)) {
+          if (errBox) errBox.textContent = 'Digita tu PIN personal de 6 dígitos.';
+          return toast('Digita tu PIN personal de 6 dígitos.', 'warning');
+        }
+
+        const button = e.submitter || submitBtn;
+        state.saleInProgress = true;
+        setBusy(button, true);
+
+        try {
+          const verifyRes = await service.verifyDrawerPin(pin, `Liquidación de entregas - ${driverName}`);
+          if (!state.activeCash?.id) {
+            const sessionId = await service.openCashSession({
+              openingCents: 0,
+              notes: `Apertura rápida autorizada por PIN: ${verifyRes.user.displayName}`
+            });
+            state.activeCash = {
+              id: typeof sessionId === 'string' ? sessionId : sessionId.id,
+              status: 'open',
+              openingCents: 0,
+              openedBy: user.uid,
+              openedByName: verifyRes.user.displayName,
+              optimistic: true
+            };
+          }
+
+          const settledInvoices = [];
+          let grandTotalCents = 0;
+
+          for (const cb of selectedCbs) {
+            const invoiceId = cb.value;
+            const balanceCents = Number(cb.dataset.balanceCents || 0);
+            if (balanceCents <= 0) continue;
+
+            grandTotalCents += balanceCents;
+            const inv = (state.invoices || []).find(i => i.id === invoiceId);
+
+            await service.recordPayment(invoiceId, {
+              requestId: createOperationId('delivery-settle'),
+              amountCents: balanceCents,
+              method,
+              reference,
+              tenderedCents: balanceCents,
+              cashSessionId: state.activeCash.id,
+              cashierId: verifyRes.user.id,
+              cashierName: verifyRes.user.displayName
+            });
+
+            settledInvoices.push({
+              invoiceNumber: inv?.invoiceNumber || 'FACTURA',
+              clientName: inv?.clientName || 'Cliente',
+              paidAmountCents: balanceCents,
+              totalCents: inv?.totalCents || balanceCents
+            });
+          }
+
+          const settlementData = {
+            driverName,
+            driverPhone,
+            cashierName: verifyRes.user.displayName,
+            createdAt: new Date(),
+            invoices: settledInvoices,
+            totalCents: grandTotalCents,
+            method,
+            reference
+          };
+
+          beepHardware('ok');
+          closeModal();
+          toast(`Liquidación completada. Se ingresaron ${formatMoney(grandTotalCents)} a caja.`, 'success');
+
+          setTimeout(() => {
+            if (method === 'cash' && state.settings?.autoOpenDrawer !== false) void kickDrawer({ silentFailure: true });
+            if (shouldPrint) void printDeliverySettlement(settlementData);
+          }, 350);
+        } catch (err) {
+          beepHardware('error');
+          toast(err.message, 'danger');
+          if (errBox) errBox.textContent = err.message || 'PIN incorrecto.';
+          if (pinInput) {
+            pinInput.value = '';
+            deliverySettleForm.querySelectorAll('#settle-pin-slots .pin-slot').forEach(s => s.classList.remove('filled'));
           }
         } finally {
           state.saleInProgress = false;
@@ -1189,7 +1773,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       ? 'Enviar comanda a cocina'
       : (state.posPaymentMethod === 'credit'
         ? `Registrar fiao ${formatMoney(totals.totalCents)}`
-        : `Cobrar ${formatMoney(totals.totalCents)}`);
+        : (state.posPaymentMethod === 'delivery_cod'
+          ? `Despachar delivery ${formatMoney(totals.totalCents)}`
+          : `Cobrar ${formatMoney(totals.totalCents)}`));
 
     const submitBtn = root.querySelector('#pos-submit-btn');
     if (submitBtn) {
@@ -1221,7 +1807,13 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const product=state.products.find((item)=>item.id===id);
     if(!product)return;
     const stock = Number(product.stock || 0);
-    if (stock < 1) return toast(`${product.name} está agotado. Actualiza el inventario antes de venderlo.`, 'warning');
+    if (stock < 1) {
+      toast(`${product.name} está agotado. Abriendo ajuste rápido para reabastecer...`, 'warning');
+      state.editingStockProduct = product;
+      state.modal = 'stockAdjust';
+      renderModal();
+      return;
+    }
     const line=state.cart.find((item)=>item.productId===id);
     if(line) {
       if (line.quantity >= Math.min(stock, 999)) return toast(`No hay más existencia disponible de ${product.name}.`, 'warning');
@@ -1255,14 +1847,25 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const totals = calculateDocument(state.cart, state.posDiscountState || {});
     const method = root.querySelector('#pos-payment-method')?.value || 'cash';
     const tableId = root.querySelector('#pos-table-select')?.value || '';
+    const printReceipt = root.querySelector('#pos-print-receipt') ? root.querySelector('#pos-print-receipt').checked : (state.posDraft?.printReceipt !== false);
+    const badge = root.querySelector('#pos-print-status-badge');
+    if (badge) {
+      badge.textContent = printReceipt ? 'Con ticket' : 'Sin ticket';
+      badge.style.background = printReceipt ? 'rgba(63,185,80,.18)' : 'rgba(255,255,255,.08)';
+      badge.style.color = printReceipt ? '#3fb950' : 'var(--muted)';
+    }
     const labels = root.querySelectorAll('#pos-submit-label, .mobile-pos-charge span');
     labels.forEach((label) => {
       if (tableId) {
         label.textContent = 'Enviar comanda a cocina';
       } else if (method === 'credit') {
         label.textContent = `Registrar Fiao ${formatMoney(totals.totalCents)}`;
+      } else if (method === 'delivery_cod') {
+        label.textContent = `Despachar Delivery ${formatMoney(totals.totalCents)}`;
+      } else if (!printReceipt) {
+        label.textContent = `Cobrar sin ticket ${formatMoney(totals.totalCents)}`;
       } else {
-        label.textContent = `Cobrar ${formatMoney(totals.totalCents)}`;
+        label.textContent = `Cobrar e Imprimir ${formatMoney(totals.totalCents)}`;
       }
     });
   }
@@ -1284,14 +1887,38 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     state.posDiscountState = { discount: discountVal, discountType, includeLegalTip };
 
     const totals = calculateDocument(state.cart, state.posDiscountState);
-    const method=form.get('paymentMethod')||'cash';
-    const isCredit=method==='credit';
+    const method = form.get('paymentMethod') || root.querySelector('#pos-payment-method')?.value || state.posPaymentMethod || 'cash';
+    const isCredit = method === 'credit';
+    const isDelivery = method === 'delivery_cod';
+
+    const deliveryDriverId = String(form.get('deliveryDriverId') || '').trim();
+    const deliveryDriver = (state.deliveryDrivers || []).find(d => d.id === deliveryDriverId);
+    const deliveryDriverName = deliveryDriver ? deliveryDriver.name : String(form.get('deliveryDriverName') || '').trim();
+    const deliveryClientName = String(form.get('deliveryClientName') || '').trim();
+    const deliveryPhone = String(form.get('deliveryPhone') || '').trim();
+    const deliveryAddress = String(form.get('deliveryAddress') || '').trim();
+    const rawDeliveryChange = String(root.querySelector('#pos-delivery-change-for')?.value || form.get('deliveryChangeFor') || '').trim();
+    const deliveryChangeForCents = rawDeliveryChange && Number(rawDeliveryChange) > 0 ? Math.round(Number(rawDeliveryChange) * 100) : 0;
+    const deliveryNotes = String(form.get('deliveryNotes') || '').trim();
+
+    if (isDelivery) {
+      if (!deliveryDriverId && !deliveryDriverName) {
+        return toast('Selecciona o indica el mensajero/repartidor responsable.', 'warning');
+      }
+      if (!deliveryAddress) {
+        return toast('Indica la dirección de entrega del pedido.', 'warning');
+      }
+    }
 
     const clientName = isCredit
       ? String(form.get('fiaoClientName') || '').trim()
+      : isDelivery
+      ? (deliveryClientName || 'Cliente Delivery')
       : String(form.get('clientName') || 'Consumidor final').trim();
     const clientPhone = isCredit
       ? String(form.get('fiaoClientPhone') || '').trim()
+      : isDelivery
+      ? deliveryPhone
       : '';
     const clientId = isCredit
       ? String(form.get('fiaoClientId') || '').trim()
@@ -1358,7 +1985,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const transferReference = String(form.get('transferReference') || '').trim();
     const reference = method === 'card' ? cardReference : (method === 'transfer' ? transferReference : '');
 
-    // El PIN de cuatro dígitos es el único paso de autorización para una venta rápida.
+    // El PIN de seis dígitos es el único paso de autorización para una venta rápida.
     // Si no existe un turno, el mismo PIN abre la caja con fondo inicial de RD$0.00.
     state.pendingPosPayload = {
       items: state.cart.map(i => ({ ...i })),
@@ -1372,6 +1999,14 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       clientRnc,
       fiaoNotes,
       fiaoSaveAsClient,
+      deliveryDriverId,
+      deliveryDriverName,
+      deliveryClientName,
+      deliveryPhone,
+      deliveryAddress,
+      deliveryChangeForCents,
+      deliveryNotes,
+      printReceipt: form.get('printReceipt') !== null ? form.get('printReceipt') === 'on' : (state.posDraft.printReceipt !== false),
       tableId: '',
       ncfType,
       notes: form.get('notes') || '',
@@ -1398,6 +2033,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     try {
       setBusy(submitButton, true);
       const isCredit = payload.method === 'credit';
+      const isDelivery = payload.method === 'delivery_cod';
       const fiaoNoteCombined = [payload.notes, payload.fiaoNotes].filter(Boolean).join(' | ');
       const docPayload = {
         requestId: payload.requestId,
@@ -1415,10 +2051,18 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         tableId: payload.tableId,
         cashierId: employee.id,
         cashierName: employee.displayName,
+        paymentMethod: payload.method,
+        deliveryDriverId: payload.deliveryDriverId || '',
+        deliveryDriverName: payload.deliveryDriverName || '',
+        deliveryAddress: payload.deliveryAddress || '',
+        deliveryPhone: payload.deliveryPhone || '',
+        deliveryNotes: payload.deliveryNotes || '',
+        deliveryChangeForCents: payload.deliveryChangeForCents || 0,
+        deliveryStatus: isDelivery ? 'in_transit' : '',
         payment: {
           method: payload.method,
           reference: payload.reference || '',
-          amountCents: isCredit ? 0 : payload.totals.totalCents,
+          amountCents: (isCredit || isDelivery) ? 0 : payload.totals.totalCents,
           tenderedCents: payload.tenderedCents,
           changeCents: payload.method === 'cash' ? Math.max(0, payload.tenderedCents - payload.totals.totalCents) : 0,
           cashSessionId: state.activeCash?.id || '',
@@ -1453,6 +2097,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         invoiceNumber: created?.invoiceNumber || 'FACTURA',
         documentType: 'invoice',
         ncf: created?.ncf || '',
+        clientId: payload.clientId || '',
         clientName: payload.clientName,
         clientPhone: payload.clientPhone || '',
         clientRnc: payload.clientRnc,
@@ -1461,15 +2106,26 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         discountCents: payload.totals.discountCents || 0,
         tipCents: payload.totals.tipCents || 0,
         totalCents: payload.totals.totalCents,
-        paidCents: isCredit ? 0 : payload.totals.totalCents,
+        paidCents: (isCredit || isDelivery) ? 0 : payload.totals.totalCents,
         tenderedCents: payload.tenderedCents,
         changeCents,
         method: payload.method,
         reference: payload.reference || '',
         cashierName: employee.displayName,
         items: payload.items,
+        deliveryDriverId: payload.deliveryDriverId || '',
+        deliveryDriverName: payload.deliveryDriverName || '',
+        deliveryAddress: payload.deliveryAddress || '',
+        deliveryPhone: payload.deliveryPhone || '',
+        deliveryNotes: payload.deliveryNotes || '',
+        deliveryChangeForCents: payload.deliveryChangeForCents || 0,
+        deliveryStatus: isDelivery ? 'in_transit' : '',
         createdAt: new Date()
       };
+      if (isCredit) {
+        state.lastSaleResult.clientTotalDebtCents = calculateClientTotalDebt(state.lastSaleResult, state.invoices, state.clients);
+      }
+
       state.pendingPosPayload = null;
       state.pendingPosSubmit = null;
       state.cart = [];
@@ -1480,15 +2136,19 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 
       // Periféricos no bloquean la interfaz ni alteran un cobro ya registrado. Los avisos
       // son claros para que el cajero pueda reimprimir desde la pantalla de confirmación.
-      const shouldOpenDrawer = payload.method === 'cash' && state.settings?.autoOpenDrawer !== false;
-      const shouldPrint = state.settings?.autoPrintInvoice !== false;
+      const shouldOpenDrawer = !isDelivery && payload.method === 'cash' && state.settings?.autoOpenDrawer !== false;
+      const shouldPrint = payload.printReceipt !== false && state.settings?.autoPrintInvoice !== false;
+      const receiptToPrint = state.lastSaleResult;
       // Dejar que el navegador pinte primero la confirmación. En la APK antigua el puente
       // nativo es síncrono y un trabajo USB no debe congelar el botón de cobro.
       setTimeout(() => {
         if (shouldOpenDrawer) void kickDrawer({ silentFailure: true });
-        if (shouldPrint) void printSaleReceipt(state.lastSaleResult, { openDrawer: false });
+        if (shouldPrint) void printSaleReceipt(receiptToPrint, { openDrawer: false });
+        // "Cambio para" is the customer's tender, not a cash withdrawal.
+        // Courier advances are explicit, audited Caja movements, never an
+        // unconfirmed write after a completed dispatch or a silent drawer pulse.
       }, 0);
-      toast(isCredit ? `Fiao registrado a nombre de ${payload.clientName}.` : 'Venta registrada correctamente.', 'success');
+      toast(isCredit ? `Fiao registrado a nombre de ${payload.clientName}.` : isDelivery ? `Pedido delivery despachado con ${payload.deliveryDriverName || 'mensajero'}.` : 'Venta registrada correctamente.', 'success');
       return { ok: true, result: created };
     } catch (err) {
       console.error(err);
@@ -1505,9 +2165,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     if (!payload) return '';
     const totals = payload.totals;
     const isCredit = payload.method === 'credit';
-    const opensDrawer = payload.method === 'cash' && state.settings?.autoOpenDrawer !== false;
-    const actionLabel = isCredit ? 'Registrar Fiao' : 'Cobrar Venta';
-    const submitLabel = isCredit ? 'Registrar fiao' : opensDrawer ? 'Cobrar y abrir gaveta' : 'Confirmar cobro';
+    const isDelivery = payload.method === 'delivery_cod';
+    const opensDrawer = !isDelivery && payload.method === 'cash' && state.settings?.autoOpenDrawer !== false;
+    const actionLabel = isCredit ? 'Registrar Fiao' : isDelivery ? 'Despachar Delivery' : 'Cobrar Venta';
+    const submitLabel = isCredit ? 'Registrar fiao' : isDelivery ? 'Despachar y generar ticket' : opensDrawer ? 'Cobrar y abrir gaveta' : 'Confirmar cobro';
     return `
       <div class="modal-backdrop" data-modal-close>
         <article class="modal-card" style="max-width:420px;" data-modal-card>
@@ -1519,19 +2180,30 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
             <button type="button" class="icon-button" data-modal-close><i data-lucide="x"></i></button>
           </header>
           <form id="checkout-pin-form" class="stack-form" style="padding-top:8px;">
+            <p class="muted">Cuenta responsable: <strong>${escapeHtml(user.displayName || user.username)}</strong>. Usa el PIN de esta cuenta.</p>
             <div style="padding:10px 14px;background:rgba(239,189,105,.1);border:1px solid rgba(239,189,105,.25);border-radius:10px;display:flex;justify-content:space-between;align-items:center;">
               <span>Total a cobrar:</span>
               <strong style="font-size:1.35rem;color:var(--brand-2);">${formatMoney(totals.totalCents)}</strong>
             </div>
-            <p style="margin:8px 0 6px; font-size:.82rem; color:var(--muted);text-align:center;">
-              ${isCredit ? 'Digita tu PIN de 4 dígitos para registrar la cuenta por cobrar.' : 'Digita tu PIN de 4 dígitos. Si no hay una sesión de caja, este mismo paso la inicia y registra el cobro.'}
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:10px;margin:6px 0;">
+              <span style="font-size:0.84rem;color:var(--muted);display:flex;align-items:center;gap:6px;">
+                <i data-lucide="printer" style="width:15px;height:15px;"></i> Factura impresa:
+              </span>
+              <button type="button" class="button compact" id="chk-toggle-print" style="font-size:0.8rem;padding:4px 10px;font-weight:700;${payload.printReceipt !== false ? 'background:rgba(63,185,80,.18);color:#3fb950;border:1px solid rgba(63,185,80,.4);' : 'background:rgba(255,255,255,.08);color:var(--muted);border:1px solid var(--line);'}">
+                ${payload.printReceipt !== false ? '✓ Sí, imprimir' : '✕ No imprimir'}
+              </button>
+            </div>
+            <p style="margin:6px 0; font-size:.82rem; color:var(--muted);text-align:center;">
+              ${isCredit ? 'Digita tu PIN de 6 dígitos para registrar la cuenta por cobrar.' : isDelivery ? 'Digita tu PIN de 6 dígitos para autorizar el despacho. El dinero no entra a la caja hasta que el repartidor entregue lo cobrado.' : 'Digita tu PIN de 6 dígitos. Si no hay una sesión de caja, este mismo paso la inicia y registra el cobro.'}
             </p>
-            <input id="checkout-pin-input" name="pin" type="password" inputmode="none" pattern="[0-9]{4}" maxlength="4" placeholder="" required readonly tabindex="-1" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;">
+            <input id="checkout-pin-input" name="pin" type="password" inputmode="none" pattern="[0-9]{6}" maxlength="6" placeholder="" required readonly tabindex="-1" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;">
             <div class="pin-slots-container" id="chk-pin-slots">
               <span class="pin-slot" data-slot="0"></span>
               <span class="pin-slot" data-slot="1"></span>
               <span class="pin-slot" data-slot="2"></span>
               <span class="pin-slot" data-slot="3"></span>
+              <span class="pin-slot" data-slot="4"></span>
+              <span class="pin-slot" data-slot="5"></span>
             </div>
             <div class="pin-pad" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;margin:6px 0 10px;">
               ${[1,2,3,4,5,6,7,8,9].map((n) => `<button type="button" class="button secondary pin-num-btn" data-chk-pin="${n}" style="font-size:1.35rem;font-weight:700;padding:12px 0;">${n}</button>`).join('')}
@@ -1563,12 +2235,12 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
             <button type="button" class="icon-button" data-modal-close><i data-lucide="x"></i></button>
           </header>
           <form id="setup-checkout-pin-form" class="stack-form" style="padding-top:8px;">
-            <p style="margin:0 0 10px;color:var(--muted);font-size:.85rem;">Crea un PIN personal de 4 dígitos. ${forTable ? 'Después volverás al cobro de la mesa para autorizarlo.' : 'Después, cada cobro será: elegir productos → Cobrar → PIN.'}</p>
-            <label>PIN de 4 dígitos
-              <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="••••" required autofocus style="letter-spacing:10px;font-size:1.55rem;text-align:center;font-weight:800;">
+            <p style="margin:0 0 10px;color:var(--muted);font-size:.85rem;">Crea un PIN personal de 6 dígitos. ${forTable ? 'Después volverás al cobro de la mesa para autorizarlo.' : 'Después, cada cobro será: elegir productos → Cobrar → PIN.'}</p>
+            <label>PIN de 6 dígitos
+              <input name="pin" type="password" data-touch-numpad="integer" data-numpad-title="Crear PIN (6 dígitos)" maxlength="6" placeholder="••••••" required autofocus readonly inputmode="none" style="letter-spacing:10px;font-size:1.55rem;text-align:center;font-weight:800;cursor:pointer;">
             </label>
             <label>Confirmar PIN
-              <input name="confirmPin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="••••" required style="letter-spacing:10px;font-size:1.55rem;text-align:center;font-weight:800;">
+              <input name="confirmPin" type="password" data-touch-numpad="integer" data-numpad-title="Confirmar PIN (6 dígitos)" maxlength="6" placeholder="••••••" required readonly inputmode="none" style="letter-spacing:10px;font-size:1.55rem;text-align:center;font-weight:800;cursor:pointer;">
             </label>
             <footer class="modal-actions" style="margin-top:6px;">
               <button type="button" class="button secondary" data-modal-close>Cancelar</button>
@@ -1585,6 +2257,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     if (!data) return '';
     const isCash = data.method === 'cash';
     const isCredit = data.method === 'credit';
+    const isDelivery = data.method === 'delivery_cod';
     return `
       <div class="modal-backdrop" data-modal-close>
         <article class="modal-card" style="max-width:460px;text-align:center;" data-modal-card>
@@ -1593,7 +2266,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
               <div style="width:52px;height:52px;border-radius:50%;background:rgba(63,185,80,.15);color:#3fb950;display:flex;align-items:center;justify-content:center;margin:0 auto 8px;">
                 <i data-lucide="badge-check" style="width:32px;height:32px;"></i>
               </div>
-              <span class="eyebrow">${isCredit ? 'Fiao Registrado' : 'Venta Completada'}</span>
+              <span class="eyebrow">${isCredit ? 'Fiao Registrado' : isDelivery ? 'Delivery Despachado' : 'Venta Completada'}</span>
               <h2 style="font-size:1.35rem;">${escapeHtml(data.invoiceNumber)}</h2>
             </div>
           </header>
@@ -1612,11 +2285,37 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
                 <span style="font-size:0.8rem;color:var(--muted);text-transform:uppercase;">Cliente Fiado</span>
                 <strong style="font-size:1.35rem;color:#fff;display:block;margin:4px 0;">${escapeHtml(data.clientName)}</strong>
                 ${data.clientPhone ? `<span style="display:inline-flex;align-items:center;gap:5px;font-size:0.9rem;color:var(--brand-2);margin-bottom:6px;"><i data-lucide="phone" style="width:14px;height:14px;"></i> ${escapeHtml(data.clientPhone)}</span><br>` : ''}
-                <span style="font-size:1.15rem;color:#f85149;font-weight:700;">Deuda: ${formatMoney(data.totalCents)}</span>
+                ${(data.clientTotalDebtCents && Number(data.clientTotalDebtCents) > Number(data.totalCents)) ? `
+                  <span style="font-size:1.25rem;color:#f85149;font-weight:800;display:block;">Deuda Total: ${formatMoney(data.clientTotalDebtCents)}</span>
+                  <small style="color:var(--muted);display:block;margin-top:2px;">(Esta compra: ${formatMoney(data.totalCents)} · Anterior: ${formatMoney(data.clientTotalDebtCents - data.totalCents)})</small>
+                ` : `
+                  <span style="font-size:1.15rem;color:#f85149;font-weight:700;">Deuda: ${formatMoney(data.totalCents)}</span>
+                `}
+              </div>
+            ` : isDelivery ? `
+              <div style="background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35);border-radius:12px;padding:14px;margin:6px 0 12px;text-align:left;">
+                <span style="font-size:0.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:700;">Repartidor Asignado</span>
+                <strong style="font-size:1.3rem;color:#f59e0b;display:block;margin:3px 0 8px;">🛵 ${escapeHtml(data.deliveryDriverName || 'Mensajero')}</strong>
+                <div style="font-size:0.88rem;color:#ddd;display:flex;flex-direction:column;gap:3px;">
+                  <div><span style="color:var(--muted);">Cliente:</span> <b>${escapeHtml(data.clientName || 'Cliente')}</b></div>
+                  ${data.deliveryPhone ? `<div><span style="color:var(--muted);">Teléfono:</span> <b>${escapeHtml(data.deliveryPhone)}</b></div>` : ''}
+                  ${data.deliveryAddress ? `<div><span style="color:var(--muted);">Dirección:</span> <b>${escapeHtml(data.deliveryAddress)}</b></div>` : ''}
+                  ${data.deliveryChangeForCents > data.totalCents ? `
+                    </div>
+                    <div style="margin-top:10px;background:rgba(239,68,68,.15);border:2px solid rgba(239,68,68,.5);border-radius:10px;padding:12px 14px;">
+                      <span style="font-size:0.75rem;text-transform:uppercase;letter-spacing:.5px;color:#f87171;font-weight:700;display:block;">Devuelta al cliente (informativo)</span>
+                      <strong style="font-size:2rem;color:#f87171;font-weight:900;display:block;line-height:1.15;">${formatMoney(data.deliveryChangeForCents - data.totalCents)}</strong>
+                      <small style="color:#fca5a5;font-size:0.8rem;">Pagará con ${formatMoney(data.deliveryChangeForCents)}. No se ha retirado efectivo de caja. Si adelantas cambio al repartidor, registra la salida y su devolución en Caja.</small>
+                    </div>
+                    <div style="display:none;">` : ''}
+                </div>
+                <div style="margin-top:10px;padding:8px 10px;background:rgba(0,0,0,.3);border-radius:8px;font-size:0.8rem;color:var(--muted);border:1px solid rgba(255,255,255,.05);">
+                  ⏳ El cobro de <b>${formatMoney(data.totalCents)}</b> quedará pendiente de liquidar en la sección de Deliveries.
+                </div>
               </div>
             ` : `
               <div style="background:rgba(255,255,255,.04);border-radius:12px;padding:14px;margin:6px 0 12px;">
-                <span style="font-size:0.8rem;color:var(--muted);">Total Cobrado (${data.method === 'card' ? 'Tarjeta / Terminal Azul' : data.method === 'transfer' ? 'Transferencia' : 'Efectivo'})</span>
+                <span style="font-size:0.8rem;color:var(--muted);">Total Cobrado (${data.method === 'card' ? 'Tarjeta' : data.method === 'transfer' ? 'Transferencia' : 'Efectivo'})</span>
                 <strong style="font-size:2rem;color:#fff;display:block;margin-top:2px;">${formatMoney(data.totalCents)}</strong>
                 ${data.reference ? `<small style="color:var(--brand-2);display:block;margin-top:6px;font-size:0.84rem;font-weight:700;">Ref / Aprobación: ${escapeHtml(data.reference)}</small>` : ''}
               </div>
@@ -1636,6 +2335,21 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     `;
   }
 
+  async function saveDeliveryDriver(event) {
+    event.preventDefault();
+    const f = new FormData(event.currentTarget);
+    const name = String(f.get('name') || '').trim();
+    if (!name) return toast('El nombre del repartidor es obligatorio.', 'warning');
+    await perform(() => service.saveDeliveryDriver({
+      id: f.get('id') || undefined,
+      name,
+      phone: String(f.get('phone') || '').trim(),
+      vehicle: String(f.get('vehicle') || '').trim(),
+      notes: String(f.get('notes') || '').trim(),
+      active: f.get('active') === 'on'
+    }), f.get('id') ? 'Repartidor actualizado.' : 'Repartidor registrado.', closeModal);
+  }
+
   async function saveProduct(event){event.preventDefault();const f=new FormData(event.currentTarget);await perform(()=>service.saveProduct({id:f.get('id'),name:f.get('name'),sku:f.get('sku'),category:f.get('category'),priceCents:toCents(f.get('price')),costCents:toCents(f.get('cost')||0),taxRate:Number(f.get('taxRate')||0),stock:Number(f.get('stock')||0),active:f.get('active')==='on'}),'Producto guardado.',closeModal);}
   async function saveMobileInventory(event){
     event.preventDefault();
@@ -1652,10 +2366,483 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     setBusy(submit, false);
     if (result.ok) renderContent();
   }
+
+  function bindStockAdjustModal(modalRoot) {
+    const form = modalRoot.querySelector('#stock-adjust-form');
+    if (!form) return;
+
+    const opInput = form.querySelector('#adjust-operation');
+    const reasonInput = form.querySelector('#adjust-reason-category');
+    const qtyInput = form.querySelector('#stock-adjust-qty');
+    const cost = Number(form.querySelector('#adjust-unit-cost')?.value || 0);
+    const price = Number(form.querySelector('#adjust-unit-price')?.value || 0);
+    const currentStock = Number(form.querySelector('#adjust-current-stock')?.value || 0);
+    const impactTitle = form.querySelector('#adjust-impact-title');
+    const impactVal = form.querySelector('#adjust-impact-value');
+    const qtyLabel = form.querySelector('#adjust-qty-label');
+    const opBtns = form.querySelectorAll('.adjust-op-btn');
+    const reasonChips = form.querySelectorAll('.reason-chip');
+
+    function updateCalculations() {
+      const op = opInput?.value || 'count';
+      const qty = Math.max(0, Number(qtyInput?.value || 0));
+
+      if (op === 'waste') {
+        const unitVal = cost > 0 ? cost : price;
+        const lossCents = Math.round(unitVal * qty);
+        if (impactTitle) {
+          impactTitle.textContent = 'Pérdida Financiera Estimada:';
+          impactTitle.style.color = '#f85149';
+        }
+        if (impactVal) {
+          impactVal.textContent = formatMoney(lossCents);
+          impactVal.style.color = '#f85149';
+        }
+      } else if (op === 'prep') {
+        const resulting = currentStock + qty;
+        if (impactTitle) {
+          impactTitle.textContent = 'Nuevo Stock en Vitrina:';
+          impactTitle.style.color = '#3fb950';
+        }
+        if (impactVal) {
+          impactVal.textContent = `${resulting} uds (+${qty})`;
+          impactVal.style.color = '#3fb950';
+        }
+      } else {
+        const delta = qty - currentStock;
+        const sign = delta >= 0 ? `+${delta}` : `${delta}`;
+        if (impactTitle) {
+          impactTitle.textContent = 'Ajuste de Conteo Físico:';
+          impactTitle.style.color = '#38bdf8';
+        }
+        if (impactVal) {
+          impactVal.textContent = `${sign} uds (Final: ${qty})`;
+          impactVal.style.color = '#38bdf8';
+        }
+      }
+    }
+
+    opBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const op = btn.dataset.adjustOp;
+        if (opInput) opInput.value = op;
+
+        opBtns.forEach((b) => {
+          const isAct = b === btn;
+          b.classList.toggle('active', isAct);
+          if (b.dataset.adjustOp === 'waste') {
+            b.style.background = isAct ? 'rgba(248,81,73,.25)' : 'rgba(255,255,255,.04)';
+            b.style.color = isAct ? '#f85149' : '#cbd5e1';
+          } else if (b.dataset.adjustOp === 'prep') {
+            b.style.background = isAct ? 'rgba(63,185,80,.25)' : 'rgba(255,255,255,.04)';
+            b.style.color = isAct ? '#3fb950' : '#cbd5e1';
+          } else {
+            b.style.background = isAct ? 'rgba(56,189,248,.25)' : 'rgba(255,255,255,.04)';
+            b.style.color = isAct ? '#38bdf8' : '#cbd5e1';
+          }
+        });
+
+        if (op === 'waste') {
+          if (qtyLabel) qtyLabel.textContent = 'Cantidad de Unidades a Descartar *';
+          if (reasonInput) reasonInput.value = 'waste_unsold';
+        } else if (op === 'prep') {
+          if (qtyLabel) qtyLabel.textContent = 'Cantidad de Unidades Preparadas / Entrantes *';
+          if (reasonInput) reasonInput.value = 'production_demand';
+        } else {
+          if (qtyLabel) qtyLabel.textContent = 'Existencia Real Contada en Vitrina *';
+          if (reasonInput) reasonInput.value = 'audit_count';
+        }
+
+        reasonChips.forEach((chip) => {
+          const isMatch = chip.dataset.reasonCategory === reasonInput?.value;
+          chip.classList.toggle('active', isMatch);
+          chip.style.background = isMatch ? 'var(--brand-2)' : 'rgba(255,255,255,.05)';
+          chip.style.color = isMatch ? '#000' : '#cbd5e1';
+          chip.style.borderColor = isMatch ? 'var(--brand-2)' : 'rgba(255,255,255,.2)';
+        });
+
+        updateCalculations();
+      });
+    });
+
+    reasonChips.forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const cat = chip.dataset.reasonCategory;
+        const op = chip.dataset.reasonOp;
+        if (reasonInput) reasonInput.value = cat;
+
+        if (op && op !== opInput?.value) {
+          const correspondingOpBtn = form.querySelector(`.adjust-op-btn[data-adjust-op="${op}"]`);
+          if (correspondingOpBtn) correspondingOpBtn.click();
+        }
+
+        reasonChips.forEach((c) => {
+          const isAct = c === chip;
+          c.classList.toggle('active', isAct);
+          c.style.background = isAct ? 'var(--brand-2)' : 'rgba(255,255,255,.05)';
+          c.style.color = isAct ? '#000' : '#cbd5e1';
+          c.style.borderColor = isAct ? 'var(--brand-2)' : 'rgba(255,255,255,.2)';
+        });
+      });
+    });
+
+    form.querySelectorAll('[data-quick-adjust-qty]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const val = btn.dataset.quickAdjustQty;
+        if (val === 'all') {
+          if (qtyInput) qtyInput.value = String(currentStock);
+        } else {
+          const step = Number(val);
+          const cur = Number(qtyInput?.value || 0);
+          if (qtyInput) qtyInput.value = String(cur + step);
+        }
+        updateCalculations();
+      });
+    });
+
+    qtyInput?.addEventListener('input', updateCalculations);
+    qtyInput?.addEventListener('change', updateCalculations);
+    updateCalculations();
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const submitBtn = form.querySelector('#stock-adjust-submit-btn');
+      const data = new FormData(form);
+      const productId = String(data.get('productId') || '').trim();
+      const operation = String(data.get('operation') || 'count');
+      const reasonCategory = String(data.get('reasonCategory') || 'audit_count');
+      const quantity = Number(data.get('quantity') || 0);
+      const notes = String(data.get('notes') || '').trim();
+      const pin = String(data.get('pin') || '').trim();
+
+      if (!/^\d{6}$/.test(pin)) {
+        return toast('Ingresa el PIN de seguridad de 6 dígitos.', 'warning');
+      }
+
+      setBusy(submitBtn, true);
+      try {
+        await service.verifyDrawerPin(pin, 'Ajuste de inventario');
+        const reasonMeta = getInventoryReason(reasonCategory);
+
+        const adjustInput = {
+          productId,
+          operation,
+          reasonCategory,
+          reason: reasonMeta.label,
+          notes
+        };
+
+        if (operation === 'count') {
+          adjustInput.targetStock = quantity;
+        } else {
+          adjustInput.quantity = quantity;
+        }
+
+        const res = await perform(() => service.adjustInventoryItem(adjustInput), null, closeModal);
+        if (res.ok) {
+          const pName = state.editingStockProduct?.name || 'Producto';
+          if (operation === 'waste') {
+            toast(`Merma registrada: ${quantity} uds de ${pName}.`, 'success');
+          } else if (operation === 'prep') {
+            toast(`Cocinado registrado: +${quantity} uds de ${pName}.`, 'success');
+          } else {
+            toast(`Conteo físico registrado: ${quantity} uds de ${pName}.`, 'success');
+          }
+          state.editingStockProduct = null;
+        }
+      } catch (err) {
+        toast(err?.message || 'Error al autorizar ajuste.', 'danger');
+      } finally {
+        setBusy(submitBtn, false);
+      }
+    });
+  }
+
+  function bindEndDayWasteModal(modalRoot) {
+    const form = modalRoot.querySelector('#end-day-waste-form');
+    if (!form) return;
+
+    const totalCentsEl = form.querySelector('#batch-waste-total-cents');
+    const totalUnitsEl = form.querySelector('#batch-waste-units-count');
+    const headerCb = form.querySelector('#batch-check-header');
+    const rowCbs = form.querySelectorAll('.batch-waste-checkbox');
+    const selectAllBtn = form.querySelector('#batch-select-all');
+    const deselectAllBtn = form.querySelector('#batch-deselect-all');
+    const targetInputs = form.querySelectorAll('.batch-target-stock');
+
+    function recalculate() {
+      let totalLoss = 0;
+      let totalUnits = 0;
+
+      form.querySelectorAll('tr[data-batch-row]').forEach((row) => {
+        const cb = row.querySelector('.batch-waste-checkbox');
+        const targetInput = row.querySelector('.batch-target-stock');
+        const lossEl = row.querySelector('.batch-item-loss');
+        const cost = Number(row.dataset.cost || 0);
+        const currentStock = Number(row.dataset.stock || 0);
+
+        if (cb && cb.checked) {
+          const target = Math.max(0, Number(targetInput?.value || 0));
+          const discarded = Math.max(0, currentStock - target);
+          const itemLoss = Math.round(cost * discarded);
+          totalLoss += itemLoss;
+          totalUnits += discarded;
+          if (lossEl) lossEl.textContent = formatMoney(itemLoss);
+          row.style.opacity = '1';
+        } else {
+          if (lossEl) lossEl.textContent = 'RD$ 0.00';
+          row.style.opacity = '0.4';
+        }
+      });
+
+      if (totalCentsEl) totalCentsEl.textContent = formatMoney(totalLoss);
+      if (totalUnitsEl) totalUnitsEl.textContent = `(${totalUnits} unidades)`;
+    }
+
+    headerCb?.addEventListener('change', () => {
+      rowCbs.forEach((cb) => { cb.checked = headerCb.checked; });
+      recalculate();
+    });
+
+    rowCbs.forEach((cb) => {
+      cb.addEventListener('change', () => {
+        recalculate();
+      });
+    });
+
+    selectAllBtn?.addEventListener('click', () => {
+      if (headerCb) headerCb.checked = true;
+      rowCbs.forEach((cb) => { cb.checked = true; });
+      targetInputs.forEach((inp) => { inp.value = '0'; });
+      recalculate();
+    });
+
+    deselectAllBtn?.addEventListener('click', () => {
+      if (headerCb) headerCb.checked = false;
+      rowCbs.forEach((cb) => { cb.checked = false; });
+      recalculate();
+    });
+
+    targetInputs.forEach((inp) => {
+      inp.addEventListener('input', recalculate);
+      inp.addEventListener('change', recalculate);
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const submitBtn = form.querySelector('#batch-waste-submit-btn');
+      const data = new FormData(form);
+      const reasonCategory = String(data.get('reasonCategory') || 'waste_unsold');
+      const notes = String(data.get('notes') || '').trim();
+      const pin = String(data.get('pin') || '').trim();
+
+      if (!/^\d{6}$/.test(pin)) {
+        return toast('Ingresa el PIN de seguridad de 6 dígitos.', 'warning');
+      }
+
+      const items = [];
+      form.querySelectorAll('tr[data-batch-row]').forEach((row) => {
+        const cb = row.querySelector('.batch-waste-checkbox');
+        if (!cb || !cb.checked) return;
+        const productId = row.dataset.productId;
+        const product = (state.products || []).find((p) => p.id === productId);
+        const prev = Number(row.dataset.stock || 0);
+        const targetInput = row.querySelector('.batch-target-stock');
+        const target = Math.max(0, Number(targetInput?.value || 0));
+        if (target < prev) {
+          items.push({
+            productId,
+            productName: product?.name || 'Producto',
+            previousStock: prev,
+            targetStock: target,
+            costCents: product?.costCents || product?.priceCents || 0,
+            priceCents: product?.priceCents || 0
+          });
+        }
+      });
+
+      if (!items.length) {
+        return toast('No hay productos seleccionados con reducción de stock.', 'warning');
+      }
+
+      setBusy(submitBtn, true);
+      try {
+        await service.verifyDrawerPin(pin, 'Cierre de vitrina - Descarte de mermas');
+        const reasonMeta = getInventoryReason(reasonCategory);
+        const res = await perform(() => service.batchWasteAdjustment({
+          items,
+          reasonCategory,
+          reason: reasonMeta.label,
+          notes
+        }), null, closeModal);
+
+        if (res.ok) {
+          toast(`Cierre de vitrina registrado: ${items.length} productos ajustados como merma.`, 'success');
+        }
+      } catch (err) {
+        toast(err?.message || 'Error al autorizar el cierre de vitrina.', 'danger');
+      } finally {
+        setBusy(submitBtn, false);
+      }
+    });
+  }
+
+  function bindPayrollPaymentModal(modalRoot) {
+    const form = modalRoot.querySelector('#payroll-payment-form');
+    if (!form) return;
+    // Keep the same ID across failed submits: an uncertain network response
+    // must never turn a retry into a second cash withdrawal.
+    const payrollRequestId = createOperationId('payroll');
+    let payrollSubmitting = false;
+
+    const empSelect = form.querySelector('#payroll-emp-select');
+    const baseInput = form.querySelector('#payroll-base-amount');
+    const bonusInput = form.querySelector('#payroll-bonus-amount');
+    const dedInput = form.querySelector('#payroll-deductions-amount');
+    const netDisplay = form.querySelector('#payroll-net-display');
+    const methodRadios = form.querySelectorAll('input[name="paymentMethod"]');
+    const cashWarning = form.querySelector('#payroll-cash-warning');
+    const submitBtn = form.querySelector('#payroll-submit-btn');
+
+    function recalculate() {
+      const baseCents = toCents(baseInput?.value || 0);
+      const bonusCents = toCents(bonusInput?.value || 0);
+      const dedCents = toCents(dedInput?.value || 0);
+      const netCents = calculatePayrollNetCents(baseCents, bonusCents, dedCents).netAmountCents;
+      if (netDisplay) netDisplay.textContent = formatMoney(netCents);
+    }
+
+    empSelect?.addEventListener('change', () => {
+      const selectedOption = empSelect.options[empSelect.selectedIndex];
+      if (!selectedOption) return;
+      const baseCents = Number(selectedOption.dataset.baseCents || 0);
+      const preferredMethod = selectedOption.dataset.method || 'cash';
+      if (baseInput) baseInput.value = (baseCents / 100).toFixed(2);
+      methodRadios.forEach((r) => {
+        r.checked = r.value === preferredMethod;
+      });
+      if (cashWarning) {
+        cashWarning.style.display = preferredMethod === 'cash' ? 'block' : 'none';
+      }
+      recalculate();
+    });
+
+    baseInput?.addEventListener('input', recalculate);
+    baseInput?.addEventListener('change', recalculate);
+    bonusInput?.addEventListener('input', recalculate);
+    bonusInput?.addEventListener('change', recalculate);
+    dedInput?.addEventListener('input', recalculate);
+    dedInput?.addEventListener('change', recalculate);
+
+    methodRadios.forEach((r) => {
+      r.addEventListener('change', () => {
+        if (cashWarning) {
+          cashWarning.style.display = r.value === 'cash' ? 'block' : 'none';
+        }
+      });
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (payrollSubmitting) return;
+      const f = new FormData(form);
+      const employeeId = f.get('employeeId');
+      if (!employeeId) return toast('Selecciona un empleado.', 'warning');
+      const employee = (state.employees || []).find((x) => x.id === employeeId);
+      if (!employee) return toast('Empleado no encontrado.', 'danger');
+
+      const concept = f.get('concept') || 'salary_regular';
+      const period = String(f.get('period') || '').trim();
+      const baseSalaryCents = toCents(f.get('baseSalary') || 0);
+      const bonusCents = toCents(f.get('bonus') || 0);
+      const deductionsCents = toCents(f.get('deductions') || 0);
+      const paymentMethod = f.get('paymentMethod') || 'cash';
+      const notes = String(f.get('notes') || '').trim();
+      const shouldPrint = form.querySelector('[name="printReceipt"]')?.checked ?? true;
+      const pin = String(f.get('pin') || '').trim();
+
+      if (!/^\d{6}$/.test(pin)) {
+        return toast('Ingresa el PIN de seguridad de 6 dígitos.', 'warning');
+      }
+
+      if (paymentMethod === 'cash' && !state.activeCash?.id) {
+        return toast('Para dispensar en efectivo debe haber una caja abierta.', 'warning');
+      }
+
+      payrollSubmitting = true;
+      setBusy(submitBtn, true);
+      try {
+        const verifyRes = await service.verifyDrawerPin(pin, `Desembolso de nómina - ${employee.name}`);
+        const outcome = await perform(() => service.createPayrollPayment({
+          requestId: payrollRequestId,
+          employeeId,
+          concept,
+          period,
+          baseSalaryCents,
+          bonusCents,
+          deductionsCents,
+          paymentMethod,
+          notes,
+          cashSessionId: paymentMethod === 'cash' ? state.activeCash.id : null,
+          authorizedBy: verifyRes.user.id || user.uid,
+          authorizedByName: verifyRes.user.displayName || user.displayName || 'Administrador'
+        }), 'Pago de nómina registrado con éxito.', closeModal);
+
+        if (outcome.ok) {
+          const paymentResult = outcome.result;
+          if (paymentMethod === 'cash' && state.settings?.autoOpenDrawer !== false) {
+            void kickDrawer({ silentFailure: true });
+          }
+          if (shouldPrint) {
+            void printPayrollPayment(paymentResult);
+          }
+        }
+      } catch (err) {
+        beepHardware('error');
+        toast(err?.message || 'Error al autorizar el pago de nómina.', 'danger');
+      } finally {
+        payrollSubmitting = false;
+        setBusy(submitBtn, false);
+      }
+    });
+  }
+
+  async function saveEmployee(event) {
+    event.preventDefault();
+    const f = new FormData(event.currentTarget);
+    const name = String(f.get('name') || '').trim();
+    if (!name) return toast('El nombre del empleado es obligatorio.', 'warning');
+    const roleTitle = String(f.get('roleTitle') || '').trim();
+    if (!roleTitle) return toast('El cargo o función es obligatorio.', 'warning');
+    const baseSalary = f.get('baseSalary');
+    const baseSalaryCents = toCents(baseSalary || 0);
+    if (baseSalaryCents <= 0) return toast('Ingresa un salario base válido mayor que cero.', 'warning');
+
+    await perform(() => service.saveEmployee({
+      id: f.get('id') || undefined,
+      name,
+      cedula: String(f.get('cedula') || '').trim(),
+      phone: String(f.get('phone') || '').trim(),
+      roleTitle,
+      baseSalaryCents,
+      frequency: f.get('frequency') || 'biweekly',
+      preferredMethod: f.get('preferredMethod') || 'cash',
+      bankAccount: String(f.get('bankAccount') || '').trim(),
+      notes: String(f.get('notes') || '').trim(),
+      active: f.get('active') === 'on'
+    }), f.get('id') ? 'Empleado actualizado.' : 'Empleado registrado.', closeModal);
+  }
   async function saveClient(event){event.preventDefault();const f=new FormData(event.currentTarget);await perform(()=>service.saveClient({id:f.get('id'),name:f.get('name'),rnc:f.get('rnc'),phone:f.get('phone'),email:f.get('email'),address:f.get('address'),notes:f.get('notes')||'',creditLimitCents:toCents(f.get('creditLimit')||0),active:f.get('active')==='on'}),'Cliente guardado.',closeModal);}
   async function saveUserAccess(event){event.preventDefault();const f=new FormData(event.currentTarget);if(!f.get('uid')&&f.get('password')!==f.get('passwordConfirm'))return toast('Las contraseñas no coinciden.','danger');await perform(()=>service.saveUserAccess({uid:f.get('uid'),displayName:f.get('displayName'),username:f.get('username'),password:f.get('password'),role:f.get('role'),active:f.get('active')==='on'}),f.get('uid')?'Acceso actualizado.':'Usuario creado correctamente.',closeModal);}
-  async function submitPasswordChange(event){event.preventDefault();const f=new FormData(event.currentTarget);if(f.get('newPassword')!==f.get('newPasswordConfirm'))return toast('Las contraseñas nuevas no coinciden.','danger');await perform(()=>onChangePassword(f.get('currentPassword'),f.get('newPassword')),'Contraseña actualizada.',closeModal);}
-  async function submitDrawerPinChange(event){event.preventDefault();const f=new FormData(event.currentTarget);if(f.get('drawerPin')!==f.get('drawerPinConfirm'))return toast('Los PINes no coinciden.','danger');await perform(()=>service.saveMyDrawerPin(f.get('drawerPin')),'PIN de gaveta actualizado.',closeModal);}
+  async function submitDrawerPinChange(event){
+    event.preventDefault();
+    const f=new FormData(event.currentTarget);
+    const pin = String(f.get('drawerPin') || '').trim();
+    const confirm = String(f.get('drawerPinConfirm') || '').trim();
+    if (!/^\d{6}$/.test(pin)) return toast('El PIN debe tener exactamente 6 dígitos.', 'warning');
+    if (pin !== confirm) return toast('Los PINes no coinciden.', 'danger');
+    await perform(()=>service.saveMyDrawerPin(pin),'PIN de gaveta actualizado.',closeModal);
+  }
 
   async function openCash(event){
     event.preventDefault();
@@ -1759,8 +2946,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const amount=toCents(f.get('amount'));
     const method=f.get('method');
     const pin=String(f.get('pin')||'').trim();
+    const shouldPrint = f.get('printInvoice') === 'on' || f.get('printInvoice') === 'true' || Boolean(event.currentTarget.querySelector('#payment-print-receipt')?.checked);
     const balance=invoice.totalCents-invoice.paidCents;
-    if(!/^\d{4}$/.test(pin))return toast('Digita tu PIN personal de 4 dígitos.','warning');
+    if(!/^\d{6}$/.test(pin))return toast('Digita tu PIN personal de 6 dígitos.','warning');
     if(amount>balance)return toast('El pago supera el balance.','danger');
     const button = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
     state.saleInProgress = true;
@@ -1785,14 +2973,18 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       closeModal();
       setTimeout(() => {
         if(method==='cash' && state.settings?.autoOpenDrawer !== false) void kickDrawer({ silentFailure:true });
-        // El listener ya habrá incorporado el pago; si tarda, la factura sigue disponible para reimpresión.
-        if(state.settings?.autoPrintInvoice) void printInvoice(invoice.id);
+        if(shouldPrint && state.settings?.autoPrintInvoice !== false) void printInvoice(invoice.id);
       }, 350);
     } catch(error) {
       beepHardware('error').catch(()=>{});
       toast(error.message || 'No se pudo autorizar el cobro.', 'danger');
+      const errBox = event.currentTarget.querySelector('.pin-error-box') || event.currentTarget.querySelector('#payment-pin-error');
+      if (errBox) errBox.textContent = error.message || 'PIN incorrecto.';
       const pinInput=event.currentTarget.querySelector('[name=pin]');
-      if(pinInput){pinInput.value='';pinInput.focus();}
+      if(pinInput){
+        pinInput.value='';
+        event.currentTarget.querySelectorAll('.pin-slot').forEach(s => s.classList.remove('filled'));
+      }
     } finally {
       state.saleInProgress = false;
       setBusy(button, false);
@@ -1808,7 +3000,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const f=new FormData(event.currentTarget);
     const method=f.get('method');
     const pin=String(f.get('pin')||'').trim();
-    if (!/^\d{4}$/.test(pin)) return toast('Digita tu PIN personal de 4 dígitos.', 'warning');
+    const shouldPrint = f.get('printInvoice') === 'on' || f.get('printInvoice') === 'true' || Boolean(event.currentTarget.querySelector('#charge-print-receipt')?.checked);
+    if (!/^\d{6}$/.test(pin)) return toast('Digita tu PIN personal de 6 dígitos.', 'warning');
     const button = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
     state.saleInProgress = true;
     setBusy(button, true);
@@ -1835,21 +3028,32 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       const created = outcome.result;
       state.lastSaleResult = {
         id:created.id, invoiceId:created.id, invoiceNumber:created.invoiceNumber, documentType:'invoice',
-        ncf:created.ncf || '', clientName:order.clientName || 'Consumidor final', clientRnc:f.get('clientRnc') || order.clientRnc || '',
+        ncf:created.ncf || '', clientId: order.clientId || '', clientName:order.clientName || 'Consumidor final', clientRnc:f.get('clientRnc') || order.clientRnc || '',
         subtotalCents:order.subtotalCents, taxCents:order.taxCents, discountCents:order.discountCents || 0,
         tipCents:order.tipCents || 0, totalCents:order.totalCents, paidCents:method==='credit'?0:order.totalCents,
         tenderedCents:method==='cash'?order.totalCents:0, changeCents:0, method, reference:f.get('reference') || '',
         cashierName:authorized.user.displayName || user.displayName || user.username || 'Cajero', items:order.items, createdAt:new Date()
       };
+      if (method === 'credit') {
+        state.lastSaleResult.clientTotalDebtCents = calculateClientTotalDebt(state.lastSaleResult, state.invoices, state.clients);
+      }
+
       state.modal='saleSuccess';
       const openDrawer = method==='cash' && state.settings?.autoOpenDrawer !== false;
       setTimeout(() => {
         if (openDrawer) void kickDrawer({silentFailure:true});
-        if (state.settings?.autoPrintInvoice !== false) void printSaleReceipt(state.lastSaleResult,{openDrawer:false});
+        if (shouldPrint && state.settings?.autoPrintInvoice !== false) void printSaleReceipt(state.lastSaleResult,{openDrawer:false});
       },0);
     } catch (error) {
       beepHardware('error');
       toast(error.message || 'No se pudo autorizar el cobro de la mesa.', 'danger');
+      const errBox = event.currentTarget.querySelector('.pin-error-box') || event.currentTarget.querySelector('#charge-pin-error');
+      if (errBox) errBox.textContent = error.message || 'PIN incorrecto.';
+      const pinInput = event.currentTarget.querySelector('[name=pin]');
+      if (pinInput) {
+        pinInput.value = '';
+        event.currentTarget.querySelectorAll('.pin-slot').forEach(s => s.classList.remove('filled'));
+      }
     } finally {
       state.saleInProgress = false;
       setBusy(button, false);
@@ -1900,17 +3104,17 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       invoiceNumber: 'PRUEBA NO FISCAL',
       documentType: 'invoice',
       ncf: '',
-      clientName: 'Cliente de Prueba ELO',
+      clientName: '',
       subtotalCents: 10000,
-      taxCents: 1800,
-      totalCents: 11800,
-      paidCents: 11800,
+      taxCents: 0,
+      totalCents: 10000,
+      paidCents: 10000,
       createdAt: new Date(),
       items: [{ name: 'Ticket Térmico 80mm - Los Panitas', quantity: 1, unitPriceCents: 10000 }]
     };
-    const printSettings = { ...state.settings, receiptFooter: 'PRUEBA DE IMPRESIÓN · SIN VALOR FISCAL' };
-    const b = buildInvoiceEscPos(fake, printSettings, [{ method: 'cash', amountCents: 11800 }], { receivedCents: 20000, changeCents: 8200 });
-    const plainText = buildInvoicePlainText(fake, printSettings, [{ method: 'cash', amountCents: 11800 }], { receivedCents: 20000, changeCents: 8200 });
+    const printSettings = { ...state.settings, receiptFooter: 'PRUEBA DE IMPRESIÓN · HARDWARE OK' };
+    const b = buildInvoiceEscPos(fake, printSettings, [{ method: 'cash', amountCents: 10000 }]);
+    const plainText = buildInvoicePlainText(fake, printSettings, [{ method: 'cash', amountCents: 10000 }]);
     // La prueba de impresión no debe abrir la gaveta: ambas comprobaciones tienen
     // botones separados y un pulso inesperado es un riesgo operativo.
     const res = await sendEscPosToPrinter(b, { plainText, openDrawer: false });
@@ -1971,8 +3175,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const invoice = state.invoices.find((item)=>item.id===id);
     if (!invoice) return;
     const related = state.payments.filter((item)=>item.invoiceId===invoice.id);
-    const b = buildInvoiceEscPos(invoice, state.settings, related);
-    const plainText = buildInvoicePlainText(invoice, state.settings, related);
+    const clientTotalDebtCents = calculateClientTotalDebt(invoice, state.invoices, state.clients);
+    const invoiceToPrint = { ...invoice, clientTotalDebtCents };
+    const b = buildInvoiceEscPos(invoiceToPrint, state.settings, related);
+    const plainText = buildInvoicePlainText(invoiceToPrint, state.settings, related);
     const res = await sendEscPosToPrinter(b, { plainText, openDrawer: false });
     if (res.success) {
       toast('Imprimiendo factura…','success');
@@ -1999,9 +3205,14 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       ? { receivedCents: invoice.tenderedCents, changeCents: invoice.changeCents }
       : null;
     const payments = Number(invoice.paidCents || 0) > 0 ? [payment] : [];
-    const builder = buildInvoiceEscPos(invoice, state.settings, payments, changeInfo);
-    const plainText = buildInvoicePlainText(invoice, state.settings, payments, changeInfo);
+    const clientTotalDebtCents = invoice.clientTotalDebtCents != null
+      ? Number(invoice.clientTotalDebtCents)
+      : calculateClientTotalDebt(invoice, state.invoices, state.clients);
+    const invoiceToPrint = { ...invoice, clientTotalDebtCents };
+    const builder = buildInvoiceEscPos(invoiceToPrint, state.settings, payments, changeInfo);
+    const plainText = buildInvoicePlainText(invoiceToPrint, state.settings, payments, changeInfo);
     const result = await sendEscPosToPrinter(builder, { plainText, openDrawer, fallbackToBrowser: false });
+
     if (result.success) {
       toast('Factura enviada a impresión.', 'success');
     } else {
@@ -2169,8 +3380,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   async function printCashSession(id, mode = 'Z', sessionOverride = null) {
     const session = sessionOverride || state.cashSessions.find((item)=>item.id===id);
     if (!session) return;
-    const b = buildCashReportEscPos(session, state.payments, state.settings, state.cashMovements, mode);
-    const plainText = buildCashReportPlainText(session, state.payments, state.settings, state.cashMovements, mode);
+    const b = buildCashReportEscPos(session, state.payments, state.settings, state.cashMovements, mode, state.inventoryMovements);
+    const plainText = buildCashReportPlainText(session, state.payments, state.settings, state.cashMovements, mode, state.inventoryMovements);
     const res = await sendEscPosToPrinter(b, { plainText, openDrawer: false });
     if (res.success) toast(`Corte ${mode} de caja enviado a la impresora térmica.`, 'success');
     else toast('Error al imprimir arqueo.', 'danger');
@@ -2218,6 +3429,24 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const res = await sendEscPosToPrinter(b, { plainText, openDrawer: false });
     if (res.success) toast('Pre-cuenta de la mesa impresa.', 'success');
     else toast('Error al imprimir pre-cuenta.', 'danger');
+  }
+
+  async function printDeliverySettlement(settlement) {
+    if (!settlement) return;
+    const b = buildDeliverySettlementEscPos(settlement, state.settings);
+    const plainText = buildDeliverySettlementPlainText(settlement, state.settings);
+    const res = await sendEscPosToPrinter(b, { plainText, openDrawer: false });
+    if (res.success) toast('Comprobante de liquidación de delivery impreso.', 'success');
+    else toast('Error al imprimir comprobante de liquidación.', 'danger');
+  }
+
+  async function printPayrollPayment(payment) {
+    if (!payment) return;
+    const b = buildPayrollReceiptEscPos(payment, state.settings);
+    const plainText = buildPayrollReceiptPlainText(payment, state.settings);
+    const res = await sendEscPosToPrinter(b, { plainText, openDrawer: false });
+    if (res.success) toast('Comprobante de nómina impreso.', 'success');
+    else toast('Error al imprimir comprobante de nómina.', 'danger');
   }
 
   function handleQuickCash(val) {
@@ -2429,23 +3658,40 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       renderModal();
     }
   }
-  function paymentModal(){const invoice=state.invoices.find((item)=>item.id===state.selectedInvoiceId);if(!invoice)return '';const balance=invoice.totalCents-invoice.paidCents;return formModal('payment-form','Registrar cobro',`<div class="payment-amount"><span>Balance pendiente</span><strong>${formatMoney(balance)}</strong></div><label>Monto<input name="amount" type="number" min="0.01" max="${balance/100}" step="0.01" value="${balance/100}" required></label>${paymentFields(false)}<label>PIN personal de 4 dígitos<input name="pin" type="password" inputmode="numeric" autocomplete="off" pattern="[0-9]{4}" minlength="4" maxlength="4" placeholder="• • • •" required><small>Autoriza el cobro y abre una sesión de caja con RD$0.00 si todavía no existe una.</small></label>`,'Autorizar y guardar cobro');}
+  function paymentModal(){
+    const invoice = state.invoices.find((item) => item.id === state.selectedInvoiceId);
+    if (!invoice) return '';
+    const balance = invoice.totalCents - invoice.paidCents;
+    return formModal('payment-form', 'Registrar cobro', `
+      <div class="payment-amount"><span>Balance pendiente</span><strong>${formatMoney(balance)}</strong></div>
+      <label>Monto<input name="amount" type="number" min="0.01" max="${balance/100}" step="0.01" value="${balance/100}" required></label>
+      ${paymentFields(false)}
+      <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#ddd;cursor:pointer;user-select:none;margin:4px 0 6px;">
+        <input type="checkbox" name="printInvoice" id="payment-print-receipt" checked style="width:18px;height:18px;accent-color:var(--brand-2);cursor:pointer;">
+        <i data-lucide="printer" style="width:16px;height:16px;color:var(--brand-2);"></i>
+        <span>Imprimir comprobante de cobro</span>
+      </label>
+      ${renderPinPadHtml({ idPrefix: 'payment-pin', label: 'Digita tu PIN de 6 dígitos para autorizar', sublabel: 'Autoriza el cobro y abre una sesión de caja con RD$0.00 si no existe una.' })}
+    `, 'Autorizar y guardar cobro');
+  }
   function chargeModal(){
-    const order=state.orders.find((item)=>item.id===state.selectedOrderId);
+    const order = state.orders.find((item) => item.id === state.selectedOrderId);
     if (!order) return '';
-    return formModal('charge-form','Cobrar mesa',`
+    return formModal('charge-form', 'Cobrar mesa', `
       <div class="payment-amount"><span>Total de ${escapeHtml(order.tableName)}</span><strong>${formatMoney(order.totalCents)}</strong></div>
       ${paymentFields(true)}
       ${ncfField()}
       <label>RNC / Cédula para B01<input name="clientRnc" maxlength="14" inputmode="numeric" value="${escapeHtml(order.clientRnc || '')}" placeholder="Solo obligatorio para crédito fiscal"></label>
-      <label>PIN personal de 4 dígitos
-        <input name="pin" type="password" inputmode="numeric" autocomplete="off" pattern="[0-9]{4}" minlength="4" maxlength="4" placeholder="• • • •" required>
-        <small>Autoriza el cobro y abre la caja automáticamente si todavía no hay un turno.</small>
+      <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#ddd;cursor:pointer;user-select:none;margin:4px 0 6px;">
+        <input type="checkbox" name="printInvoice" id="charge-print-receipt" checked style="width:18px;height:18px;accent-color:var(--brand-2);cursor:pointer;">
+        <i data-lucide="printer" style="width:16px;height:16px;color:var(--brand-2);"></i>
+        <span>Imprimir factura al cobrar</span>
       </label>
-    `,'Autorizar, cobrar y cerrar');
+      ${renderPinPadHtml({ idPrefix: 'charge-pin', label: 'Digita tu PIN de 6 dígitos para autorizar', sublabel: 'Autoriza el cobro y abre la caja automáticamente si todavía no hay un turno.' })}
+    `, 'Autorizar, cobrar y cerrar');
   }
   function passwordModal(){
-    return `<div class="modal-backdrop" data-modal-close><article class="modal-card form-modal" data-modal-card><header><div><span class="eyebrow">Seguridad personal</span><h2>Contraseña y PIN</h2></div><button type="button" class="icon-button" data-modal-close><i data-lucide="x"></i></button></header><div class="stack-form"><form id="password-change-form" class="stack-form"><h3>Contraseña de acceso</h3><label>Contraseña actual<input name="currentPassword" type="password" autocomplete="current-password" required></label><label>Nueva contraseña<input name="newPassword" type="password" minlength="8" autocomplete="new-password" required></label><label>Confirmar nueva contraseña<input name="newPasswordConfirm" type="password" minlength="8" autocomplete="new-password" required></label><button class="button primary" type="submit">Actualizar contraseña</button></form><form id="drawer-pin-update-form" class="stack-form pin-setup-form"><h3>PIN de cobro y gaveta</h3><p class="muted">Este PIN personal de cuatro dígitos autoriza cobros y aperturas manuales de la gaveta desde la terminal.</p><div class="form-grid two"><label>Nuevo PIN<input name="drawerPin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off" required></label><label>Confirmar PIN<input name="drawerPinConfirm" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off" required></label></div><button class="button secondary" type="submit"><i data-lucide="key-round"></i> Guardar PIN</button></form></div><footer class="modal-actions"><button type="button" class="button secondary" data-modal-close>Cerrar</button></footer></article></div>`;
+    return `<div class="modal-backdrop" data-modal-close><article class="modal-card form-modal" data-modal-card><header><div><span class="eyebrow">Seguridad personal</span><h2>Contraseña y PIN</h2></div><button type="button" class="icon-button" data-modal-close><i data-lucide="x"></i></button></header><div class="stack-form"><form id="password-change-form" class="stack-form"><h3>Contraseña de acceso</h3><label>Contraseña actual<input name="currentPassword" type="password" autocomplete="current-password" required></label><label>Nueva contraseña<input name="newPassword" type="password" minlength="8" autocomplete="new-password" required></label><label>Confirmar nueva contraseña<input name="newPasswordConfirm" type="password" minlength="8" autocomplete="new-password" required></label><button class="button primary" type="submit">Actualizar contraseña</button></form><form id="drawer-pin-update-form" class="stack-form pin-setup-form"><h3>PIN de cobro y gaveta</h3><p class="muted">Este PIN personal de seis dígitos autoriza cobros y aperturas manuales de la gaveta desde la terminal.</p><div class="form-grid two"><label>Nuevo PIN<input name="drawerPin" type="password" data-touch-numpad="integer" data-numpad-title="Nuevo PIN (6 dígitos)" maxlength="6" autocomplete="off" required readonly inputmode="none" style="cursor:pointer;"></label><label>Confirmar PIN<input name="drawerPinConfirm" type="password" data-touch-numpad="integer" data-numpad-title="Confirmar PIN (6 dígitos)" maxlength="6" autocomplete="off" required readonly inputmode="none" style="cursor:pointer;"></label></div><button class="button secondary" type="submit"><i data-lucide="key-round"></i> Guardar PIN</button></form></div><footer class="modal-actions"><button type="button" class="button secondary" data-modal-close>Cerrar</button></footer></article></div>`;
   }
   function cancellationModal(kind){
     const isOrder = kind === 'order';
@@ -2466,7 +3712,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           <form id="quick-cash-form" class="stack-form" style="padding-top:8px;">
             <p style="margin:0 0 12px; font-size:.82rem; color:var(--muted);">Indica el fondo inicial en efectivo con el que comienzas el turno para poder cobrar facturas.</p>
             <label>Fondo inicial en caja (DOP)
-              <input name="opening" type="number" step="0.01" min="0" value="0.00" required>
+              <input name="opening" id="cash-open-float" type="text" data-touch-numpad="money" data-numpad-title="Fondo Inicial de Caja" value="0.00" readonly inputmode="none" required style="font-size:1.3rem;font-weight:700;cursor:pointer;">
             </label>
             <div class="quick-cash-grid" style="margin:4px 0 12px;">
               <button type="button" class="quick-cash-btn" data-set-opening="0">RD$ 0</button>
@@ -2474,7 +3720,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
               <button type="button" class="quick-cash-btn" data-set-opening="1000">RD$ 1,000</button>
               <button type="button" class="quick-cash-btn" data-set-opening="2000">RD$ 2,000</button>
             </div>
-            <label>PIN personal<input name="pin" type="password" inputmode="numeric" autocomplete="off" pattern="[0-9]{4}" maxlength="4" required></label>
+            ${renderPinPadHtml({ idPrefix: 'quick-cash-pin', label: 'Digita tu PIN personal de 6 dígitos' })}
             <label>Notas de apertura (opcional)
               <input name="notes" placeholder="Turno de la tarde, cambio inicial…">
             </label>
@@ -2487,6 +3733,116 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       </div>
     `;
   }
+
+  function cashMovementModal() {
+    const active = state.activeCash;
+    if (!active) return '';
+    return `
+      <div class="modal-backdrop" data-modal-close>
+        <article class="modal-card" style="max-width:460px;" data-modal-card>
+          <header>
+            <div><span class="eyebrow">Libro de Efectivo</span><h2>Registrar Movimiento</h2></div>
+            <button type="button" class="icon-button" data-modal-close><i data-lucide="x"></i></button>
+          </header>
+          <form id="cash-movement-form" class="stack-form" style="padding-top:10px;">
+            <div class="cash-type-toggle">
+              <button type="button" class="cash-type-btn active type-in" data-movement-type="in">
+                <i data-lucide="plus-circle" style="width:18px;height:18px;"></i> Entrada
+              </button>
+              <button type="button" class="cash-type-btn type-out" data-movement-type="out">
+                <i data-lucide="minus-circle" style="width:18px;height:18px;"></i> Salida / Gasto
+              </button>
+            </div>
+            <input type="hidden" name="type" id="cash-movement-type" value="in">
+
+            <label>Monto (DOP)
+              <input name="amount" id="cash-movement-amount" type="text" placeholder="0.00" value="" data-touch-numpad="money" data-numpad-title="Monto del Movimiento" readonly inputmode="none" required style="font-size:1.4rem;font-weight:700;color:var(--brand-2);cursor:pointer;">
+            </label>
+
+            <label style="margin-bottom:4px;">Motivo del movimiento
+              <input name="reason" id="cash-movement-reason" minlength="3" maxlength="300" placeholder="Ej: Compra menor, cambio, pago…" required>
+            </label>
+
+            <div class="quick-reason-grid">
+              <button type="button" class="quick-reason-chip" data-set-reason="Cambio / Sencillo para caja">Cambio / Sencillo</button>
+              <button type="button" class="quick-reason-chip" data-set-reason="Compra menor de insumo">Compra de insumo</button>
+              <button type="button" class="quick-reason-chip" data-set-reason="Pago a repartidor / delivery">Pago delivery</button>
+              <button type="button" class="quick-reason-chip" data-set-reason="Retiro parcial de efectivo">Retiro parcial</button>
+            </div>
+
+            ${renderPinPadHtml({ idPrefix: 'cash-movement-pin', label: 'Digita tu PIN para autorizar movimiento' })}
+
+            <footer class="modal-actions" style="margin-top:14px;">
+              <button type="button" class="button secondary" data-modal-close>Cancelar</button>
+              <button class="button primary" type="submit" id="cash-movement-submit">
+                <i data-lucide="check"></i> Registrar movimiento
+              </button>
+            </footer>
+          </form>
+        </article>
+      </div>
+    `;
+  }
+
+  function cashCloseModal() {
+    const active = state.activeCash;
+    if (!active) return '';
+    const sessionPayments = state.payments.filter((item) => item.cashSessionId === active.id);
+    const sessionMovements = state.cashMovements.filter((item) => item.cashSessionId === active.id);
+    const cashCollected = sessionPayments.filter((item) => item.method === 'cash').reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+    const cashIn = sessionMovements.filter((item) => item.type === 'in').reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+    const cashOut = sessionMovements.filter((item) => item.type === 'out').reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+    const expectedCashCents = Number(active.openingCents) + cashCollected + cashIn - cashOut;
+
+    return `
+      <div class="modal-backdrop" data-modal-close>
+        <article class="modal-card" style="max-width:520px;" data-modal-card>
+          <header>
+            <div><span class="eyebrow">Arqueo Final</span><h2>Cierre de Caja (Corte Z)</h2></div>
+            <button type="button" class="icon-button" data-modal-close><i data-lucide="x"></i></button>
+          </header>
+          <form id="cash-close-form" class="stack-form" style="padding-top:10px;">
+            <input type="hidden" name="expected" value="${expectedCashCents}">
+
+            <div style="background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:14px;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:0.84rem;">
+              <div><span style="color:var(--muted);">Fondo Inicial:</span> <b>${formatMoney(active.openingCents)}</b></div>
+              <div><span style="color:var(--muted);">Ventas Efectivo:</span> <b>${formatMoney(cashCollected)}</b></div>
+              <div><span style="color:var(--muted);">Entradas:</span> <b style="color:#3fb950;">+${formatMoney(cashIn)}</b></div>
+              <div><span style="color:var(--muted);">Salidas:</span> <b style="color:#f85149;">-${formatMoney(cashOut)}</b></div>
+              <div style="grid-column:1 / -1;border-top:1px solid rgba(255,255,255,.08);padding-top:8px;display:flex;justify-content:space-between;align-items:center;">
+                <strong style="color:#eee;">Efectivo Esperado:</strong>
+                <strong style="font-size:1.15rem;color:var(--brand-2);">${formatMoney(expectedCashCents)}</strong>
+              </div>
+            </div>
+
+            <label style="margin-top:6px;">Efectivo contado en gaveta (DOP)
+              <input name="closing" id="cash-closing-amount" type="text" placeholder="0.00" value="" data-touch-numpad="money" data-numpad-title="Efectivo Contado en Gaveta" data-expected-cash="${(expectedCashCents / 100).toFixed(2)}" readonly inputmode="none" required style="font-size:1.4rem;font-weight:700;cursor:pointer;">
+            </label>
+
+            <div id="cash-variance-box" class="cash-variance-box exact" style="display:none;">
+              <span id="cash-variance-label" style="font-size:0.8rem;text-transform:uppercase;letter-spacing:1px;font-weight:700;display:block;">Diferencia</span>
+              <strong id="cash-variance-val" style="font-size:1.5rem;display:block;margin:2px 0;">RD$ 0.00</strong>
+              <small id="cash-variance-hint" style="color:var(--muted);font-size:0.8rem;">El conteo coincide exactamente con el sistema.</small>
+            </div>
+
+            <label>Nota de cierre <small style="color:var(--muted);font-weight:normal;">(obligatoria si hay diferencia)</small>
+              <input name="notes" id="cash-close-notes" maxlength="500" placeholder="Observaciones del turno, justificación de diferencia…">
+            </label>
+
+            ${renderPinPadHtml({ idPrefix: 'cash-close-pin', label: 'Digita tu PIN de 6 dígitos para confirmar el cierre' })}
+
+            <footer class="modal-actions" style="margin-top:14px;">
+              <button type="button" class="button secondary" data-modal-close>Volver</button>
+              <button class="button danger" type="submit" id="cash-close-submit" style="font-weight:700;">
+                <i data-lucide="lock"></i> Autorizar y Cerrar Turno (Corte Z)
+              </button>
+            </footer>
+          </form>
+        </article>
+      </div>
+    `;
+  }
+
   function promptDrawerPin() {
     state.modal = 'drawerPin';
     renderModal();
@@ -2505,7 +3861,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           </header>
           <form id="drawer-pin-form" class="stack-form" style="padding-top:8px;">
             <p style="margin:0 0 10px; font-size:.82rem; color:var(--muted);">
-              Ingresa tu PIN numérico personal para autorizar la apertura manual. La acción quedará auditada con tu nombre y hora exacta.
+              Ingresa el PIN personal de <strong>${escapeHtml(user.displayName || user.username)}</strong>. La acción quedará registrada con esta cuenta y la hora del servidor.
             </p>
             <label style="margin-bottom:6px;">Motivo de apertura
               <select name="reason" id="drawer-pin-reason" style="width:100%;">
@@ -2516,12 +3872,14 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
                 <option value="Apertura manual por revisión">Apertura manual por revisión</option>
               </select>
             </label>
-            <input id="drawer-pin-input" name="pin" type="password" inputmode="none" pattern="[0-9]{4}" maxlength="4" placeholder="" required readonly tabindex="-1" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;">
+            <input id="drawer-pin-input" name="pin" type="password" inputmode="none" pattern="[0-9]{6}" maxlength="6" placeholder="" required readonly tabindex="-1" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;">
             <div class="pin-slots-container" id="drawer-pin-slots">
               <span class="pin-slot" data-slot="0"></span>
               <span class="pin-slot" data-slot="1"></span>
               <span class="pin-slot" data-slot="2"></span>
               <span class="pin-slot" data-slot="3"></span>
+              <span class="pin-slot" data-slot="4"></span>
+              <span class="pin-slot" data-slot="5"></span>
             </div>
             <div class="pin-pad" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;margin:8px 0 12px;">
               ${[1,2,3,4,5,6,7,8,9].map((n) => `<button type="button" class="button secondary pin-num-btn" data-pin-num="${n}" style="font-size:1.3rem;font-weight:700;padding:12px 0;">${n}</button>`).join('')}
@@ -2567,24 +3925,35 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       fiaoClientId:String(data.get('fiaoClientId')||''),fiaoClientName:String(data.get('fiaoClientName')||''),
       fiaoClientPhone:String(data.get('fiaoClientPhone')||''),fiaoNotes:String(data.get('fiaoNotes')||''),
       fiaoSaveAsClient:data.get('fiaoSaveAsClient') === 'on',
+      deliveryDriverId:String(data.get('deliveryDriverId')||''),deliveryDriverName:String(data.get('deliveryDriverName')||''),
+      deliveryClientName:String(data.get('deliveryClientName')||''),deliveryPhone:String(data.get('deliveryPhone')||''),
+      deliveryAddress:String(data.get('deliveryAddress')||''),
+      deliveryChangeFor:String(root.querySelector('#pos-delivery-change-for')?.value||data.get('deliveryChangeFor')||''),
+      deliveryNotes:String(data.get('deliveryNotes')||''),
+      printReceipt:root.querySelector('#pos-print-receipt') ? root.querySelector('#pos-print-receipt').checked : (state.posDraft?.printReceipt !== false),
       advancedOpen:Boolean(root.querySelector('#pos-advanced-details')?.open),
       cashOpen:Boolean(root.querySelector('#pos-cash-panel details')?.open)
     };
     state.posPaymentMethod=String(data.get('paymentMethod')||state.posPaymentMethod||'cash');
   }
   function resetPosDraft(){
-    state.posDraft={};state.posSearch='';state.posCategory='Todos';state.posPaymentMethod='cash';
+    state.posDraft={ printReceipt: true };state.posSearch='';state.posCategory='Todos';state.posPaymentMethod='cash';
     state.posDiscountState={discount:0,discountType:'amount',includeLegalTip:false};
   }
   function filterCards(event){
     const term=event.target.value.trim().toLowerCase();
     const activeCat = root.querySelector('[data-cat-filter].active')?.dataset.catFilter || 'Todos';
+    let visibleCount = 0;
     root.querySelectorAll('#pos-products .product-card').forEach((item) => {
       const cardCat = item.dataset.category || 'General';
       const matchesCat = activeCat === 'Todos' || cardCat === activeCat;
       const matchesQuery = !term || item.dataset.search.includes(term);
-      item.hidden = !(matchesCat && matchesQuery);
+      const isVisible = matchesCat && matchesQuery;
+      item.hidden = !isVisible;
+      if (isVisible) visibleCount++;
     });
+    const emptyState = root.querySelector('#pos-no-matches');
+    if (emptyState) emptyState.hidden = visibleCount > 0;
   }
   function filterDirectory(event){const term=event.target.value.trim().toLowerCase();root.querySelectorAll('[data-directory-row]').forEach((item)=>item.hidden=!item.dataset.search.includes(term));}
   function filterInvoiceRows(){const term=root.querySelector('#invoice-search')?.value.trim().toLowerCase()||'';const status=root.querySelector('#invoice-status-filter')?.value||'';root.querySelectorAll('[data-invoice-row]').forEach((item)=>item.hidden=!item.dataset.search.includes(term)||(status&&item.dataset.status!==status));}
@@ -2597,7 +3966,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     if (paymentOptions) paymentOptions.hidden = table;
     root.querySelectorAll('.pos-method-panel').forEach((panel) => panel.classList.remove('visible'));
     if (!table) {
-      const panelMap = { cash: '#pos-cash-panel', card: '#pos-card-panel', transfer: '#pos-transfer-panel', credit: '#pos-fiao-panel' };
+      const panelMap = { cash: '#pos-cash-panel', card: '#pos-card-panel', transfer: '#pos-transfer-panel', credit: '#pos-fiao-panel', delivery_cod: '#pos-delivery-panel' };
       root.querySelector(panelMap[method])?.classList.add('visible');
     }
     updatePosSubmitLabel();
@@ -2605,7 +3974,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   function updateConnection(){const online=navigator.onLine;const banner=root.querySelector('#offline-banner');if(banner)banner.hidden=online;root.querySelector('#connection-indicator')?.classList.toggle('offline',!online);}
   function iconsRefresh(container = root) {
     const target = container || root;
-    if (!target || !target.querySelector('[data-lucide]')) return;
+    if (!target || !target.querySelector('i[data-lucide]')) return;
     createIcons({ icons, nameAttr: 'data-lucide', rootNode: target, attrs: { 'aria-hidden': 'true' } });
   }
   function destroy(){

@@ -3,10 +3,14 @@ import { csvCell } from '../domain/billing.js';
 import { downloadText, escapeHtml, formatDate, formatMoney } from '../lib/format.js';
 
 export function renderInvoices(state) {
+  const limit = state.invoiceDisplayLimit || 60;
+  const visibleInvoices = state.invoices.slice(0, limit);
+  const hasMore = state.invoices.length > limit;
   return `
     <section class="panel-heading"><div><span class="eyebrow">Facturación</span><h2>Documentos y cobros</h2><p>Historial fiscal y balance pendiente.</p></div><button class="button primary" data-route="pos"><i data-lucide="plus"></i> Nuevo documento</button></section>
     <section class="surface-card data-surface"><div class="toolbar"><label class="search-field"><i data-lucide="search"></i><input id="invoice-search" type="search" placeholder="Factura, cliente o NCF"></label><select id="invoice-status-filter"><option value="">Todos los estados</option><option value="pending">Pendientes</option><option value="partial">Parciales</option><option value="paid">Pagadas</option><option value="cancelled">Anuladas</option></select></div>
-      <div class="table-scroll"><table><thead><tr><th>Documento</th><th>Cliente</th><th>Fecha</th><th>Total</th><th>Balance</th><th>Estado</th><th></th></tr></thead><tbody id="invoice-table-body">${state.invoices.length ? state.invoices.map(invoiceRow).join('') : `<tr><td colspan="7">${empty('receipt', 'Sin documentos', 'Las ventas y cotizaciones aparecerán aquí.')}</td></tr>`}</tbody></table></div>
+      <div class="table-scroll"><table><thead><tr><th>Documento</th><th>Cliente</th><th>Fecha</th><th>Total</th><th>Balance</th><th>Estado</th><th></th></tr></thead><tbody id="invoice-table-body">${state.invoices.length ? visibleInvoices.map(invoiceRow).join('') : `<tr><td colspan="7">${empty('receipt', 'Sin documentos', 'Las ventas y cotizaciones aparecerán aquí.')}</td></tr>`}</tbody></table></div>
+      ${hasMore ? `<div style="text-align:center;padding:12px;border-top:1px solid var(--line);"><button type="button" class="button secondary compact" data-load-more-invoices style="font-size:0.85rem;"><i data-lucide="refresh-cw"></i> Ver más facturas (${visibleInvoices.length} de ${state.invoices.length})</button></div>` : ''}
     </section>`;
 }
 

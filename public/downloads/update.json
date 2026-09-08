@@ -1,27 +1,27 @@
 {
-    "schemaVersion":  1,
-    "channel":  "release-candidate",
-    "packageName":  "com.panitas.pos",
-    "versionCode":  16,
-    "versionName":  "1.4.0-rc.9",
-    "publishedAt":  "2026-09-06T06:11:39Z",
-    "minimumSupportedVersionCode":  10,
-    "mandatory":  false,
-    "artifact":  {
-                     "url":  "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.4.0-rc.9-code16.zip",
-                     "filename":  "LosPanitas-Elo-POS-v1.4.0-rc.9-code16.zip",
-                     "size":  271060,
-                     "sha256":  "87DA5F94AD7C5E05E1C718CFE5F7A7CDC2D7313D5E78BB75914878737230AE4C"
-                 },
-    "apk":  {
-                "entry":  "LosPanitas-Elo-POS.apk",
-                "size":  275135,
-                "sha256":  "8ED8D06CDDF523048DBFD7A2FDF7BF3C0C2A8298EDEB6D2AF399294310B11AC3",
-                "signingCertificateSha256":  "42DE27571244F0A23E533BF1C97D5D8587F4F12C3C34EA3209EDFBC67B8B3395"
-            },
-    "releaseNotes":  [
-                         "Corrección de corte continuo Star TSP143 eliminando fragmentación de papel.",
-                         "Estabilización de pantalla de venta y eliminación de recargas automáticas no deseadas.",
-                         "Prevención de diálogos y redirecciones externas durante la operación del POS."
-                     ]
+  "schemaVersion": 1,
+  "channel": "stable",
+  "packageName": "com.panitas.pos",
+  "versionCode": 21,
+  "versionName": "1.4.1",
+  "publishedAt": "2026-09-08T06:46:50Z",
+  "minimumSupportedVersionCode": 10,
+  "mandatory": false,
+  "artifact": {
+    "url": "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.4.1-code21.zip",
+    "filename": "LosPanitas-Elo-POS-v1.4.1-code21.zip",
+    "size": 1606635,
+    "sha256": "1FD679B613DBDF249D74AEBB300176BFA1256D9899218185601FED11FBFE722F"
+  },
+  "apk": {
+    "entry": "LosPanitas-Elo-POS.apk",
+    "size": 1611416,
+    "sha256": "F7CA15B8E1B623883EE5A275940C5D95FAA20FBE9BCD952156AAD3DB8054216D",
+    "signingCertificateSha256": "42DE27571244F0A23E533BF1C97D5D8587F4F12C3C34EA3209EDFBC67B8B3395"
+  },
+  "releaseNotes": [
+    "Operación con cuenta personal y PIN de seis dígitos; entrega con NECHY, sin cuenta compartida.",
+    "Nómina en efectivo con caja verificada, registro atómico y protección frente a reintentos.",
+    "Instalador móvil de gestión disponible; se conserva la impresión de altura variable y corte único."
+  ]
 }

@@ -65,7 +65,11 @@ public class UsbPrinterManager {
                 Log.i(TAG, "Dispositivo USB conectado.");
                 findAndConnectPrinter();
             } else if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(action)) {
-                Log.i(TAG, "Dispositivo USB desconectado.");
+                UsbDevice detached = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+                if (detached != null && printerDevice != null && detached.getDeviceId() != printerDevice.getDeviceId()) {
+                    return;
+                }
+                Log.i(TAG, "Impresora USB desconectada.");
                 close();
                 scheduleReconnect();
             }
@@ -359,23 +363,27 @@ public class UsbPrinterManager {
         java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
 
         try {
-            // 1. Inicialización y Entrada a Modo Raster Star Oficial (11 bytes)
-            out.write(new byte[]{ (byte) 0x1B, (byte) 0x40 });                   // ESC @ (Clear/Init)
-            out.write(new byte[]{ (byte) 0x1B, (byte) 0x2A, (byte) 0x72, (byte) 0x52, (byte) 0x00 }); // ESC * r R \0 (Reset raster settings)
-            out.write(new byte[]{ (byte) 0x1B, (byte) 0x2A, (byte) 0x72, (byte) 0x41 });       // ESC * r A (Begin raster mode)
+            // 1. Enter raster BEFORE configuring the page: ESC*rA resets P/E/F.
+            // Star Graphic Mode rev. 2.31, pp. 25-29, 34. P0 is continuous
+            // paper, E1 exits without cut feed, F13 prints and cuts once on FF.
+            out.write(new byte[]{ (byte) 0x1B, (byte) 0x40 });                                           // ESC @ (Clear/Init)
+            out.write(new byte[]{ (byte) 0x1B, (byte) 0x2A, (byte) 0x72, (byte) 0x52 });               // ESC * r R (no NUL parameter)
+            out.write(new byte[]{ (byte) 0x1B, (byte) 0x2A, (byte) 0x72, (byte) 0x41 });               // ESC * r A (Begin raster mode)
+            out.write(new byte[]{ (byte) 0x1B, (byte) 0x2A, (byte) 0x72, (byte) 0x50, '0', (byte) 0x00 }); // ESC * r P 0 \0 (Continuous page mode)
+            out.write(new byte[]{ (byte) 0x1B, (byte) 0x2A, (byte) 0x72, (byte) 0x45, '1', (byte) 0x00 }); // E1: no cut feed/cut (E0 would restore defaults)
+            out.write(new byte[]{ (byte) 0x1B, (byte) 0x2A, (byte) 0x72, (byte) 0x46, '1', '3', (byte) 0x00 }); // F13: feed to cutter and partial cut
 
             // 2. Scanlines de píxeles
-            int[] pixels = new int[width * height];
-            bitmap.getPixels(pixels, 0, width, 0, 0, width, height);
+            int[] pixels = new int[width];
 
             byte[] lineHeader = new byte[]{ 0x62, (byte)(widthBytes & 0xFF), (byte)((widthBytes >> 8) & 0xFF) };
             byte[] lineData = new byte[widthBytes];
 
             for (int y = 0; y < height; y++) {
                 java.util.Arrays.fill(lineData, (byte) 0);
-                int rowOffset = y * width;
+                bitmap.getPixels(pixels, 0, width, 0, y, width, 1);
                 for (int x = 0; x < width; x++) {
-                    int color = pixels[rowOffset + x];
+                    int color = pixels[x];
                     int r = (color >> 16) & 0xFF;
                     int g = (color >> 8) & 0xFF;
                     int b = color & 0xFF;
@@ -390,11 +398,10 @@ public class UsbPrinterManager {
                 out.write(lineData);
             }
 
-            // 3. Finalizar Modo Raster Star
+            // 3. Print the buffered image at its actual height, feed only to the
+            // cutter and cut ONCE. Do not append ESC d: that feeds extra paper.
+            out.write(new byte[]{ (byte) 0x1B, (byte) 0x0C, (byte) 0x00 });             // ESC FF NUL (Execute F13 after printing)
             out.write(new byte[]{ (byte) 0x1B, (byte) 0x2A, (byte) 0x72, (byte) 0x42 }); // ESC * r B (End raster mode)
-
-            // 4. Avance de papel a la cuchilla y corte
-            out.write(new byte[]{ (byte) 0x1B, (byte) 0x64, (byte) 0x02 });             // ESC d 2 (Feed to cutter and cut)
 
             // 5. Apertura de gaveta si fue solicitada
             if (openDrawer) {
@@ -411,10 +418,17 @@ public class UsbPrinterManager {
      * Renderiza un texto formateado de ticket a Bitmap y lo imprime en modo Star Raster.
      */
     public synchronized boolean printFormattedText(String text, boolean openDrawer) {
-        android.graphics.Bitmap bitmap = renderTicketBitmap(text);
-        if (bitmap == null) return false;
-        byte[] rasterData = bitmapToStarRaster(bitmap, openDrawer);
-        return sendBytes(rasterData);
+        android.graphics.Bitmap bitmap = null;
+        try {
+            bitmap = renderTicketBitmap(text);
+            if (bitmap == null) return false;
+            return sendBytes(bitmapToStarRaster(bitmap, openDrawer));
+        } catch (Throwable e) {
+            Log.e(TAG, "No se pudo preparar el ticket", e);
+            return false;
+        } finally {
+            if (bitmap != null) bitmap.recycle();
+        }
     }
 
     /**
@@ -422,151 +436,24 @@ public class UsbPrinterManager {
      * Proporciona tipografía cómoda, legible, nítida y perfectamente contrastada.
      */
     public android.graphics.Bitmap renderTicketBitmap(String text) {
-        int width = 576; // 80mm estándar a 203 DPI
-        String[] lines = text.split("\r?\n");
-        boolean includeLogo = text.contains("[LOGO]");
-        android.graphics.Bitmap receiptLogo = includeLogo ? createReceiptLogoBitmap() : null;
-
-        android.graphics.Paint titlePaint = new android.graphics.Paint();
-        titlePaint.setColor(android.graphics.Color.BLACK);
-        titlePaint.setTextSize(28f);
-        titlePaint.setTypeface(android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD));
-        titlePaint.setAntiAlias(false);
-
-        android.graphics.Paint normalPaint = new android.graphics.Paint();
-        normalPaint.setColor(android.graphics.Color.BLACK);
-        normalPaint.setTextSize(24f);
-        normalPaint.setTypeface(android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.NORMAL));
-        normalPaint.setAntiAlias(false);
-
-        android.graphics.Paint boldPaint = new android.graphics.Paint();
-        boldPaint.setColor(android.graphics.Color.BLACK);
-        boldPaint.setTextSize(25f);
-        boldPaint.setTypeface(android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD));
-        boldPaint.setAntiAlias(false);
-
-        android.graphics.Paint linePaint = new android.graphics.Paint();
-        linePaint.setColor(android.graphics.Color.BLACK);
-        linePaint.setStrokeWidth(2.0f);
-
-        // Calcular altura dinámica proporcional y legible
-        int topMargin = 12;
-        int totalHeight = topMargin + (receiptLogo != null ? receiptLogo.getHeight() + 10 : 0);
-        for (String line : lines) {
-            String trimmed = line.trim();
-            if (trimmed.startsWith("[LOGO]")) {
-                continue;
-            } else if (trimmed.startsWith("[TITLE]")) {
-                if (receiptLogo != null && trimmed.toUpperCase().contains("PANITAS")) continue;
-                totalHeight += 36;
-            } else if (trimmed.startsWith("[C][B]") || (trimmed.startsWith("[B]") && trimmed.toUpperCase().contains("TOTAL"))) {
-                totalHeight += 36;
-            } else if (trimmed.startsWith("[B]") || trimmed.startsWith("[C]")) {
-                totalHeight += 30;
-            } else if (trimmed.startsWith("[SEP]") || trimmed.startsWith("---") || trimmed.startsWith("===")) {
-                totalHeight += 12;
-            } else if (trimmed.isEmpty()) {
-                totalHeight += 10;
-            } else {
-                totalHeight += 30;
-            }
+        android.graphics.Bitmap logo = text != null && text.contains("[LOGO]") ? createReceiptLogoBitmap() : null;
+        try {
+            return ReceiptRenderer.render(text, logo);
+        } finally {
+            if (logo != null) logo.recycle();
         }
-        totalHeight += 20; // Margen inferior
-
-        android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(width, totalHeight, android.graphics.Bitmap.Config.ARGB_8888);
-        android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
-        canvas.drawColor(android.graphics.Color.WHITE);
-
-        int y = topMargin;
-        if (receiptLogo != null) {
-            float logoX = Math.max(10, (width - receiptLogo.getWidth()) / 2f);
-            canvas.drawBitmap(receiptLogo, logoX, y, null);
-            y += receiptLogo.getHeight() + 10;
-        }
-        for (String rawLine : lines) {
-            String line = rawLine.trim();
-
-            if (line.startsWith("[LOGO]")) {
-                continue;
-            } else if (line.startsWith("[SEP]") || line.startsWith("---") || line.startsWith("===")) {
-                y += 4;
-                canvas.drawLine(14, y, width - 14, y, linePaint);
-                y += 8;
-            } else if (line.startsWith("[TITLE]")) {
-                if (receiptLogo != null && line.toUpperCase().contains("PANITAS")) continue;
-                String content = line.substring(7).trim();
-                float textWidth = titlePaint.measureText(content);
-                float x = Math.max(10, (width - textWidth) / 2f);
-                canvas.drawText(content, x, y + 26, titlePaint);
-                y += 36;
-            } else if (line.startsWith("[C][B]") || (line.startsWith("[B]") && line.toUpperCase().contains("TOTAL"))) {
-                String content = line.replace("[C]", "").replace("[B]", "").trim();
-                float textWidth = titlePaint.measureText(content);
-                float x = Math.max(10, (width - textWidth) / 2f);
-                canvas.drawText(content, x, y + 26, titlePaint);
-                y += 36;
-            } else if (line.startsWith("[C]")) {
-                String content = line.substring(3).trim();
-                boolean isBold = content.startsWith("[B]");
-                if (isBold) content = content.substring(3).trim();
-                android.graphics.Paint p = isBold ? boldPaint : normalPaint;
-                float textWidth = p.measureText(content);
-                float x = Math.max(10, (width - textWidth) / 2f);
-                canvas.drawText(content, x, y + 22, p);
-                y += 30;
-            } else if (line.startsWith("[B]")) {
-                String content = line.substring(3).trim();
-                boolean centered = content.startsWith("[C]");
-                if (centered) content = content.substring(3).trim();
-                float textWidth = boldPaint.measureText(content);
-                float x = centered ? Math.max(10, (width - textWidth) / 2f) : 15f;
-                canvas.drawText(content, x, y + 22, boldPaint);
-                y += 30;
-            } else if (line.startsWith("[R]")) {
-                String content = line.substring(3).trim();
-                float textWidth = normalPaint.measureText(content);
-                float x = Math.max(10, width - 15 - textWidth);
-                canvas.drawText(content, x, y + 22, normalPaint);
-                y += 30;
-            } else if (line.contains("  ") && line.length() > 20) {
-                // Fila con dos columnas (ej. Nombre del producto y Precio)
-                int lastSpace = line.lastIndexOf("  ");
-                String left = line.substring(0, lastSpace).trim();
-                String right = line.substring(lastSpace).trim();
-
-                canvas.drawText(left, 15, y + 22, normalPaint);
-                float rightWidth = normalPaint.measureText(right);
-                canvas.drawText(right, width - 15 - rightWidth, y + 22, normalPaint);
-                y += 30;
-            } else if (line.isEmpty()) {
-                y += 10;
-            } else {
-                canvas.drawText(line, 15, y + 22, normalPaint);
-                y += 30;
-            }
-        }
-
-        return bitmap;
     }
 
-    /**
-     * Crea una marca para recibos térmicos a partir del logo oficial.
-     *
-     * La imagen corporativa contiene un fondo negro con ilustraciones de comida. Una conversión
-     * normal a escala de grises convierte ese fondo en una mancha. Aquí se recorta solamente el
-    /**
-     * Crea o carga el logotipo optimizado para recibos térmicos 80mm.
-     * Prioriza el recurso dedicado R.drawable.receipt_logo (monocromático de alto contraste),
-     * y si no existe, procesa R.drawable.app_icon extrayendo con precisión las letras rojas
-     * de la marca con contraste limpio para evitar manchas térmicas.
-     */
+    /** Dedicated monochrome logo; density must not enlarge thermal-paper graphics. */
     private android.graphics.Bitmap createReceiptLogoBitmap() {
         try {
             // 1. Intentar cargar el recurso gráfico dedicado de alta definición para recibos
             int receiptResId = context.getResources().getIdentifier("receipt_logo", "drawable", context.getPackageName());
             if (receiptResId != 0) {
+                android.graphics.BitmapFactory.Options options = new android.graphics.BitmapFactory.Options();
+                options.inScaled = false;
                 android.graphics.Bitmap logo = android.graphics.BitmapFactory.decodeResource(
-                        context.getResources(), receiptResId);
+                        context.getResources(), receiptResId, options);
                 if (logo != null) {
                     return logo;
                 }

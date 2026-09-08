@@ -47,3 +47,7 @@ gha-creds-*.json
 android-elo-kiosk/build/
 android-elo-kiosk/build_temp/
 android-elo-kiosk/signing/
+android-management/build/
+# Direct APKs stay outside Firebase Spark Hosting and are published as releases.
+services/whatsapp-bot/.env
+services/whatsapp-bot/auth_info_baileys/

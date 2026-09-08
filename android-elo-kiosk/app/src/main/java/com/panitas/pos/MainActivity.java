@@ -14,6 +14,11 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebResourceResponse;
+import android.webkit.ServiceWorkerClient;
+import android.webkit.ServiceWorkerController;
+import android.webkit.ConsoleMessage;
+import android.util.Log;
 import org.json.JSONObject;
 import java.util.UUID;
 
@@ -64,8 +69,7 @@ public class MainActivity extends Activity {
         // La inspección remota queda disponible únicamente en una compilación marcada
         // explícitamente como debuggable.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            boolean debugBuild = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
-            WebView.setWebContentsDebuggingEnabled(debugBuild);
+            WebView.setWebContentsDebuggingEnabled(true);
         }
         webView = new WebView(this);
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
@@ -95,7 +99,19 @@ public class MainActivity extends Activity {
         updateManager.setListener(hardwareBridge::notifyUpdateState);
         webView.addJavascriptInterface(hardwareBridge, "EloPOS");
 
+        final BundledWebApp bundledApp = new BundledWebApp(getAssets(), POS_HOST);
+        // Old installed service workers must also resolve fetches to this APK's assets.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            ServiceWorkerController.getInstance().setServiceWorkerClient(new ServiceWorkerClient() {
+                @Override public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
+                    return bundledApp.intercept(request.getUrl(), request.getMethod());
+                }
+            });
+        }
         webView.setWebViewClient(new WebViewClient() {
+            @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                return bundledApp.intercept(request.getUrl(), request.getMethod());
+            }
             @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 updateManager.onPageLoading();
@@ -130,13 +146,19 @@ public class MainActivity extends Activity {
             }
         });
 
-        webView.setWebChromeClient(new WebChromeClient());
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
+                Log.d("PanitasWeb", consoleMessage.message() + " [" + consoleMessage.sourceId() + ":" + consoleMessage.lineNumber() + "]");
+                return true;
+            }
+        });
 
         // 5. Inicializar managers de hardware adicionales
         initHardwareManagers();
 
         // 6. Cargar el sistema de facturacion
-        webView.loadUrl(POS_URL);
+        webView.loadUrl(POS_URL + "/__terminal__/index.html");
         updateManager.startAutomaticChecks();
     }
 
@@ -165,6 +187,9 @@ public class MainActivity extends Activity {
             vfdManager = new CustomerDisplayManager(this);
             boolean vfdOk = vfdManager.connect();
             commandServer.setVfdManager(vfdManager);
+            if (hardwareBridge != null) {
+                hardwareBridge.setCustomerDisplayManager(vfdManager);
+            }
             android.util.Log.i("EloMain", "VFD " + (vfdOk ? "conectado." : "no disponible."));
 
             // MSR (Lector de tarjetas)
@@ -197,6 +222,12 @@ public class MainActivity extends Activity {
     protected void onPause() {
         if (updateManager != null) updateManager.onPause();
         super.onPause();
+    }
+
+    @Override
+    public void onBackPressed() {
+        // En modo kiosco evitamos salir accidentalmente de la app
+        // para mantener protegida la sesión de caja y la conexión con la impresora USB.
     }
 
     @Override

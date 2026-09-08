@@ -88,6 +88,16 @@ if (Test-Path -LiteralPath $ResolvedWorkDir) {
 New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
+Write-Host "0. Compilando y empaquetando la interfaz local..."
+$PreviousTerminalBuild = $env:PANITAS_TERMINAL_BUILD
+try {
+    $env:PANITAS_TERMINAL_BUILD = '1'
+    & node (Join-Path $RepoRoot 'node_modules\vite\bin\vite.js') build --outDir "$WorkDir\web-dist"
+    Assert-NativeCommand 'La compilación de interfaz local'
+    & node (Join-Path $RepoRoot 'tools\package-terminal-web.mjs') "$WorkDir\assets\www"
+    Assert-NativeCommand 'El empaquetado de interfaz local'
+} finally { $env:PANITAS_TERMINAL_BUILD = $PreviousTerminalBuild }
+
 Write-Host "1. Compilando recursos con aapt2..."
 $ResDir = "$AppDir\src\main\res"
 & "$BuildTools\aapt2.exe" compile --dir $ResDir -o "$WorkDir\res.zip"
@@ -117,7 +127,7 @@ Assert-NativeCommand "La conversión DEX"
 Write-Host "5. Agregando classes.dex al APK con jar.exe..."
 $JarExe = "$JavaHome\bin\jar.exe"
 Push-Location $WorkDir
-& $JarExe uf "app-unaligned.apk" "classes.dex"
+& $JarExe uf "app-unaligned.apk" "classes.dex" "assets"
 Assert-NativeCommand "La inserción de classes.dex"
 Pop-Location
 
@@ -147,8 +157,11 @@ if ($SignerOutput -notmatch 'certificate SHA-256 digest:\s*([0-9a-fA-F]{64})') {
 $SigningCertificateSha256 = $Matches[1].ToUpperInvariant()
 
 Write-Host "8. Creando paquetes ZIP para descarga..."
-# Limpiar ejecutables directos no permitidos en Firebase Spark
-Get-ChildItem $OutDir -Filter "*.apk*" | Remove-Item -Force -ErrorAction SilentlyContinue
+# Spark does not host direct APKs. Never delete another build's installers;
+# management APKs are produced outside public/ and distributed by GitHub Releases.
+if (Get-ChildItem -LiteralPath $OutDir -Filter '*.apk*') {
+    throw 'Hay APKs directas dentro de public/downloads. Muévelas al directorio de distribución externo antes de publicar en Spark.'
+}
 
 $ApkZip = "$OutDir\LosPanitas-Elo-POS-APK.zip"
 $VersionSlug = ($VersionName -replace '[^0-9A-Za-z._-]', '-')

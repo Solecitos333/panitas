@@ -25,10 +25,10 @@ export function renderLogin(root, handlers, message = '') {
           <div class="login-mobile-brand"><img src="/logo.png" alt="Logo de Los Panitas by Nechy"><strong>Los Panitas by Nechy</strong></div>
           <span class="eyebrow">Bienvenido</span>
           <h2>Inicia tu turno</h2>
-          <p>Introduce tu usuario personal y contraseña.</p>
+          <p>Introduce tu usuario personal y contraseña. El PIN de caja se utiliza después de entrar.</p>
           ${message ? `<div class="login-message">${escapeHtml(message)}</div>` : ''}
           <form id="login-form" class="stack-form">
-            <label>Usuario o Correo<input name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" minlength="3" maxlength="80" required placeholder="ej. nechypena91@gmail.com o ADMIN"></label>
+            <label>Usuario o Correo<input name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" minlength="3" maxlength="80" required value="${escapeHtml(handlers.initialUsername || '')}" placeholder="ej. usuario o correo@ejemplo.com"></label>
             <label>Contraseña
               <div class="password-field">
                 <input name="password" type="password" autocomplete="current-password" minlength="6" required>
@@ -37,12 +37,14 @@ export function renderLogin(root, handlers, message = '') {
             </label>
             <button class="button primary full" type="submit">Entrar al sistema</button>
           </form>
-          <p class="login-security-note"><i data-lucide="shield-check"></i>Tu contraseña se cifra en Firebase y nunca se guarda en la base de datos del restaurante.</p>
+          ${handlers.googleAvailable ? '<button type="button" class="button secondary full" data-google-login style="margin-top:12px">Continuar con Google</button><p class="login-security-note">Solo las cuentas autorizadas tienen acceso al negocio.</p>' : ''}
+          <p class="login-security-note"><i data-lucide="shield-check"></i>Firebase Authentication gestiona tu contraseña; no se guarda en los documentos del restaurante.</p>
         </div>
       </section>
     </main>
   `;
   createIcons({ icons, attrs: { 'aria-hidden': 'true' } });
+  root.querySelector('[data-google-login]')?.addEventListener('click', (event) => handlers.signInGoogle(event.currentTarget));
   root.querySelector('[data-toggle-password]').addEventListener('click', () => {
     const input = root.querySelector('[name=password]');
     input.type = input.type === 'password' ? 'text' : 'password';

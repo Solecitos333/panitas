@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import { createHash } from 'node:crypto';
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { stripRemoteFontImports } from './tools/lib/terminal-assets.mjs';
 
 // También las entregas que solo cambian la web deben renovar el Service Worker.
 // El identificador depende del contenido, no de la fecha de compilación.
@@ -36,7 +37,12 @@ function versionServiceWorker() {
 }
 
 export default defineConfig({
-  plugins: [versionServiceWorker()],
+  // APK assets are signed together, so they must not contain a web update cache or installers.
+  publicDir: process.env.PANITAS_TERMINAL_BUILD === '1' ? false : 'public',
+  plugins: process.env.PANITAS_TERMINAL_BUILD === '1' ? [{
+    name: 'terminal-local-fonts', enforce: 'pre',
+    transform(code, id) { if (id.split('?')[0].endsWith('.css')) return stripRemoteFontImports(code); }
+  }] : [versionServiceWorker()],
   build: {
     // Android 8.1 de la ELO puede conservar un WebView anterior a Chromium 85.
     // Esbuild transpila optional chaining/nullish coalescing para Chromium 61.

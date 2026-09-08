@@ -37,7 +37,7 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET' || requestUrl.origin !== self.location.origin) return;
 
   // Instaladores, manifiestos y checksums nunca deben quedar congelados en el SW.
-  if (requestUrl.pathname.startsWith('/downloads/')) {
+  if (requestUrl.pathname.startsWith('/downloads/') || requestUrl.pathname.startsWith('/__/auth/')) {
     event.respondWith(fetch(event.request, { cache: 'no-store' }));
     return;
   }

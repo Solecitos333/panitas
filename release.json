@@ -1,12 +1,12 @@
 {
-  "versionName": "1.4.0-rc.9",
-  "versionCode": 16,
-  "channel": "release-candidate",
+  "versionName": "1.4.1",
+  "versionCode": 21,
+  "channel": "stable",
   "minimumSupportedVersionCode": 10,
   "mandatory": false,
   "releaseNotes": [
-    "Corrección de corte continuo Star TSP143 eliminando fragmentación de papel.",
-    "Estabilización de pantalla de venta y eliminación de recargas automáticas no deseadas.",
-    "Prevención de diálogos y redirecciones externas durante la operación del POS."
+    "Operación con cuenta personal y PIN de seis dígitos; entrega con NECHY, sin cuenta compartida.",
+    "Nómina en efectivo con caja verificada, registro atómico y protección frente a reintentos.",
+    "Instalador móvil de gestión disponible; se conserva la impresión de altura variable y corte único."
   ]
 }

@@ -14,6 +14,15 @@ export function renderDashboard(state) {
   const pending = state.orders.filter((item) => !['closed', 'cancelled'].includes(item.status));
   const openCash = state.cashSessions.find((item) => item.status === 'open' && item.openedBy === state.user.uid);
   return `
+    <details class="surface-card management-install" style="padding:16px;margin-bottom:16px">
+      <summary style="cursor:pointer;font-weight:700">Mi acceso · Instalar en mi teléfono</summary>
+      <p>Este panel muestra la información permitida para tu usuario. Para cambiar tu código de caja, abre «Mi PIN y contraseña».</p>
+      <button type="button" class="button secondary" data-personal-settings>Mi PIN y contraseña</button>
+      <p><strong>iPhone:</strong> abre esta página en Safari → Compartir → Añadir a pantalla de inicio → Abrir como app.</p>
+      <p><strong>Android:</strong> puedes instalar la web desde el menú de Chrome o descargar Panitas Gestión. La APK de gestión abre este panel en el navegador seguro del teléfono y no controla la gaveta.</p>
+      <a class="button secondary" href="/downloads/LosPanitas-Gestion-Android.apk" download>Descargar APK de gestión</a>
+      <p>Necesitas conexión para sincronizar datos y guardar cambios. Nunca compartas tu contraseña ni tu PIN.</p>
+    </details>
     <div class="dashboard-desktop">
     <section class="panel-heading"><div><span class="eyebrow">Resumen operativo</span><h2>Así marcha el restaurante</h2><p>Ventas, cocina y caja en una sola lectura.</p></div><button class="button secondary" data-refresh><i data-lucide="refresh-cw"></i> Actualizar</button></section>
     <div class="metric-grid">
@@ -193,11 +202,17 @@ export function renderPos(state) {
             `;
           }).join('')}
         </div>
-        <div id="pos-products" class="product-grid">${activeProducts.length ? activeProducts.map(productCard).join('') : empty('package-open', 'Catálogo vacío', 'Agrega el primer producto para comenzar a vender.')}</div>
+        <div id="pos-products" class="product-grid">
+          ${activeProducts.length ? activeProducts.map(productCard).join('') : empty('package-open', 'Catálogo vacío', 'Agrega el primer producto para comenzar a vender.')}
+          <div id="pos-no-matches" class="empty-state" hidden style="grid-column: 1 / -1; padding: 48px 20px; text-align: center; color: var(--muted);">
+            <i data-lucide="search-x" style="width: 44px; height: 44px; stroke-width: 1.5; opacity: 0.6; margin: 0 auto 12px; display:block;"></i>
+            <strong style="display:block; color: #eee; font-size: 1.05rem; margin-bottom: 4px;">No se encontraron productos</strong>
+            <p style="margin: 0; font-size: 0.85rem;">Prueba con otro término o selecciona la categoría «Todos».</p>
+          </div>
+        </div>
       </section>
       <aside class="surface-card cart-panel pos-fast-cart">
         <form id="pos-checkout-form" class="pos-checkout-form-inner">
-          <input type="hidden" name="paymentMethod" id="pos-payment-method" value="${state.posPaymentMethod || 'cash'}">
         <!-- PASO 1: LO QUE PIDIÓ EL CLIENTE -->
         <header class="pos-cart-header">
           <div>
@@ -251,7 +266,7 @@ export function renderPos(state) {
             <div class="form-grid two">
               <label>Descuento
                 <div style="display:flex;gap:4px;">
-                  <input name="posDiscountValue" id="pos-discount-value" type="number" min="0" step="1" placeholder="0" value="${state.posDiscountState?.discount || ''}">
+                  <input name="posDiscountValue" id="pos-discount-value" type="text" min="0" placeholder="0" value="${state.posDiscountState?.discount || ''}" data-touch-numpad="decimal" data-numpad-title="Descuento" readonly inputmode="none" style="cursor:pointer;">
                   <select name="posDiscountType" id="pos-discount-type" style="width:72px;padding:6px;">
                     <option value="amount" ${state.posDiscountState?.discountType === 'amount' ? 'selected' : ''}>RD$</option>
                     <option value="percent" ${state.posDiscountState?.discountType === 'percent' ? 'selected' : ''}>%</option>
@@ -272,6 +287,7 @@ export function renderPos(state) {
 
         <!-- PASO 2: FORMA DE PAGO -->
           <div id="pos-payment-options">
+          <input type="hidden" name="paymentMethod" id="pos-payment-method" value="${escapeHtml(state.posPaymentMethod || 'cash')}">
           <div class="pos-step-label">
             <span class="pos-step-badge">2</span>
             <span>¿Cómo paga?</span>
@@ -283,7 +299,7 @@ export function renderPos(state) {
             </button>
             <button type="button" class="pos-pay-btn ${state.posPaymentMethod === 'card' ? 'active' : ''}" data-pos-method="card">
               <i data-lucide="credit-card"></i>
-              <span>Tarjeta Azul</span>
+              <span>Tarjeta</span>
             </button>
             <button type="button" class="pos-pay-btn ${state.posPaymentMethod === 'transfer' ? 'active' : ''}" data-pos-method="transfer">
               <i data-lucide="landmark"></i>
@@ -292,6 +308,10 @@ export function renderPos(state) {
             <button type="button" class="pos-pay-btn fiao ${state.posPaymentMethod === 'credit' ? 'active' : ''}" data-pos-method="credit">
               <i data-lucide="book-open"></i>
               <span>Fiao</span>
+            </button>
+            <button type="button" class="pos-pay-btn delivery ${state.posPaymentMethod === 'delivery_cod' ? 'active' : ''}" data-pos-method="delivery_cod">
+              <i data-lucide="bike"></i>
+              <span>Delivery</span>
             </button>
           </div>
 
@@ -303,9 +323,10 @@ export function renderPos(state) {
             <div class="pos-step-label">
               <span>Monto entregado (DOP)</span>
             </div>
-            <input id="pos-cash-received" type="number" step="0.01" min="0"
-              value="${escapeHtml(draft.cashReceived || '')}" placeholder="0.00" autocomplete="off" inputmode="decimal"
-              class="pos-cash-input">
+            <input id="pos-cash-received" type="text"
+              value="${escapeHtml(draft.cashReceived || '')}" placeholder="0.00" autocomplete="off" inputmode="none" readonly
+              data-touch-numpad="money" data-numpad-title="Efectivo Entregado"
+              class="pos-cash-input" style="cursor:pointer;">
             <div class="pos-bill-grid">
               <button type="button" class="pos-bill-btn exact" data-cash-val="exact">Exacto</button>
               <button type="button" class="pos-bill-btn" data-cash-val="100">$100</button>
@@ -323,14 +344,14 @@ export function renderPos(state) {
             </details>
           </div>
 
-          <!-- Panel Tarjeta Azul -->
+          <!-- Panel Tarjeta -->
           <div id="pos-card-panel" class="pos-method-panel ${state.posPaymentMethod === 'card' ? 'visible' : ''}">
             <div class="pos-method-detail-card" style="border-color:rgba(84,201,141,.4);background:rgba(84,201,141,.07);">
               <div class="pos-method-detail-title">
                 <i data-lucide="credit-card"></i>
-                <strong>Terminal Azul (Verifone)</strong>
+                <strong>Cobro con Tarjeta (Terminal / Verifone)</strong>
               </div>
-              <p class="pos-method-detail-hint">Cobra primero en la maquinita de Azul, luego presiona Cobrar aquí para registrar e imprimir la factura.</p>
+              <p class="pos-method-detail-hint">Cobra primero en la terminal o verifone de tarjeta, luego presiona Cobrar aquí para registrar e imprimir la factura.</p>
               <label>No. de Aprobación (Opcional)
                 <input name="cardReference" id="pos-card-reference" value="${escapeHtml(draft.cardReference || '')}" placeholder="Ej: 123456" maxlength="60" inputmode="numeric">
               </label>
@@ -374,9 +395,9 @@ export function renderPos(state) {
 
               <input type="hidden" name="fiaoClientId" id="pos-fiao-client-id" value="${escapeHtml(draft.fiaoClientId || '')}">
 
-              <!-- Nombre o apodo obligatorio -->
+              <!-- Nombre o apodo obligatorio al fiar -->
               <label style="font-size:0.82rem;font-weight:600;">Nombre o apodo del deudor <strong style="color:#f85149;">*</strong>
-                <input name="fiaoClientName" id="pos-fiao-name" value="${escapeHtml(draft.fiaoClientName || '')}" placeholder="Ej: Pedro Mecánico, Doña Carmen..." maxlength="160" required>
+                <input name="fiaoClientName" id="pos-fiao-name" value="${escapeHtml(draft.fiaoClientName || '')}" placeholder="Ej: Pedro Mecánico, Doña Carmen..." maxlength="160">
               </label>
 
               <!-- Teléfono / WhatsApp de contacto -->
@@ -405,7 +426,70 @@ export function renderPos(state) {
               </div>
             </div>
           </div>
+
+          <!-- Panel Delivery (Contra Entrega) -->
+          <div id="pos-delivery-panel" class="pos-method-panel ${state.posPaymentMethod === 'delivery_cod' ? 'visible' : ''}">
+            <div class="pos-method-detail-card" style="border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.07);">
+              <div class="pos-method-detail-title">
+                <i data-lucide="bike" style="color:#f59e0b;"></i>
+                <strong>Despacho Delivery — Pago Contra Entrega</strong>
+              </div>
+              <p class="pos-method-detail-hint">El efectivo no entra a la gaveta hasta que el repartidor regrese y entregue el dinero recaudado.</p>
+
+              <!-- Selector de Repartidor -->
+              <div style="margin-bottom:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+                  <span style="font-size:0.75rem;color:var(--muted);font-weight:600;">Asignar Repartidor / Mensajero <strong style="color:#f59e0b;">*</strong>:</span>
+                  <button type="button" class="button secondary compact" data-driver-new style="font-size:0.72rem;padding:2px 7px;height:auto;line-height:1.2;gap:3px;">
+                    <i data-lucide="user-plus" style="width:12px;height:12px;"></i> + Registrar
+                  </button>
+                </div>
+                <select name="deliveryDriverId" id="pos-delivery-driver-select" style="font-size:0.85rem;width:100%;">
+                  <option value="">-- Seleccionar Repartidor --</option>
+                  ${(state.deliveryDrivers || []).filter(d => d.active !== false).map(d => `<option value="${escapeHtml(d.id)}" data-name="${escapeHtml(d.name)}" data-phone="${escapeHtml(d.phone || '')}" ${draft.deliveryDriverId === d.id ? 'selected' : ''}>${escapeHtml(d.name)}${d.phone ? ' · ' + escapeHtml(d.phone) : ''}${d.vehicle ? ' (' + escapeHtml(d.vehicle) + ')' : ''}</option>`).join('')}
+                </select>
+                <input type="hidden" name="deliveryDriverName" id="pos-delivery-driver-name" value="${escapeHtml(draft.deliveryDriverName || '')}">
+              </div>
+
+              <!-- Nombre del cliente y teléfono -->
+              <div class="form-grid two">
+                <label style="font-size:0.82rem;font-weight:600;">Cliente receptor
+                  <input name="deliveryClientName" id="pos-delivery-client-name" value="${escapeHtml(draft.deliveryClientName || '')}" placeholder="Nombre del cliente" maxlength="160">
+                </label>
+                <label style="font-size:0.82rem;font-weight:600;">Teléfono móvil
+                  <input name="deliveryPhone" id="pos-delivery-phone" type="tel" inputmode="tel" value="${escapeHtml(draft.deliveryPhone || '')}" placeholder="809... o 829..." maxlength="30">
+                </label>
+              </div>
+
+              <!-- Dirección de entrega obligatoria -->
+              <label style="font-size:0.82rem;font-weight:600;margin-top:6px;">Dirección de entrega <strong style="color:#f59e0b;">*</strong>
+                <input name="deliveryAddress" id="pos-delivery-address" value="${escapeHtml(draft.deliveryAddress || '')}" placeholder="Calle, número, sector, punto de referencia..." maxlength="300">
+              </label>
+
+              <!-- Cambio / Devuelta requerida -->
+              <label style="font-size:0.82rem;font-weight:600;margin-top:6px;">El cliente pagará con (RD$, informativo)
+                <input name="deliveryChangeFor" id="pos-delivery-change-for" type="text" data-touch-numpad="money" data-numpad-title="Cambio para el cliente" placeholder="Ej: 1000 (Opcional)" value="${draft.deliveryChangeFor || ''}" readonly inputmode="none" style="cursor:pointer;">
+              </label>
+
+              <!-- Instrucciones para el repartidor -->
+              <label style="font-size:0.82rem;font-weight:600;margin-top:6px;">Instrucciones para el repartidor
+                <input name="deliveryNotes" id="pos-delivery-notes" value="${escapeHtml(draft.deliveryNotes || '')}" placeholder="Ej: Timbre no sirve, llamar antes de llegar..." maxlength="300">
+              </label>
+            </div>
           </div>
+          </div>
+          </div>
+
+          <!-- Opción de comprobante impreso -->
+          <div class="pos-print-option-row" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:10px;margin-bottom:8px;">
+            <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#ddd;cursor:pointer;user-select:none;margin:0;">
+              <input type="checkbox" name="printReceipt" id="pos-print-receipt" ${draft.printReceipt !== false ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--brand-2);cursor:pointer;">
+              <i data-lucide="printer" style="width:16px;height:16px;color:var(--brand-2);"></i>
+              <span>Imprimir factura al cobrar</span>
+            </label>
+            <span id="pos-print-status-badge" style="font-size:0.75rem;font-weight:700;padding:2px 8px;border-radius:6px;background:${draft.printReceipt !== false ? 'rgba(63,185,80,.18)' : 'rgba(255,255,255,.08)'};color:${draft.printReceipt !== false ? '#3fb950' : 'var(--muted)'};">
+              ${draft.printReceipt !== false ? 'Con ticket' : 'Sin ticket'}
+            </span>
           </div>
 
           <!-- El cobro queda fijo al fondo del formulario para que nunca tape
@@ -677,6 +761,11 @@ function productCard(item) {
         <span class="stock-dot"></span>
         ${stockLabel}
       </span>
+      ${isOutOfStock ? `
+        <span class="quick-prep-chip" data-stock-adjust="${item.id}" style="font-size:0.68rem;padding:2px 6px;border-radius:4px;background:rgba(63,185,80,.2);color:#3fb950;font-weight:800;cursor:pointer;margin-left:auto;margin-right:6px;" title="Preparación extra en cocina">
+          + Cocinado
+        </span>
+      ` : ''}
       <b class="product-tile-price">${formatMoney(item.priceCents)}</b>
     </div>
   </button>`;
@@ -715,7 +804,7 @@ export function renderCartTotals(items, discountState = { discount: 0, discountT
   return `<div class="cart-totals">
     <div class="cart-total-row"><span>Subtotal</span><b>${formatMoney(res.subtotalCents)}</b></div>
     ${res.discountCents > 0 ? `<div class="cart-total-row discount" style="color:#ef4444;"><span>Descuento</span><b>-${formatMoney(res.discountCents)}</b></div>` : ''}
-    <div class="cart-total-row"><span>ITBIS (18%)</span><b>${formatMoney(res.taxCents)}</b></div>
+    <div class="cart-total-row"><span>ITBIS</span><b>${formatMoney(res.taxCents)}</b></div>
     ${res.tipCents > 0 ? `<div class="cart-total-row tip" style="color:var(--brand-2);"><span>Propina Ley (10%)</span><b>${formatMoney(res.tipCents)}</b></div>` : ''}
     <div class="grand-total"><span>Total a Pagar</span><strong>${formatMoney(res.totalCents)}</strong></div>
   </div>`;

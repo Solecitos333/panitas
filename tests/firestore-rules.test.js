@@ -24,6 +24,7 @@ beforeEach(async () => {
       await setDoc(doc(firestore, 'users', role), { active: true, roles: [role], email: `${role}@example.test` });
     }
     await setDoc(doc(firestore, 'settings', 'general'), { name: 'Los Panitas by Nechy' });
+    await setDoc(doc(firestore, 'employees', 'sample-employee'), { name: 'Empleado de prueba', active: true, roleTitle: 'Cocina' });
     await setDoc(doc(firestore, 'products', 'p1'), { name: 'Producto', priceCents: 10000, costCents: 5000, stock: 10, active: true });
     await setDoc(doc(firestore, 'invoices', 'i1'), {
       documentType: 'invoice', invoiceNumber: 'PAN-001001', status: 'pending', totalCents: 10000,
@@ -53,11 +54,99 @@ test('dos usuarios concurrentes no pueden reservar el mismo PIN y nadie puede le
   const cashierDb = environment.authenticatedContext('cashier', auth('cashier')).firestore();
   const owner = new DataService(ownerDb, { uid: 'owner', displayName: 'Propietario' });
   const cashier = new DataService(cashierDb, { uid: 'cashier', displayName: 'Caja' });
-  const results = await Promise.allSettled([owner.saveMyDrawerPin('5824'), cashier.saveMyDrawerPin('5824')]);
+  const results = await Promise.allSettled([owner.saveMyDrawerPin('582401'), cashier.saveMyDrawerPin('582401')]);
   assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
-  await assertFails(getDoc(doc(ownerDb, 'pinClaims', '5824')));
+  await assertFails(getDoc(doc(ownerDb, 'pinClaims', '582401')));
   await assertFails(getDocs(collection(ownerDb, 'pinClaims')));
-  await assertFails(setDoc(doc(ownerDb, 'userSecrets', 'cashier'), { drawerPin: '7492', pinUnique: true, updatedBy: 'owner', updatedAt: serverTimestamp() }));
+  await assertFails(setDoc(doc(ownerDb, 'userSecrets', 'cashier'), { drawerPin: '749201', pinUnique: true, updatedBy: 'owner', updatedAt: serverTimestamp() }));
+});
+
+test('la sesión personal nunca acepta el PIN de otra cuenta', async () => {
+  const owner = new DataService(environment.authenticatedContext('owner', auth('owner')).firestore(), { uid: 'owner' });
+  const cashier = new DataService(environment.authenticatedContext('cashier', auth('cashier')).firestore(), { uid: 'cashier' });
+  await owner.saveMyDrawerPin('628403');
+  await cashier.saveMyDrawerPin('739502');
+  await assert.rejects(cashier.verifyDrawerPin('628403'), /PIN incorrecto/);
+  assert.equal((await cashier.verifyDrawerPin('739502')).user.id, 'cashier');
+});
+
+test('nómina en efectivo acepta la llamada del formulario y es atómica e idempotente', async () => {
+  const db = environment.authenticatedContext('owner', auth('owner')).firestore();
+  const service = new DataService(db, { uid: 'owner', active: true, roles: ['owner'], displayName: 'Propietario' });
+  const cashSessionId = await service.openCashSession({ openingCents: 50000 });
+  const input = { requestId: 'payroll-review-000001', employeeId: 'sample-employee', baseSalaryCents: 10000, paymentMethod: 'cash', cashSessionId, period: 'Prueba' };
+  const results = await Promise.all([service.createPayrollPayment(input), service.createPayrollPayment(input)]);
+  assert.equal(results[0].id, results[1].id);
+  assert.equal((await getDocs(collection(db, 'payrollPayments'))).size, 1);
+  assert.equal((await getDocs(collection(db, 'cashMovements'))).size, 1);
+  assert.equal((await getDoc(doc(db, 'cashSessions', cashSessionId))).data().expectedCents, 40000);
+  const record = (await getDoc(doc(db, 'payrollPayments', input.requestId))).data();
+  const movement = (await getDoc(doc(db, 'cashMovements', record.cashMovementId))).data();
+  assert.equal(movement.payrollPaymentId, input.requestId);
+  assert.equal(movement.amountCents, record.netAmountCents);
+  await assert.rejects(service.createPayrollPayment({ ...input, baseSalaryCents: 9000 }), /otro pago/);
+  await service.closeCashSession(cashSessionId, { closingCents: 40000 });
+  assert.equal((await service.createPayrollPayment(input)).id, input.requestId);
+});
+
+test('fallo de nómina no deja ni pago ni salida y no usa cajas ajenas', async () => {
+  const db = environment.authenticatedContext('owner', auth('owner')).firestore();
+  const service = new DataService(db, { uid: 'owner', active: true, roles: ['owner'] });
+  const cashSessionId = await service.openCashSession({ openingCents: 1000 });
+  const input = { requestId: 'payroll-failure-000001', employeeId: 'sample-employee', baseSalaryCents: 10000, paymentMethod: 'cash', cashSessionId };
+  await assert.rejects(service.createPayrollPayment(input), /supera el efectivo/);
+  await assert.rejects(service.createPayrollPayment({ ...input, cashSessionId: 'shift-cashier' }), /otro usuario/);
+  assert.equal((await getDocs(collection(db, 'payrollPayments'))).size, 0);
+  assert.equal((await getDocs(collection(db, 'cashMovements'))).size, 0);
+  assert.equal((await getDoc(doc(db, 'cashSessions', cashSessionId))).data().expectedCents, 1000);
+});
+
+test('nómina por transferencia no altera caja y exige empleado activo', async () => {
+  const db = environment.authenticatedContext('owner', auth('owner')).firestore();
+  const service = new DataService(db, { uid: 'owner', active: true, roles: ['owner'] });
+  const input = { requestId: 'payroll-transfer-00001', employeeId: 'sample-employee', baseSalaryCents: 10000, paymentMethod: 'transfer' };
+  const result = await service.createPayrollPayment(input);
+  assert.equal(result.cashMovementId, null);
+  assert.equal((await getDocs(collection(db, 'cashMovements'))).size, 0);
+  await updateDoc(doc(db, 'employees', 'sample-employee'), { active: false });
+  await assert.rejects(service.createPayrollPayment({ ...input, requestId: 'payroll-inactive-00001' }), /no disponible/);
+});
+
+test('reglas impiden separar nómina de su movimiento de efectivo', async () => {
+  const db = environment.authenticatedContext('owner', auth('owner')).firestore();
+  const service = new DataService(db, { uid: 'owner', active: true, roles: ['owner'] });
+  const cashSessionId = await service.openCashSession({ openingCents: 50000 });
+  const valid = await service.createPayrollPayment({ requestId: 'payroll-original-00001', employeeId: 'sample-employee', baseSalaryCents: 1000, paymentMethod: 'cash', cashSessionId });
+  const record = (await getDoc(doc(db, 'payrollPayments', valid.id))).data();
+  await assertFails(setDoc(doc(db, 'payrollPayments', 'payroll-orphan-00001'), {
+    ...record, requestId: 'payroll-orphan-00001', cashMovementId: 'payroll-orphan-00001-cash', createdAt: serverTimestamp()
+  }));
+  const movement = (await getDoc(doc(db, 'cashMovements', record.cashMovementId))).data();
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'cashMovements', 'orphan-cash-movement'), { ...movement, payrollPaymentId: 'missing-payroll', createdAt: serverTimestamp() });
+  batch.update(doc(db, 'cashSessions', cashSessionId), { expectedCents: 48000, lastCashActivityId: 'orphan-cash-movement', updatedAt: serverTimestamp(), updatedBy: 'owner' });
+  await assertFails(batch.commit());
+  assert.equal((await getDoc(doc(db, 'cashSessions', cashSessionId))).data().expectedCents, 49000);
+});
+
+test('venta real, reintento y cierre mantienen saldo y cajero autenticado', async () => {
+  const db = environment.authenticatedContext('owner', auth('owner')).firestore();
+  const service = new DataService(db, { uid: 'owner', active: true, roles: ['owner'], displayName: 'Propietario' });
+  const cashSessionId = await service.openCashSession({ openingCents: 1000 });
+  const input = { requestId: 'sale-delivery-review-001', cashierId: 'cashier', cashierName: 'Otra persona',
+    items: [{ productId: 'p1', name: 'Producto', unitPriceCents: 10000, taxRate: 0, quantity: 1 }],
+    payment: { amountCents: 10000, method: 'cash', tenderedCents: 15000, cashSessionId } };
+  const first = await service.createDirectDocument(input);
+  assert.equal((await service.createDirectDocument(input)).id, first.id);
+  const invoice = (await getDoc(doc(db, 'invoices', first.id))).data();
+  assert.equal(invoice.cashierId, 'owner');
+  assert.equal(invoice.cashierName, 'Propietario');
+  assert.equal((await getDoc(doc(db, 'products', 'p1'))).data().stock, 9);
+  assert.equal((await getDoc(doc(db, 'cashSessions', cashSessionId))).data().expectedCents, 11000);
+  await assertFails(setDoc(doc(db, 'invoices', 'forged-author-00001'), { ...invoice,
+    requestId: 'forged-author-00001', cashierId: 'cashier', documentType: 'quote', paidCents: 0,
+    status: 'pending', lastPaymentId: '', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }));
+  await service.closeCashSession(cashSessionId, { closingCents: 11000 });
 });
 
 test('cambiar PIN libera solo la reserva propia y un fallo conserva el PIN anterior', async () => {
@@ -65,15 +154,15 @@ test('cambiar PIN libera solo la reserva propia y un fallo conserva el PIN anter
   const cashierDb = environment.authenticatedContext('cashier', auth('cashier')).firestore();
   const owner = new DataService(ownerDb, { uid: 'owner', displayName: 'Propietario' });
   const cashier = new DataService(cashierDb, { uid: 'cashier', displayName: 'Caja' });
-  await owner.saveMyDrawerPin('5824');
-  await cashier.saveMyDrawerPin('7492');
-  await assert.rejects(owner.saveMyDrawerPin('7492'), /reservar/);
-  await owner.verifyDrawerPin('5824');
-  await owner.saveMyDrawerPin('6138');
-  await cashier.saveMyDrawerPin('5824');
-  await cashier.verifyDrawerPin('5824');
+  await owner.saveMyDrawerPin('582401');
+  await cashier.saveMyDrawerPin('749201');
+  await assert.rejects(owner.saveMyDrawerPin('749201'), /reservar/);
+  await owner.verifyDrawerPin('582401');
+  await owner.saveMyDrawerPin('613801');
+  await cashier.saveMyDrawerPin('582401');
+  await cashier.verifyDrawerPin('582401');
   const invalid = writeBatch(ownerDb);
-  invalid.set(doc(ownerDb, 'pinClaims', '9264'), { userId: 'owner' });
+  invalid.set(doc(ownerDb, 'pinClaims', '926401'), { userId: 'owner' });
   await assertFails(invalid.commit());
   await assert.rejects(owner.saveMyDrawerPin('61x38'), /exactamente/);
 });
@@ -309,10 +398,10 @@ test('el servicio real completa factura, pago, inventario, contador y caja atóm
   assert.equal(invoice.lastPaymentId, 'sale-rules-e2e-000001-payment');
   assert.equal(session.expectedCents, 10500);
   assert.equal(product.stock, 9);
-  await service.saveMyDrawerPin('4826');
-  const authorized = await service.verifyDrawerPin('4826', 'Prueba de reglas');
+  await service.saveMyDrawerPin('482601');
+  const authorized = await service.verifyDrawerPin('482601', 'Prueba de reglas');
   assert.equal(authorized.user.id, 'cashier');
-  assert.equal((await getDoc(doc(db, 'userSecrets', 'cashier'))).data().drawerPin, '4826');
+  assert.equal((await getDoc(doc(db, 'userSecrets', 'cashier'))).data().drawerPin, '482601');
 });
 
 test('el cierre de caja usa el esperado acumulado y libera el bloqueo del usuario', async () => {
@@ -380,11 +469,11 @@ test('los conteos de inventario son exclusivos de gerencia y sus movimientos son
 
 test('el PIN solo vive en el secreto privado del propio usuario', async () => {
   const db = environment.authenticatedContext('owner', auth('owner')).firestore();
-  await new DataService(db, { uid: 'owner', displayName: 'Propietario' }).saveMyDrawerPin('4321');
+  await new DataService(db, { uid: 'owner', displayName: 'Propietario' }).saveMyDrawerPin('432101');
   await assertSucceeds(getDoc(doc(db, 'userSecrets', 'owner')));
   await assertFails(getDoc(doc(db, 'userSecrets', 'cashier')));
   await assertFails(getDocs(collection(db, 'userSecrets')));
-  await assertFails(updateDoc(doc(db, 'users', 'owner'), { drawerPin: '4321', updatedAt: serverTimestamp(), updatedBy: 'owner' }));
+  await assertFails(updateDoc(doc(db, 'users', 'owner'), { drawerPin: '432101', updatedAt: serverTimestamp(), updatedBy: 'owner' }));
   await assertFails(updateDoc(doc(db, 'users', 'owner'), { roles: ['owner', 'manager'], active: true, updatedAt: serverTimestamp(), updatedBy: 'owner' }));
   await assertFails(setDoc(doc(db, 'userSecrets', 'owner'), { drawerPin: 'abcd', updatedAt: serverTimestamp(), updatedBy: 'owner' }));
 });

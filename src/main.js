@@ -1,9 +1,11 @@
 import './styles.css';
 import {
   EmailAuthProvider,
+  GoogleAuthProvider,
   onAuthStateChanged,
   reauthenticateWithCredential,
   signInWithEmailAndPassword,
+  signInWithPopup,
   signOut,
   updatePassword
 } from 'firebase/auth';
@@ -19,6 +21,7 @@ import { getEloUpdateStatus, setEloUpdateBusy } from './lib/hardware.js';
 import { createDeferredRefresh, updateForms, updateSafety } from './lib/update-safety.js';
 
 const root = document.getElementById('app');
+if (window.EloPOS) document.documentElement.classList.add('elo-terminal');
 let application = null;
 let unsubscribeProfile = null;
 let nativeInstallInProgress = false;
@@ -88,7 +91,7 @@ function receiveNativeUpdate(event) {
       overlay = document.createElement('div');
       overlay.className = 'modal-backdrop';
       overlay.dataset.updateInstallLock = '';
-      overlay.style.cssText = 'position:fixed;inset:0;z-index:100000';
+      overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;z-index:100000';
       overlay.innerHTML = '<article class="modal-card" role="dialog" aria-modal="true" aria-labelledby="update-install-title" tabindex="-1"><h2 id="update-install-title">Actualizando la aplicación</h2><p role="status" data-install-message></p></article>';
       document.body.appendChild(overlay);
       overlay.querySelector('[role="dialog"]').focus();
@@ -119,7 +122,7 @@ window.addEventListener('elo-update-status', receiveNativeUpdate);
 receiveNativeUpdate();
 
 if ('serviceWorker' in navigator) {
-  if (import.meta.env.PROD) {
+  if (import.meta.env.PROD && !window.EloPOS) {
     let hadController = Boolean(navigator.serviceWorker.controller);
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (hadController) webRefresh.request();
@@ -166,28 +169,51 @@ async function bootstrap() {
     if (!isUsernameAccount(firebaseUser.email) && !firebaseUser.emailVerified) return renderAccessDenied(root, 'Esta identidad todavía no está habilitada.', () => signOut(auth));
     renderPending(root, 'Validando permisos…');
     unsubscribeProfile = onSnapshot(doc(db, 'users', firebaseUser.uid), (snapshot) => {
+      // A profile update must not leave the previous application's listeners alive.
+      application?.destroy(); application = null;
       if (!snapshot.exists()) return renderAccessDenied(root, 'Tu cuenta existe, pero todavía no tiene un perfil operativo asignado.', () => signOut(auth));
-      const profile = { uid: firebaseUser.uid, username: emailToUsername(firebaseUser.email), authEmail: firebaseUser.email, ...snapshot.data() };
+      const profile = { username: emailToUsername(firebaseUser.email), ...snapshot.data(), uid: firebaseUser.uid, authEmail: firebaseUser.email };
       if (!profile.active) return renderAccessDenied(root, 'Esta cuenta está desactivada. Contacta al propietario.', () => signOut(auth));
+      if (window.EloPOS && String(profile.username || '').toUpperCase() === 'ADMIN') {
+        return renderAccessDenied(root, 'ADMIN es una cuenta de pruebas. Para operar en el local, pulsa «Usar otra cuenta» e inicia sesión con NECHY y su contraseña. Después usa el PIN personal de NECHY para cobrar. Las cajas anteriores se conservan para su arqueo; no se han cerrado ni borrado.', () => signOut(auth));
+      }
       application = createApplication({
         root,
         user: profile,
         service: new DataService(db, profile),
-        onLogout: () => {
-          if (webRefresh.hasPending?.()) {
-            location.reload();
-          } else {
-            signOut(auth);
-          }
+        onLogout: async () => {
+          await signOut(auth);
+          if (webRefresh.hasPending?.()) location.reload();
         },
         onChangePassword: (currentPassword, newPassword) => changePassword(auth, currentPassword, newPassword)
       });
-    }, (error) => renderAccessDenied(root, `No pudimos validar tus permisos: ${error.message}`, () => signOut(auth)));
+    }, (error) => {
+      application?.destroy(); application = null;
+      renderAccessDenied(root, `No pudimos validar tus permisos: ${error.message}`, () => signOut(auth));
+    });
   });
 }
 
 function showLogin(auth, message = '') {
   renderLogin(root, {
+    initialUsername: window.EloPOS ? 'NECHY' : '',
+    googleAvailable: !window.EloPOS,
+    async signInGoogle(button) {
+      const finish = updateSafety.beginOperation();
+      if (button) button.disabled = true;
+      try {
+        const provider = new GoogleAuthProvider();
+        provider.setCustomParameters({ prompt: 'select_account' });
+        await signInWithPopup(auth, provider);
+        // Operational access still requires the existing active users/{uid} profile.
+        // Never create roles/profiles here or merge identities by display name.
+      } catch (error) {
+        showLogin(auth, loginError(error));
+      } finally {
+        if (button) button.disabled = false;
+        finish();
+      }
+    },
     async signIn(username, password, button) {
       const finish = updateSafety.beginOperation();
       try {
@@ -211,6 +237,10 @@ async function changePassword(auth, currentPassword, newPassword) {
 }
 
 function loginError(error) {
+  if (['auth/popup-closed-by-user', 'auth/cancelled-popup-request'].includes(error.code)) return 'Se canceló el acceso con Google. Puedes intentarlo de nuevo.';
+  if (error.code === 'auth/popup-blocked') return 'Permite la ventana de Google en tu navegador y vuelve a intentarlo, o entra con tu contraseña.';
+  if (error.code === 'auth/account-exists-with-different-credential') return 'Ese correo ya tiene otro método de acceso. Entra con tu contraseña; no crees otra cuenta para recuperar los permisos.';
+  if (['auth/operation-not-allowed', 'auth/unauthorized-domain'].includes(error.code)) return 'Google todavía no está habilitado para este acceso. Utiliza tu contraseña y avisa a soporte.';
   if (['auth/invalid-credential','auth/user-not-found','auth/wrong-password'].includes(error.code)) return 'Usuario o contraseña incorrectos.';
   if (error.code === 'auth/too-many-requests') return 'Demasiados intentos. Espera unos minutos.';
   if (error.code === 'auth/network-request-failed') return 'No hay conexión con el servicio de acceso.';
