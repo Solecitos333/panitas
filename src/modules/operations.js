@@ -36,7 +36,7 @@ export function renderDashboard(state) {
       <article class="surface-card"><header><div><span class="eyebrow">Facturación</span><h3>Movimientos recientes</h3></div><button class="text-button" data-route="invoices">Ver todos</button></header>${renderInvoiceMiniList(state.invoices.slice(0, 6))}</article>
     </div>
     </div>
-    ${renderMobileManagement(state)}`;
+    ${state.terminalMode ? '' : renderMobileManagement(state)}`;
 }
 
 function renderMobileManagement(state) {

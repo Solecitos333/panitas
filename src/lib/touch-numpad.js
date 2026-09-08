@@ -3,6 +3,7 @@
 import { formatMoney } from './format.js';
 
 let activePopup = null;
+const boundNumericInputs = new WeakSet();
 
 export function openTouchNumPad({
   targetInput,
@@ -332,6 +333,8 @@ export function setupTouchNumericInputs(container = document) {
   );
 
   inputs.forEach((input) => {
+    if (boundNumericInputs.has(input)) return;
+    boundNumericInputs.add(input);
     // 1. Blindar contra el teclado virtual de Android
     input.setAttribute('readonly', 'true');
     input.setAttribute('inputmode', 'none');

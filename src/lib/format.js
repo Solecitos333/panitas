@@ -2,15 +2,17 @@ import { formatMoney } from '../domain/billing.js';
 import { BUSINESS_TIME_ZONE } from './business-time.js';
 
 export { formatMoney };
+const dateOptions = { timeZone: BUSINESS_TIME_ZONE, year: 'numeric', month: 'short', day: 'numeric' };
+const dateFormatter = new Intl.DateTimeFormat('es-DO', dateOptions);
+const dateTimeFormatter = new Intl.DateTimeFormat('es-DO', {
+  ...dateOptions, hour: '2-digit', minute: '2-digit', second: '2-digit'
+});
 
 export function formatDate(value, withTime = false) {
   if (!value) return 'Pendiente';
   const date = typeof value.toDate === 'function' ? value.toDate() : new Date(value);
   if (Number.isNaN(date.getTime())) return 'Pendiente';
-  return new Intl.DateTimeFormat('es-DO', {
-    timeZone: BUSINESS_TIME_ZONE, year: 'numeric', month: 'short', day: 'numeric',
-    ...(withTime ? { hour: '2-digit', minute: '2-digit', second: '2-digit' } : {})
-  }).format(date);
+  return (withTime ? dateTimeFormatter : dateFormatter).format(date);
 }
 export function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (char) => ({

@@ -2,26 +2,26 @@
   "schemaVersion": 1,
   "channel": "stable",
   "packageName": "com.panitas.pos",
-  "versionCode": 21,
-  "versionName": "1.4.1",
-  "publishedAt": "2026-09-08T06:46:50Z",
+  "versionCode": 22,
+  "versionName": "1.4.2",
+  "publishedAt": "2026-09-08T17:31:29Z",
   "minimumSupportedVersionCode": 10,
   "mandatory": false,
   "artifact": {
-    "url": "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.4.1-code21.zip",
-    "filename": "LosPanitas-Elo-POS-v1.4.1-code21.zip",
-    "size": 1606635,
-    "sha256": "1FD679B613DBDF249D74AEBB300176BFA1256D9899218185601FED11FBFE722F"
+    "url": "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.4.2-code22.zip",
+    "filename": "LosPanitas-Elo-POS-v1.4.2-code22.zip",
+    "size": 1607031,
+    "sha256": "5D1C1D4434D1837E5D186DB9857D872FD6E8403F0A2499135AAD54AD13D138A3"
   },
   "apk": {
     "entry": "LosPanitas-Elo-POS.apk",
-    "size": 1611416,
-    "sha256": "F7CA15B8E1B623883EE5A275940C5D95FAA20FBE9BCD952156AAD3DB8054216D",
+    "size": 1611415,
+    "sha256": "C8D4EABC3887848787169A183E0E40B97DCDC231364BE76FAA5925EE1A2BA1AB",
     "signingCertificateSha256": "42DE27571244F0A23E533BF1C97D5D8587F4F12C3C34EA3209EDFBC67B8B3395"
   },
   "releaseNotes": [
-    "Operación con cuenta personal y PIN de seis dígitos; entrega con NECHY, sin cuenta compartida.",
-    "Nómina en efectivo con caja verificada, registro atómico y protección frente a reintentos.",
-    "Instalador móvil de gestión disponible; se conserva la impresión de altura variable y corte único."
+    "Navegación más ligera: los iconos existentes ya no se reconstruyen en cada interacción.",
+    "Formatos de fechas e importes reutilizados y teclado numérico sin manejadores duplicados.",
+    "La ELO omite el panel móvil oculto y los desenfoques; cobros, PIN, registros e impresión sin cambios."
   ]
 }

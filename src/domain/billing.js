@@ -40,8 +40,16 @@ export function fromCents(value) {
   return Number(value || 0) / 100;
 }
 
+const moneyFormatters = new Map();
 export function formatMoney(value, currency = 'DOP') {
-  return new Intl.NumberFormat('es-DO', { style: 'currency', currency }).format(fromCents(value));
+  let formatter = moneyFormatters.get(currency);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat('es-DO', { style: 'currency', currency });
+    // Bound memory even if a caller supplies many different currency codes.
+    if (moneyFormatters.size >= 16) moneyFormatters.clear();
+    moneyFormatters.set(currency, formatter);
+  }
+  return formatter.format(fromCents(value));
 }
 
 export function normalizeQuantity(value) {

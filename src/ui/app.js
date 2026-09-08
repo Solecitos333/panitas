@@ -1,5 +1,5 @@
 import {
-  createIcons, AlertTriangle, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, Bike, BookOpen, Cake, Calculator, Calendar,
+  AlertTriangle, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, Bike, BookOpen, Cake, Calculator, Calendar,
   CalendarX, ChartNoAxesCombined, Check, CheckCircle2, CheckSquare, ChefHat, ChevronDown, CircleDollarSign, ClipboardCheck, ClipboardPen, Clock3, Coffee, Cpu, CreditCard, Download, Eye,
   FileCheck2, FileSpreadsheet, Flame, Globe, History, KeyRound, Landmark, Layers, LayoutDashboard, Lock, LogOut, Menu,
   MessageSquare, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Moon, Package, PackageOpen, PanelLeftClose, PanelLeftOpen,
@@ -37,6 +37,7 @@ import {
 import { bindPinPad, renderPinPadHtml } from '../lib/pin-pad.js';
 import { updateForms, updateSafety } from '../lib/update-safety.js';
 import { setupTouchNumericInputs } from '../lib/touch-numpad.js';
+import { createScopedIcons } from '../lib/scoped-icons.js';
 
 const NAV = [
   ['dashboard','layout-dashboard','Resumen'], ['pos','shopping-cart','Punto de venta'], ['tables','utensils','Mesas'],
@@ -56,6 +57,7 @@ const icons = {
   ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, SlidersHorizontal, Smartphone, Sparkles, Star, Timer, Trash2, TrendingDown, TrendingUp, Usb, UserPlus, Users,
   Utensils, Volume2, Wallet, WalletCards, Wheat, Wifi, WifiOff, X
 };
+const refreshScopedIcons = createScopedIcons(icons);
 
 // Desenfocar controles interactivos tras el clic para que no retengan foco en pantalla táctil
 if (typeof document !== 'undefined') {
@@ -275,7 +277,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       <div id="modal-root"></div>
       <div id="toast-root" class="toast-root" aria-live="assertive"></div>
     </div>`;
-    bindShell(); renderContent(); updateConnection(); refreshUpdateBanner();
+    bindShell(); renderContent(); updateConnection(); refreshUpdateBanner(); iconsRefresh(root);
   }
 
   function renderContent() {
@@ -288,6 +290,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       terminal: () => renderTerminalDiag(), settings: renderSettings
     };
     const renderer = renderers[state.route] || renderDashboard;
+    // The native cash register never displays the mobile-only inventory/dashboard.
+    state.terminalMode = Boolean(window.EloPOS);
     const mainEl = root.querySelector('#main-content');
     mainEl.innerHTML = renderer(state);
     if (state.modal) {
@@ -897,7 +901,6 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelectorAll('[data-export]').forEach((button)=>button.addEventListener('click',()=>exportReport(button.dataset.export,state)));
     updatePosFields();
     if (searchInput) filterCards({ target: searchInput });
-    setupTouchNumericInputs(root);
   }
 
   function updateIsBusy() {
@@ -1712,6 +1715,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 
   function route(id){
     if(!allowedNavigation(user).includes(id))return;
+    if(state.route === id && !state.modal) {
+      root.querySelector('.sidebar')?.classList.remove('open');
+      return;
+    }
     state.route=id;
     state.modal='';
     root.querySelector('.sidebar')?.classList.remove('open');
@@ -3973,9 +3980,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   }
   function updateConnection(){const online=navigator.onLine;const banner=root.querySelector('#offline-banner');if(banner)banner.hidden=online;root.querySelector('#connection-indicator')?.classList.toggle('offline',!online);}
   function iconsRefresh(container = root) {
-    const target = container || root;
-    if (!target || !target.querySelector('i[data-lucide]')) return;
-    createIcons({ icons, nameAttr: 'data-lucide', rootNode: target, attrs: { 'aria-hidden': 'true' } });
+    refreshScopedIcons(container || root);
   }
   function destroy(){
     destroyed=true;

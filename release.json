@@ -1,12 +1,12 @@
 {
-  "versionName": "1.4.1",
-  "versionCode": 21,
+  "versionName": "1.4.2",
+  "versionCode": 22,
   "channel": "stable",
   "minimumSupportedVersionCode": 10,
   "mandatory": false,
   "releaseNotes": [
-    "Operación con cuenta personal y PIN de seis dígitos; entrega con NECHY, sin cuenta compartida.",
-    "Nómina en efectivo con caja verificada, registro atómico y protección frente a reintentos.",
-    "Instalador móvil de gestión disponible; se conserva la impresión de altura variable y corte único."
+    "Navegación más ligera: los iconos existentes ya no se reconstruyen en cada interacción.",
+    "Formatos de fechas e importes reutilizados y teclado numérico sin manejadores duplicados.",
+    "La ELO omite el panel móvil oculto y los desenfoques; cobros, PIN, registros e impresión sin cambios."
   ]
 }

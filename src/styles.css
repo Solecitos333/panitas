@@ -1711,6 +1711,11 @@ tbody tr:hover { background: rgba(255,255,255,.018); }
 .elo-terminal .pos-cart-line, .elo-terminal .pos-method-panel,
 .elo-terminal .live-indicator span { animation: none !important; }
 .elo-terminal .sidebar, .elo-terminal .app-shell > main { transition: none; will-change: auto; }
+.elo-terminal .modal-backdrop, .elo-terminal .touch-numpad-backdrop {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  animation: none !important;
+}
 
 /* --- Diálogos táctiles profesionales de Caja y Cuadre --- */
 .cash-type-toggle {
