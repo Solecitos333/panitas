@@ -80,7 +80,7 @@ export function renderWhatsApp(state) {
 
         ${isConnected ? `
           <div style="text-align:center;padding:2.5rem 1rem;background:rgba(16,185,129,0.05);border:1px dashed rgba(16,185,129,0.3);border-radius:12px;margin:1rem 0;">
-            <div style="font-size:3rem;margin-bottom:0.5rem;">✅</div>
+            <div style="display:flex;justify-content:center;margin-bottom:0.75rem;"><i data-lucide="check-circle-2" style="width:52px;height:52px;color:#10b981;"></i></div>
             <h4 style="color:#10b981;margin:0 0 0.5rem 0;font-size:1.3rem;">¡Bot Operando en Tiempo Real!</h4>
             <p style="color:var(--text-secondary, #94a3b8);font-size:0.95rem;max-width:380px;margin:0 auto 1.5rem auto;">
               El bot está respondiendo mensajes de clientes, cotizando el menú y enviando pedidos directamente a la cocina.
@@ -209,8 +209,9 @@ export function renderWhatsApp(state) {
                       ${escapeHtml(ord.clientName || 'Cliente WhatsApp')}
                     </td>
                     <td style="padding:10px 12px;">
-                      <span style="font-size:0.85rem;color:${isDelivery ? '#f59e0b' : '#38bdf8'};">
-                        ${isDelivery ? '🛵 Delivery' : '🛍️ Para Llevar'}
+                      <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.85rem;color:${isDelivery ? '#f59e0b' : '#38bdf8'};">
+                        <i data-lucide="${isDelivery ? 'bike' : 'shopping-bag'}" style="width:13px;height:13px;"></i>
+                        ${isDelivery ? 'Delivery' : 'Para Llevar'}
                       </span>
                     </td>
                     <td style="padding:10px 12px;color:#cbd5e1;max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(itemsSummary)}">
@@ -281,10 +282,10 @@ export function bindWhatsAppEvents(state, root, service, toast) {
         return;
       }
 
-      const copy = `🍽️ *¡EL PLATO DEL DÍA EN LOS PANITAS BY NECHY!* 🤤🔥\n\n` +
+      const copy = `*¡EL PLATO DEL DÍA EN LOS PANITAS BY NECHY!*\n\n` +
         `Hoy tenemos preparado para ti: *${dish}*.\n\n` +
-        `Acompáñalo con tu guarnición favorita o ensalada fresca del día. 🥗✨\n\n` +
-        `🛵 *¡Tenemos delivery disponible y servicio para llevar!* Haz tu pedido ahora antes de que se termine escribiéndonos a este chat. ¡Te lo llevamos calientito! 🛵💨`;
+        `Acompáñalo con tu guarnición favorita o ensalada fresca del día.\n\n` +
+        `*¡Tenemos delivery disponible y servicio para llevar!* Haz tu pedido ahora antes de que se termine escribiéndonos a este chat. ¡Te lo llevamos calientito!`;
 
       textareaOutput.value = copy;
       toast('¡Mensaje redactado con éxito!', 'success', 3000);

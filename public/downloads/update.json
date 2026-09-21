@@ -1,27 +1,29 @@
 {
-  "schemaVersion": 1,
-  "channel": "stable",
-  "packageName": "com.panitas.pos",
-  "versionCode": 22,
-  "versionName": "1.4.2",
-  "publishedAt": "2026-09-08T17:31:29Z",
-  "minimumSupportedVersionCode": 10,
-  "mandatory": false,
-  "artifact": {
-    "url": "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.4.2-code22.zip",
-    "filename": "LosPanitas-Elo-POS-v1.4.2-code22.zip",
-    "size": 1607031,
-    "sha256": "5D1C1D4434D1837E5D186DB9857D872FD6E8403F0A2499135AAD54AD13D138A3"
-  },
-  "apk": {
-    "entry": "LosPanitas-Elo-POS.apk",
-    "size": 1611415,
-    "sha256": "C8D4EABC3887848787169A183E0E40B97DCDC231364BE76FAA5925EE1A2BA1AB",
-    "signingCertificateSha256": "42DE27571244F0A23E533BF1C97D5D8587F4F12C3C34EA3209EDFBC67B8B3395"
-  },
-  "releaseNotes": [
-    "Navegación más ligera: los iconos existentes ya no se reconstruyen en cada interacción.",
-    "Formatos de fechas e importes reutilizados y teclado numérico sin manejadores duplicados.",
-    "La ELO omite el panel móvil oculto y los desenfoques; cobros, PIN, registros e impresión sin cambios."
-  ]
+    "schemaVersion":  1,
+    "channel":  "stable",
+    "packageName":  "com.panitas.pos",
+    "versionCode":  42,
+    "versionName":  "1.6.2",
+    "publishedAt":  "2026-09-21T00:30:07Z",
+    "minimumSupportedVersionCode":  10,
+    "mandatory":  false,
+    "artifact":  {
+                     "url":  "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.6.2-code42.zip",
+                     "filename":  "LosPanitas-Elo-POS-v1.6.2-code42.zip",
+                     "size":  1680546,
+                     "sha256":  "3DCB5C1300E5B72BC2C318E590B9279D6FCC471CF47DD217745A0B8E1ADC1C03"
+                 },
+    "apk":  {
+                "entry":  "LosPanitas-Elo-POS.apk",
+                "size":  1685142,
+                "sha256":  "EA17A734A59B1FDFA8B0B30DAD0412CD98D559CC3D3C99032CEEB6CE8EE47F67",
+                "signingCertificateSha256":  "42DE27571244F0A23E533BF1C97D5D8587F4F12C3C34EA3209EDFBC67B8B3395"
+            },
+    "releaseNotes":  [
+                         "Reforma Integral del Resumen Operativo (Dashboard): Cabecera ejecutiva con estado del turno en tiempo real (Caja Abierta con nombre de usuario o Caja Cerrada), indicador pulsante en vivo y fecha dominicana.",
+                         "Cuadrícula de Métricas KPI Enriquecidas: Ventas del día con desglose de cobrado vs por cobrar (fiao), facturas emitidas con ticket promedio, comandas en preparación vs listas, deliveries en tránsito con balance a liquidar, ocupación del salón y salidas de caja.",
+                         "Cinta de Accesos Rápidos Operativos: Acceso directo a POS, KDS Cocina, Deliveries, Mesas, Registro de Gasto y Cuentas por Cobrar a un solo toque.",
+                         "Tarjetas Operativas de Alto Impacto: Platos estrella con barras de volumen relativo y montos generados, comandas activas con semáforo y alertas de demora (\u003e20 min), monitoreo de choferes en calle, desglose financiero por método de pago y movimientos recientes.",
+                         "Diseño profesional y limpio: 100% iconos SVG Lucide y cero emojis Unicode, garantizando una experiencia ejecutiva de grado comercial."
+                     ]
 }

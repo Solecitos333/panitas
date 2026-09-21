@@ -3,7 +3,7 @@ const dependencies = {
   dashboard: ['orders', 'invoices', 'cashSessions'],
   pos: ['products', 'clients', 'tables', 'cashSessions'],
   kds: ['orders'], tables: ['tables', 'orders'],
-  products: ['products', 'inventoryMovements'], clients: ['clients'], users: ['users'], audit: ['auditLogs'],
+  products: ['products', 'inventoryMovements'], clients: ['clients'], users: ['users'], audit: ['auditLogs', 'cashSessions', 'cashMovements', 'payrollPayments', 'invoices'],
   invoices: ['invoices', 'payments'], receivables: ['invoices', 'payments', 'clients', 'cashSessions'],
   deliveries: ['invoices', 'deliveryDrivers', 'cashSessions'],
   cash: ['cashSessions', 'cashMovements', 'payments', 'users'],

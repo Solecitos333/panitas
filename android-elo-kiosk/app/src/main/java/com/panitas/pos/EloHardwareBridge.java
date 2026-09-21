@@ -38,6 +38,26 @@ public class EloHardwareBridge {
     }
 
     @JavascriptInterface
+    public void setSleepMode(boolean sleeping) {
+        if (context instanceof android.app.Activity) {
+            ((android.app.Activity) context).runOnUiThread(() -> {
+                try {
+                    android.app.Activity act = (android.app.Activity) context;
+                    android.view.WindowManager.LayoutParams lp = act.getWindow().getAttributes();
+                    if (sleeping) {
+                        lp.screenBrightness = 0.005f;
+                    } else {
+                        lp.screenBrightness = android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
+                    }
+                    act.getWindow().setAttributes(lp);
+                } catch (Exception e) {
+                    android.util.Log.w("EloHardwareBridge", "setSleepMode error: " + e.getMessage());
+                }
+            });
+        }
+    }
+
+    @JavascriptInterface
     public boolean openDrawer() {
         return printerManager.openDrawer();
     }

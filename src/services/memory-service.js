@@ -110,9 +110,10 @@ export class MemoryDataService {
     if (!/^\d{6}$/.test(cleanPin))
       throw new Error("El PIN debe tener exactamente 6 dígitos.");
 
-    // Match production: only the authenticated person's PIN can authorize.
+    // Identificación multi-usuario en caja: cualquier usuario activo con su PIN
+    // puede autorizar y facturar en el terminal compartido (ej: Junior en usuario Nechy).
     const match = this.data.users.find(
-      (entry) => entry.id === this.actor.uid && entry.drawerPin === cleanPin && entry.active !== false,
+      (entry) => entry.drawerPin === cleanPin && entry.active !== false,
     );
     if (match) {
       return {
@@ -126,18 +127,21 @@ export class MemoryDataService {
       };
     }
 
-    // 2. Si el usuario actual no tiene PIN configurado
-    const current = this.data.users.find(
-      (entry) => entry.id === this.actor.uid && entry.active !== false,
-    );
-    if (!/^\d{6}$/.test(String(current?.drawerPin || "")))
-      throw new Error("Configura primero tu PIN de 6 dígitos.");
-
     throw new Error("PIN incorrecto.");
   }
   async saveProduct(item) {
     const id = item.id || createOperationId("product");
-    const payload = { ...item, id, createdAt: new Date() };
+    const inventoryType = item.inventoryType || (item.isPrepared ? 'prepared' : 'resale');
+    const isPrepared = inventoryType === 'prepared' || Boolean(item.isPrepared);
+    const minStock = Number.isFinite(Number(item.minStock)) ? Math.max(0, Number(item.minStock)) : 5;
+    const payload = {
+      ...item,
+      id,
+      inventoryType,
+      isPrepared,
+      minStock,
+      createdAt: new Date()
+    };
     this.data.products = [
       ...this.data.products.filter((entry) => entry.id !== id),
       payload,
@@ -326,6 +330,25 @@ export class MemoryDataService {
       this.emit("deliveryDrivers");
     }
   }
+  async reassignDeliveryDriver(invoiceId, { driverId, driverName, notes } = {}) {
+    if (!can(this.actor, 'deliveries:*') && !can(this.actor, 'billing:*')) {
+      throw new Error('No tienes permisos para reasignar entregas de delivery.');
+    }
+    const inv = this.data.invoices.find((item) => item.id === invoiceId);
+    if (!inv) throw new Error('La factura no existe.');
+    if (inv.status === 'cancelled') throw new Error('No se puede reasignar una factura anulada.');
+    const name = String(driverName || '').trim();
+    if (!name) throw new Error('Debes indicar el nombre del nuevo repartidor.');
+    const oldDriver = inv.deliveryDriverName || 'Sin asignar';
+    inv.deliveryDriverId = String(driverId || '').trim();
+    inv.deliveryDriverName = name;
+    if (notes !== undefined) inv.deliveryNotes = String(notes || '').trim();
+    inv.updatedAt = new Date();
+    inv.updatedBy = this.actor.uid;
+    this.audit('delivery.driver_reassigned', `Factura ${inv.invoiceNumber || invoiceId}: reasignada de "${oldDriver}" a "${name}"`);
+    this.emit('invoices');
+    return inv;
+  }
   async saveEmployee(employee) {
     if (!can(this.actor, 'payroll:*') && !can(this.actor, 'payroll:view')) {
       throw new Error('No tienes permisos para gestionar empleados.');
@@ -427,8 +450,35 @@ export class MemoryDataService {
   }
   async createOrder(input) {
     const table = this.data.tables.find((item) => item.id === input.tableId);
-    if (!table || table.currentOrderId) throw new Error("Mesa no disponible.");
-    const totals = calculateDocument(input.items);
+    if (!table) throw new Error("Mesa no disponible.");
+
+    const totals = calculateDocument(input.items, {
+      discount: input.discount,
+      discountType: input.discountType,
+      includeLegalTip: input.includeLegalTip === true,
+      tipCents: input.tipCents
+    });
+
+    if (table.currentOrderId) {
+      const existing = this.data.orders.find((item) => item.id === table.currentOrderId);
+      if (existing && !["closed", "cancelled"].includes(existing.status)) {
+        const finalItems = input.replaceItems ? input.items : [...(existing.items || []), ...(input.items || [])];
+        const finalTotals = calculateDocument(finalItems, {
+          discount: input.discount ?? existing.discount,
+          discountType: input.discountType ?? existing.discountType,
+          includeLegalTip: input.includeLegalTip ?? existing.includeLegalTip,
+          tipCents: input.tipCents ?? existing.tipCents
+        });
+        existing.items = finalItems;
+        Object.assign(existing, finalTotals);
+        existing.notes = input.notes || existing.notes;
+        existing.updatedAt = new Date();
+        existing.revision = Number(existing.revision || 1) + 1;
+        this.emit("orders");
+        return existing.id;
+      }
+    }
+
     const id = createOperationId("order");
     this.data.orders.unshift({
       id,
@@ -461,27 +511,46 @@ export class MemoryDataService {
     if (nextStatus === "cancelled") {
       order.cancellationReason = String(reason || "").trim();
       const table = this.data.tables.find((item) => item.id === order.tableId);
-      table.currentOrderId = null;
-      table.status = "available";
+      if (table) {
+        table.currentOrderId = null;
+        table.status = "available";
+      }
       this.emit("tables");
     }
+    this.emit("orders");
+  }
+  async liberateTable(tableId, reason = "Mesa liberada por el operador") {
+    const table = this.data.tables.find((item) => item.id === tableId);
+    if (!table) return;
+    if (table.currentOrderId) {
+      const order = this.data.orders.find((item) => item.id === table.currentOrderId);
+      if (order && !["closed", "cancelled"].includes(order.status)) {
+        order.status = "cancelled";
+        order.revision = (order.revision || 1) + 1;
+        order.cancellationReason = String(reason || "").trim();
+      }
+    }
+    table.currentOrderId = null;
+    table.status = "available";
+    this.emit("tables");
     this.emit("orders");
   }
   async createDirectDocument(input) {
     return this.createDocument(input);
   }
-  async chargeOrder(id, payment) {
+  async chargeOrder(id, payment, updatedItems) {
     const order = this.data.orders.find((item) => item.id === id);
     if (!order) throw new Error("La comanda no existe.");
-    if (!["served", "pending_payment"].includes(order.status))
-      throw new Error("La comanda todavía no está lista para cobro.");
+    if (["closed", "cancelled"].includes(order.status))
+      throw new Error("La comanda ya fue cobrada o anulada.");
+    const itemsToCharge = Array.isArray(updatedItems) && updatedItems.length ? updatedItems : order.items;
     const created = await this.createDocument({
       requestId: payment.requestId,
       documentType: "invoice",
       clientName: order.clientName,
       clientRnc: payment.clientRnc || order.clientRnc || "",
       ncfType: payment.ncfType || "",
-      items: order.items,
+      items: itemsToCharge,
       discountCents: order.discountCents || 0,
       tipCents: order.tipCents || 0,
       payment,
@@ -491,8 +560,10 @@ export class MemoryDataService {
     order.status = "closed";
     order.linkedInvoiceId = created.id;
     const table = this.data.tables.find((item) => item.id === order.tableId);
-    table.currentOrderId = null;
-    table.status = "available";
+    if (table) {
+      table.currentOrderId = null;
+      table.status = "available";
+    }
     this.emit("orders");
     this.emit("tables");
     return created;
@@ -607,7 +678,7 @@ export class MemoryDataService {
         const product = this.data.products.find(
           (item) => item.id === line.productId,
         );
-        if (product) product.stock -= line.quantity;
+        if (product && !product.isPrepared) product.stock -= line.quantity;
       });
     this.emit("products");
     this.emit("invoices");
@@ -688,7 +759,7 @@ export class MemoryDataService {
     if (invoice.documentType === "invoice") {
       for (const line of invoice.items || []) {
         const product = this.data.products.find((item) => item.id === line.productId);
-        if (product) product.stock += Number(line.quantity || 0);
+        if (product && !product.isPrepared) product.stock += Number(line.quantity || 0);
       }
       this.emit("products");
     }

@@ -1,11 +1,44 @@
 import { escapeHtml, formatDate, formatMoney } from '../lib/format.js';
 import { PAYROLL_CONCEPTS, PAYROLL_PAYMENT_METHODS, SALARY_FREQUENCIES, getPayrollConceptLabel, getPaymentMethodLabel, getSalaryFrequencyLabel, calculatePayrollNetCents } from '../domain/payroll.js';
+import { renderPinPadHtml } from '../lib/pin-pad.js';
+
+export function renderPayrollLockScreen(state = {}, user = {}) {
+  const userName = user.displayName || user.username || 'Usuario';
+  return `
+    <div class="payroll-lock-screen surface-card" style="max-width:440px; margin:40px auto; padding:32px 24px; text-align:center; border:1px solid rgba(245,158,11,0.25); box-shadow: 0 12px 32px rgba(0,0,0,0.35);">
+      <div style="width:68px; height:68px; margin:0 auto 16px; border-radius:50%; background:rgba(245,158,11,0.12); display:flex; align-items:center; justify-content:center; color:var(--brand-2);">
+        <i data-lucide="lock" style="width:34px; height:34px;"></i>
+      </div>
+      <span class="eyebrow" style="color:var(--brand-2);">Área Confidencial Protegida</span>
+      <h2 style="margin:6px 0 8px; font-size:1.35rem; font-weight:700;">Acceso a Nómina y Salarios</h2>
+      <p style="margin:0 0 18px; font-size:0.86rem; color:var(--muted); line-height:1.45;">
+        Esta sección contiene información salarial confidencial. Digita el PIN personal de <strong>${escapeHtml(userName)}</strong> para acceder.
+      </p>
+      <form id="payroll-unlock-form" class="stack-form">
+        ${renderPinPadHtml({
+          idPrefix: 'payroll-unlock',
+          label: 'Digita tu PIN de 6 dígitos',
+          sublabel: 'Autoriza el desbloqueo temporal de los registros salariales'
+        })}
+        <div style="display:flex; gap:10px; margin-top:14px;">
+          <button type="button" class="button secondary" style="flex:1; font-weight:600;" data-route="dashboard">
+            <i data-lucide="arrow-left"></i> Volver a Resumen
+          </button>
+          <button type="submit" class="button primary" id="payroll-unlock-submit" style="flex:1; font-weight:700;">
+            <i data-lucide="unlock"></i> Desbloquear
+          </button>
+        </div>
+      </form>
+    </div>
+  `;
+}
 
 export function renderPayroll(state) {
   const activeTab = state.payrollTab || 'payments';
   const employees = (state.employees || []).filter((e) => e);
   const activeEmployees = employees.filter((e) => e.active !== false);
   const payments = (state.payrollPayments || []).filter((p) => p);
+  const displayMoney = (cents) => state.payrollMasked ? 'RD$ ••••••' : formatMoney(cents);
 
   // Metrics calculation
   const now = new Date();
@@ -33,6 +66,12 @@ export function renderPayroll(state) {
         <p>Control confidencial de costes de personal, desembolsos en efectivo o transferencia y comprobantes oficiales.</p>
       </div>
       <div class="header-actions">
+        <button class="button secondary compact" type="button" data-payroll-mask-toggle title="${state.payrollMasked ? 'Mostrar montos' : 'Ocultar montos'}">
+          <i data-lucide="${state.payrollMasked ? 'eye' : 'eye-off'}"></i> ${state.payrollMasked ? 'Ver montos' : 'Ocultar montos'}
+        </button>
+        <button class="button secondary compact" type="button" data-payroll-lock title="Bloquear sección confidencial">
+          <i data-lucide="lock"></i> Bloquear
+        </button>
         <button class="button secondary" type="button" data-employee-new>
           <i data-lucide="user-plus"></i> Registrar Empleado
         </button>
@@ -48,7 +87,7 @@ export function renderPayroll(state) {
         <i data-lucide="wallet-cards"></i>
         <div>
           <span>Nómina del Mes</span>
-          <strong>${formatMoney(totalMonthCents)}</strong>
+          <strong>${displayMoney(totalMonthCents)}</strong>
           <small style="color:var(--muted);font-size:0.75rem;">${thisMonthPayments.length} pago(s) registrados</small>
         </div>
       </article>
@@ -56,7 +95,7 @@ export function renderPayroll(state) {
         <i data-lucide="wallet"></i>
         <div>
           <span>Dispensado en Efectivo</span>
-          <strong>${formatMoney(cashDisbursedCents)}</strong>
+          <strong>${displayMoney(cashDisbursedCents)}</strong>
           <small style="color:var(--muted);font-size:0.75rem;">Salidas registradas en caja</small>
         </div>
       </article>
@@ -64,7 +103,7 @@ export function renderPayroll(state) {
         <i data-lucide="landmark"></i>
         <div>
           <span>Por Transferencia</span>
-          <strong>${formatMoney(transferDisbursedCents)}</strong>
+          <strong>${displayMoney(transferDisbursedCents)}</strong>
           <small style="color:var(--muted);font-size:0.75rem;">Banca / Sin descuadre de gaveta</small>
         </div>
       </article>
@@ -98,11 +137,11 @@ export function renderPayroll(state) {
       </button>
     </div>
 
-    ${activeTab === 'payments' ? renderPaymentsTab(payments) : renderEmployeesTab(employees)}
+    ${activeTab === 'payments' ? renderPaymentsTab(payments, state) : renderEmployeesTab(employees, state)}
   `;
 }
 
-function renderPaymentsTab(payments = []) {
+function renderPaymentsTab(payments = [], state = {}) {
   return `
     <section class="surface-card data-surface">
       <header style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
@@ -135,7 +174,7 @@ function renderPaymentsTab(payments = []) {
             </tr>
           </thead>
           <tbody>
-            ${payments.length ? payments.map(paymentRow).join('') : `
+            ${payments.length ? payments.map((p) => paymentRow(p, state)).join('') : `
               <tr>
                 <td colspan="10">
                   <div class="empty-state" style="padding:30px 10px;text-align:center;">
@@ -155,7 +194,7 @@ function renderPaymentsTab(payments = []) {
   `;
 }
 
-function paymentRow(item) {
+function paymentRow(item, state = {}) {
   const d = item.createdAt?.toDate ? item.createdAt.toDate() : new Date(item.createdAt || 0);
   const dateStr = formatDate(d, true);
   const isCash = item.paymentMethod === 'cash';
@@ -173,7 +212,7 @@ function paymentRow(item) {
       <td style="font-size:0.82rem;color:var(--muted);">${escapeHtml(item.employeeRole || '—')}</td>
       <td><span class="role-chip" style="font-size:0.75rem;">${escapeHtml(item.conceptLabel || item.concept || 'Pago')}</span></td>
       <td>${methodBadge}</td>
-      <td><strong style="color:var(--brand-2);font-size:0.95rem;">${formatMoney(item.netAmountCents || 0)}</strong></td>
+      <td><strong style="color:var(--brand-2);font-size:0.95rem;">${state?.payrollMasked ? 'RD$ ••••••' : formatMoney(item.netAmountCents || 0)}</strong></td>
       <td style="font-size:0.8rem;">${escapeHtml(item.authorizedByName || 'Administrador')}</td>
       <td style="font-size:0.78rem;color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(item.notes || '—')}</td>
       <td style="text-align:right;white-space:nowrap;">
@@ -185,7 +224,7 @@ function paymentRow(item) {
   `;
 }
 
-function renderEmployeesTab(employees = []) {
+function renderEmployeesTab(employees = [], state = {}) {
   return `
     <section class="surface-card data-surface">
       <header style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
@@ -217,7 +256,7 @@ function renderEmployeesTab(employees = []) {
             </tr>
           </thead>
           <tbody>
-            ${employees.length ? employees.map(employeeRow).join('') : `
+            ${employees.length ? employees.map((e) => employeeRow(e, state)).join('') : `
               <tr>
                 <td colspan="9">
                   <div class="empty-state" style="padding:30px 10px;text-align:center;">
@@ -237,7 +276,7 @@ function renderEmployeesTab(employees = []) {
   `;
 }
 
-function employeeRow(item) {
+function employeeRow(item, state = {}) {
   const enabled = item.active !== false;
   const searchStr = `${item.name || ''} ${item.cedula || ''} ${item.phone || ''} ${item.roleTitle || ''}`.toLowerCase();
   const freqLabel = getSalaryFrequencyLabel(item.frequency);
@@ -249,7 +288,7 @@ function employeeRow(item) {
       <td style="font-size:0.82rem;color:var(--muted);">${escapeHtml(item.cedula || '—')}</td>
       <td style="font-size:0.82rem;">${item.phone ? `<a href="tel:${escapeHtml(item.phone)}" style="color:var(--brand-2);">${escapeHtml(item.phone)}</a>` : '—'}</td>
       <td><span class="role-chip" style="font-size:0.75rem;">${escapeHtml(item.roleTitle || 'Personal')}</span></td>
-      <td><strong style="color:#fff;font-size:0.95rem;">${formatMoney(item.baseSalaryCents || 0)}</strong></td>
+      <td><strong style="color:#fff;font-size:0.95rem;">${state?.payrollMasked ? 'RD$ ••••••' : formatMoney(item.baseSalaryCents || 0)}</strong></td>
       <td style="font-size:0.82rem;color:var(--muted);">${escapeHtml(freqLabel)}</td>
       <td style="font-size:0.82rem;">${escapeHtml(methodLabel)}</td>
       <td>

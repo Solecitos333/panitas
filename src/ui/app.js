@@ -1,32 +1,37 @@
 import {
-  AlertTriangle, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, Bike, BookOpen, Cake, Calculator, Calendar,
-  CalendarX, ChartNoAxesCombined, Check, CheckCircle2, CheckSquare, ChefHat, ChevronDown, CircleDollarSign, ClipboardCheck, ClipboardPen, Clock3, Coffee, Cpu, CreditCard, Download, Eye,
-  FileCheck2, FileSpreadsheet, Flame, Globe, History, KeyRound, Landmark, Layers, LayoutDashboard, Lock, LogOut, Menu,
-  MessageSquare, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Moon, Package, PackageOpen, PanelLeftClose, PanelLeftOpen,
-  Pencil, Phone, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, Salad, Sandwich, Save, ScanBarcode,
-  Search, Send, Settings, Sheet, ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, SlidersHorizontal,
-  Smartphone, Sparkles, Star, Timer, Trash2, TrendingDown, TrendingUp, Truck, Usb, UserPlus, Users, Utensils, Volume2,
-  Wallet, WalletCards, Wheat, Wifi, WifiOff, X
+  Activity, AlertTriangle, ArrowDownLeft, ArrowLeft, ArrowLeftRight, ArrowUpRight, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, Bike, BookOpen, Cake, Calculator, Calendar,
+  CalendarX, ChartNoAxesCombined, Check, CheckCircle2, CheckSquare, ChefHat, ChevronDown, ChevronUp, CircleDollarSign, ClipboardCheck, ClipboardPen, Clock, Clock3, ClockAlert, Coffee, Coins, Cpu, CreditCard, Download, Eye, EyeOff,
+  FileCheck2, FileSpreadsheet, FileText, FileX2, FilterX, Flame, Globe, History, KeyRound, Landmark, Layers, LayoutDashboard, Lock, LogOut, Menu,
+  MessageSquare, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Moon, Package, PackageMinus, PackageOpen, PackagePlus, PanelLeftClose, PanelLeftOpen,
+  Pencil, Percent, Phone, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, RotateCcw, Salad, Sandwich, Save, ScanBarcode,
+  Search, Send, Settings, Sheet, ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, Sliders, SlidersHorizontal,
+  Smartphone, Sparkles, Star, Timer, Trash2, TrendingDown, TrendingUp, Truck, Unlock, Usb, UserCheck, UserPlus, Users, UserX, Utensils, Volume2,
+  Wallet, WalletCards, Wheat, Wifi, WifiOff, Wrench, X, Zap
 } from 'lucide';
 import { can, allowedNavigation, primaryRole } from '../domain/roles.js';
-import { calculateDocument, toCents } from '../domain/billing.js';
-import { renderCartLines, renderCartTotals, renderDashboard, renderKds, renderOrderDrawer, renderPos, renderTables } from '../modules/operations.js';
+import { calculateDocument, toCents, getPendingDeliveryInvoices } from '../domain/billing.js';
+import { getClientMemory, searchClientMemory, isDeliveryInvoice } from '../domain/client-memory.js';
+import { renderCartLines, renderCartTotals, renderDashboard, renderKds, renderOrderDrawer, renderPos, renderTables, renderTablePickerModal } from '../modules/operations.js';
 import { exportReport, renderInvoiceModal, renderInvoices, renderReports } from '../modules/billing.js';
-import { renderReceivables, renderFiaoPayModal } from '../modules/receivables.js';
-import { renderDeliveries, renderDriverFormModal, renderDeliverySettleModal } from '../modules/deliveries.js';
+import { renderReceivables, renderFiaoPayModal, renderClientBulkPayModal, renderClientStatementModal } from '../modules/receivables.js';
+import { renderDeliveries, renderDriverFormModal, renderDeliverySettleModal, renderReassignDeliveryModal } from '../modules/deliveries.js';
 import { renderWhatsApp, bindWhatsAppEvents } from '../modules/whatsapp.js';
 import { renderClientForm, renderClients, renderProductForm, renderProducts, renderStockAdjustModal, renderEndDayWasteModal } from '../modules/directory.js';
 import { getInventoryReason } from '../domain/inventory.js';
-import { renderPayroll, renderEmployeeFormModal, renderPayrollPaymentModal } from '../modules/payroll.js';
+import { renderPayroll, renderPayrollLockScreen, renderEmployeeFormModal, renderPayrollPaymentModal } from '../modules/payroll.js';
 import { calculatePayrollNetCents } from '../domain/payroll.js';
-import { renderCash, renderSettings, renderUserForm, renderUsers, renderTerminalDiag, renderAuditLogs } from '../modules/administration.js';
-import { escapeHtml, formatMoney } from '../lib/format.js';
+import { renderCash, renderSettings, renderUserForm, renderUsers, renderUsersLockScreen, renderTerminalDiag, renderAuditLogs, CASH_MOVEMENT_CATEGORIES, getCashMovementCategoryMeta, calculateCashSessionFinancials, enrichAuditLog, filterAuditByTime, buildAuditLogsCsv } from '../modules/administration.js';
+import { downloadText, escapeHtml, formatMoney } from '../lib/format.js';
+import { businessDateKey } from '../lib/business-time.js';
 import { createOperationId } from '../lib/id.js';
 import { affectsCurrentView } from '../lib/live-view.js';
 import {
   openCashDrawerHardware, buildInvoiceEscPos, buildInvoicePlainText, buildKitchenEscPos, buildKitchenPlainText,
   buildCashReportEscPos, buildCashReportPlainText, buildPrebillEscPos, buildPrebillPlainText,
   buildDeliverySettlementEscPos, buildDeliverySettlementPlainText, buildPayrollReceiptEscPos, buildPayrollReceiptPlainText,
+  buildReceivablesReportEscPos, buildReceivablesReportPlainText, buildClientStatementEscPos, buildClientStatementPlainText,
+  buildClientSettlementEscPos, buildClientSettlementPlainText,
+  buildCashMovementEscPos, buildCashMovementPlainText,
   sendEscPosToPrinter, EscPosBuilder, checkEloNativeServer,
   calculateClientTotalDebt,
 
@@ -38,24 +43,26 @@ import { bindPinPad, renderPinPadHtml } from '../lib/pin-pad.js';
 import { updateForms, updateSafety } from '../lib/update-safety.js';
 import { setupTouchNumericInputs } from '../lib/touch-numpad.js';
 import { createScopedIcons } from '../lib/scoped-icons.js';
+import { createSleepManager } from '../lib/sleep-manager.js';
+import { matchesFuzzy, fuzzyScore } from '../lib/fuzzy-search.js';
 
 const NAV = [
-  ['dashboard','layout-dashboard','Resumen'], ['pos','shopping-cart','Punto de venta'], ['tables','utensils','Mesas'],
-  ['kds','chef-hat','Cocina KDS'], ['invoices','receipt-text','Facturación'], ['receivables','book-open','Fiao / Por Cobrar'],
+  ['dashboard','layout-dashboard','Resumen'], ['pos','shopping-cart','Punto de venta'],
+  ['invoices','receipt-text','Facturación'], ['receivables','book-open','Fiao / Por Cobrar'],
   ['deliveries','bike','Deliveries'], ['clients','users','Clientes'],
   ['products','package','Productos'], ['whatsapp','smartphone','Bot WhatsApp'], ['cash','wallet-cards','Caja'],
-  ['payroll','badge-dollar-sign','Nómina y Personal'],
   ['reports','chart-no-axes-combined','Reportes'],
-  ['users','user-plus','Usuarios'], ['audit','shield-check','Auditoría'], ['terminal','cpu','Terminal ELO'], ['settings','settings','Configuración']
+  ['users','lock','Usuarios (PIN)'], ['audit','shield-check','Auditoría'], ['terminal','cpu','Terminal ELO'], ['settings','settings','Configuración'],
+  ['payroll','lock','Nómina (PIN)']
 ];
 
 const icons = {
-  AlertTriangle, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, Bike, BookOpen, Cake, Calculator, Calendar, ChartNoAxesCombined, Check, ChefHat,
-  ChevronDown, CircleDollarSign, Clock3, Coffee, Cpu, CreditCard, Download, Eye, FileCheck2, FileSpreadsheet, Flame, Globe, KeyRound, Landmark,
-  Layers, LayoutDashboard, Lock, LogOut, Menu, MessageSquare, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Package, PackageOpen, PanelLeftClose, PanelLeftOpen,
-  Pencil, Phone, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, Salad, Sandwich, Save, ScanBarcode, Search, Send, Settings, Sheet,
-  ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, SlidersHorizontal, Smartphone, Sparkles, Star, Timer, Trash2, TrendingDown, TrendingUp, Usb, UserPlus, Users,
-  Utensils, Volume2, Wallet, WalletCards, Wheat, Wifi, WifiOff, X
+  Activity, AlertTriangle, ArrowDownLeft, ArrowLeft, ArrowLeftRight, ArrowUpRight, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, Bike, BookOpen, Cake, Calculator, Calendar, ChartNoAxesCombined, Check, CheckCircle2, CheckSquare, ChefHat,
+  ChevronDown, ChevronUp, CircleDollarSign, ClipboardCheck, ClipboardPen, Clock, Clock3, ClockAlert, Coffee, Coins, Cpu, CreditCard, Download, Eye, EyeOff, FileCheck2, FileSpreadsheet, FileText, FileX2, FilterX, Flame, Globe, History, KeyRound, Landmark,
+  Layers, LayoutDashboard, Lock, LogOut, Menu, MessageSquare, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Moon, Package, PackageMinus, PackageOpen, PackagePlus, PanelLeftClose, PanelLeftOpen,
+  Pencil, Percent, Phone, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, RotateCcw, Salad, Sandwich, Save, ScanBarcode, Search, Send, Settings, Sheet,
+  ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, Sliders, SlidersHorizontal, Smartphone, Sparkles, Star, Timer, Trash2, TrendingDown, TrendingUp, Truck, Unlock, Usb, UserCheck, UserPlus, Users, UserX,
+  Utensils, Volume2, Wallet, WalletCards, Wheat, Wifi, WifiOff, Wrench, X, Zap
 };
 const refreshScopedIcons = createScopedIcons(icons);
 
@@ -104,11 +111,21 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   const managementMode = !window.EloPOS && new URLSearchParams(location.search).get('mode') === 'management';
   const state = {
     user, settings: {}, route: initialRoute(user), cart: [], selectedOrderId: '', selectedInvoiceId: '', preselectedTableId: '', modal: '',
+    loadedOrderId: '', loadedTableId: '',
     hardwareStatus: null, updateStatus: getEloUpdateStatus(), scannerActive: false, checkoutOpening: false, saleInProgress: false, pendingLiveRender: false, pendingPinDestination: '', mobileReportPeriod: 'day', posDiscountState: { discount: 0, discountType: 'amount', includeLegalTip: false }, posDraft: {}, posSearch: '', posCategory: 'Todos', posPaymentMethod: 'cash',
     sidebarCollapsed: typeof localStorage !== 'undefined' && localStorage.getItem('panitas_sidebar_collapsed') === '1',
-    products: [], clients: [], tables: [], orders: [], invoices: [], payments: [], cashSessions: [], cashMovements: [], users: [], auditLogs: [], deliveryDrivers: [], selectedDeliveryDriver: null, selectedDeliveryInvoices: [], editingDriver: null, whatsappBot: null, development,
+    products: [], clients: [], tables: [], orders: [], invoices: [], payments: [], cashSessions: [], cashMovements: [], users: [], auditLogs: [], deliveryDrivers: [], selectedDeliveryDriver: null, selectedDeliveryInvoices: [], editingDriver: null, reassigningInvoiceId: '', whatsappBot: null, development,
+    auditCategoryFilter: 'all', auditTimeFilter: 'all', auditSearchTerm: '', auditDisplayLimit: 50,
+    deliveriesTab: 'active', deliveriesViewMode: 'drivers', deliveriesDriverFilter: 'all', deliveriesSearch: '', deliveriesSort: 'time_asc', deliveriesExpandedDrivers: {}, deliveriesAllExpanded: null,
+    cashTab: 'overview', cashMovementTypeFilter: 'all', cashMovementSearch: '', cashMovementModalType: 'out',
     inventoryMovements: [], productsTab: 'catalog', editingStockProduct: null,
+    productsCategoryFilter: 'all', productsTypeFilter: 'all', productsSearch: '', productsSort: 'name_asc', productsViewMode: 'grid',
+    clientsFilter: 'all', clientsSearch: '', clientsSort: 'debt_desc', clientsViewMode: 'table',
     employees: [], payrollPayments: [], payrollTab: 'payments', editingEmployee: null, payingEmployeeId: null,
+    payrollUnlocked: false, payrollMasked: false, usersUnlocked: false, posDestination: 'takeout',
+    receivablesTab: 'debts', receivablesChannelFilter: 'all', receivablesViewMode: 'clients', receivablesAgeFilter: 'all', receivablesAmountFilter: 'all',
+    receivablesContactFilter: 'all', receivablesSort: 'debt_desc', receivablesSearch: '', selectedFiaoInvoice: null,
+    selectedClientBulkPay: null, selectedClientStatement: null,
     capabilities: {
       bill: can(user, 'billing:create'), cancelInvoice: can(user, 'billing:cancel'), chargeOrder: can(user, 'orders:charge'),
       createOrder: can(user, 'orders:create'), updateOrder: can(user, 'orders:update'), serveOrder: can(user, 'orders:serve'),
@@ -118,6 +135,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   };
   let destroyed = false;
   let disposePinPad = () => {};
+  let disposePayrollPin = () => {};
+  let disposeUsersPin = () => {};
   let drawerInProgress = false;
   let previousKdsOrders = new Set();
   let hardwarePollId = null;
@@ -126,6 +145,17 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   let cashFormInProgress = false;
   let movementAttempt = null;
   updateSafety.setBlocker('application', true);
+
+  const sleepManager = createSleepManager({
+    getTimeoutSeconds: () => (state.settings?.screenSleepTimeout != null ? Number(state.settings.screenSleepTimeout) : 180),
+    isBusy: () => updateSafety.isBusy() || state.saleInProgress || state.checkoutOpening || busyButtons.size > 0,
+    onSleep: () => {
+      setVFDMessage('MODO REPOSO', 'LOS PANITAS').catch(() => {});
+    },
+    onWake: () => {
+      setVFDMessage('LOS PANITAS', 'BIENVENIDO').catch(() => {});
+    }
+  });
 
   async function start() {
     state.settings = await service.loadSettings();
@@ -147,6 +177,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       }
     });
     render();
+    sleepManager.start();
     syncNativeUpdateState();
     // The management app has no printer/drawer bridge to poll every eight seconds.
     if (!window.EloPOS && new URLSearchParams(location.search).get('mode') === 'management') return;
@@ -167,7 +198,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           const prevOut = state.hardwareStatus?.paperOut;
           state.hardwareStatus = st;
           if (st.paperOut && !prevOut) {
-            toast('⚠️ ¡ALERTA: La impresora se ha quedado sin papel térmico! Por favor coloca un rollo nuevo de 80mm.', 'danger', 10000);
+            toast('ALERTA: ¡La impresora se ha quedado sin papel térmico! Por favor coloca un rollo nuevo de 80mm.', 'danger', 10000);
             beepHardware('error').catch(() => {});
           }
           if (state.route === 'pos' && (st.paperOut !== prevOut)) {
@@ -250,7 +281,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
             <i data-lucide="${state.sidebarCollapsed ? 'panel-left-open' : 'panel-left-close'}"></i>
           </button>
         </div>
-        <nav>${allowedNavigation(user).map((id) => { const entry=NAV.find((item)=>item[0]===id); return `<button data-route="${id}" class="${state.route===id?'active':''}" title="${entry[2]}"><i data-lucide="${entry[1]}"></i><span>${entry[2]}</span></button>`; }).join('')}</nav>
+        <nav>${allowedNavigation(user).map((id) => { const entry=NAV.find((item)=>item[0]===id); if (!entry) return ''; return `<button data-route="${id}" class="${state.route===id?'active':''}" title="${entry[2]}"><i data-lucide="${entry[1]}"></i><span>${entry[2]}</span></button>`; }).join('')}</nav>
         <div class="sidebar-footer">
           <div class="user-card"><span>${escapeHtml((user.displayName||user.username||'?').charAt(0).toUpperCase())}</span><div><strong>${escapeHtml(user.displayName||user.username)}</strong><small>${roleLabel(primaryRole(user))}</small></div></div>
           ${state.capabilities.cashDrawer ? `<button class="drawer-kick-btn" style="width:100%;justify-content:center;" data-drawer-kick><i data-lucide="wallet"></i> <span>Abrir gaveta</span></button>` : ''}
@@ -286,7 +317,11 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const renderers = {
       dashboard: renderDashboard, pos: renderPos, tables: renderTables, kds: renderKds,
       invoices: renderInvoices, receivables: renderReceivables, deliveries: renderDeliveries, clients: renderClients, products: renderProducts,
-      whatsapp: renderWhatsApp, cash: renderCash, payroll: renderPayroll, reports: renderReports, users: renderUsers, audit: renderAuditLogs,
+      whatsapp: renderWhatsApp, cash: renderCash,
+      payroll: () => (!state.payrollUnlocked ? renderPayrollLockScreen(state, user) : renderPayroll(state)),
+      reports: renderReports,
+      users: () => (!state.usersUnlocked ? renderUsersLockScreen(state, user) : renderUsers(state)),
+      audit: renderAuditLogs,
       terminal: () => renderTerminalDiag(), settings: renderSettings
     };
     const renderer = renderers[state.route] || renderDashboard;
@@ -317,7 +352,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     if (state.modal === 'product') modalRoot.innerHTML = renderProductForm(state.products.find((item)=>item.id===state.editingId));
     else if (state.modal === 'client') modalRoot.innerHTML = renderClientForm(state.clients.find((item)=>item.id===state.editingId) || state.editingClientDraft || {});
     else if (state.modal === 'order') modalRoot.innerHTML = renderOrderDrawer(state.orders.find((item)=>item.id===state.selectedOrderId), state.capabilities);
-    else if (state.modal === 'invoice') modalRoot.innerHTML = renderInvoiceModal(state.invoices.find((item)=>item.id===state.selectedInvoiceId), state.payments, state.capabilities);
+    else if (state.modal === 'invoice' || state.modal === 'invoiceDetail') modalRoot.innerHTML = renderInvoiceModal(state.invoices.find((item)=>item.id===(state.selectedInvoiceId || state.selectedInvoice?.id)), state.payments, state.capabilities);
     else if (state.modal === 'payment') modalRoot.innerHTML = paymentModal();
     else if (state.modal === 'charge') modalRoot.innerHTML = chargeModal();
     else if (state.modal === 'quickCash') modalRoot.innerHTML = quickCashModal();
@@ -328,18 +363,26 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     else if (state.modal === 'setupCheckoutPin') modalRoot.innerHTML = setupCheckoutPinModal();
     else if (state.modal === 'saleSuccess') modalRoot.innerHTML = saleSuccessModal();
     else if (state.modal === 'fiaoPay') modalRoot.innerHTML = renderFiaoPayModal(state.selectedFiaoInvoice, state.activeCash);
+    else if (state.modal === 'clientBulkPay') modalRoot.innerHTML = renderClientBulkPayModal(state.selectedClientBulkPay, state.activeCash);
+    else if (state.modal === 'clientStatement') modalRoot.innerHTML = renderClientStatementModal(state.selectedClientStatement, state.settings);
     else if (state.modal === 'driverForm') modalRoot.innerHTML = renderDriverFormModal(state.editingDriver);
     else if (state.modal === 'deliverySettle') modalRoot.innerHTML = renderDeliverySettleModal(state.selectedDeliveryDriver, state.selectedDeliveryInvoices || [], state.activeCash);
     else if (state.modal === 'employeeForm') modalRoot.innerHTML = renderEmployeeFormModal(state.editingEmployee);
     else if (state.modal === 'payrollPayment') modalRoot.innerHTML = renderPayrollPaymentModal({ employees: state.employees, selectedEmployeeId: state.payingEmployeeId, activeCash: state.activeCash });
     else if (state.modal === 'itemNote') modalRoot.innerHTML = itemNoteModal();
     else if (state.modal === 'quantity') modalRoot.innerHTML = quantityModal();
+    else if (state.modal === 'itemPrice') modalRoot.innerHTML = itemPriceModal();
     else if (state.modal === 'user') modalRoot.innerHTML = renderUserForm(state.editingUser);
     else if (state.modal === 'password') modalRoot.innerHTML = passwordModal();
     else if (state.modal === 'cancelOrder') modalRoot.innerHTML = cancellationModal('order');
     else if (state.modal === 'cancelInvoice') modalRoot.innerHTML = cancellationModal('invoice');
     else if (state.modal === 'stockAdjust') modalRoot.innerHTML = renderStockAdjustModal(state.editingStockProduct || {});
     else if (state.modal === 'endDayWaste') modalRoot.innerHTML = renderEndDayWasteModal(state.products || []);
+    else if (state.modal === 'tablePicker') modalRoot.innerHTML = renderTablePickerModal(state.tables, state.loadedTableId || state.posDraft?.tableId, state.orders);
+    else if (state.modal === 'reassignDelivery') {
+      const inv = (state.invoices || []).find((i) => i.id === state.reassigningInvoiceId) || (state.lastSaleResult?.id === state.reassigningInvoiceId ? state.lastSaleResult : null);
+      modalRoot.innerHTML = renderReassignDeliveryModal(inv, state.deliveryDrivers);
+    }
     else modalRoot.innerHTML = '';
     iconsRefresh(modalRoot); bindModal(); syncNativeUpdateState(); setupTouchNumericInputs(modalRoot);
   }
@@ -349,9 +392,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelector('[data-logout]')?.addEventListener('click', onLogout);
     root.querySelector('[data-password]')?.addEventListener('click',()=>{state.modal='password';renderModal();});
     root.querySelector('[data-menu]')?.addEventListener('click',()=>root.querySelector('.sidebar').classList.toggle('open'));
-    root.querySelectorAll('[data-drawer-kick]').forEach((btn)=>btn.addEventListener('click', promptDrawerPin));
+    root.querySelectorAll('[data-drawer-kick]').forEach((btn)=>btn.addEventListener('click', () => promptDrawerPin(btn.dataset.drawerKick || 'open_only')));
     root.querySelectorAll('[data-quick-open-cash]').forEach((btn)=>btn.addEventListener('click', () => { state.modal = 'quickCash'; renderModal(); }));
-    root.querySelectorAll('[data-cash-movement-open]').forEach((btn)=>btn.addEventListener('click', () => { state.modal = 'cashMovement'; renderModal(); }));
+    root.querySelectorAll('[data-cash-movement-open]').forEach((btn)=>btn.addEventListener('click', () => { state.cashMovementModalType = btn.dataset.cashMovementOpen === 'in' ? 'in' : 'out'; state.modal = 'cashMovement'; renderModal(); }));
     root.querySelectorAll('[data-cash-close-open]').forEach((btn)=>btn.addEventListener('click', () => { state.modal = 'cashClose'; renderModal(); }));
     root.querySelectorAll('[data-sidebar-toggle]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -522,10 +565,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           if (res.paperStatus === 'unsupported') {
             toast('La impresora está conectada, pero este modelo no permite confirmar el papel por sensor. Revisa el rollo visualmente.', 'warning');
           } else if (res.paperOut) {
-            toast('⚠️ El sensor aún detecta que la impresora no tiene papel.', 'danger');
+            toast('El sensor aún detecta que la impresora no tiene papel.', 'danger');
             beepHardware('error');
           } else {
-            toast('✓ ¡Papel térmico de 80mm detectado correctamente!', 'success');
+            toast('¡Papel térmico de 80mm detectado correctamente!', 'success');
             beepHardware('ok');
           }
           renderContent();
@@ -538,7 +581,231 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       });
     });
     root.querySelectorAll('[data-cart-item-note]').forEach((btn)=>btn.addEventListener('click',()=>openItemNoteModal(Number(btn.dataset.cartItemNote))));
+    root.querySelectorAll('[data-pos-load-table]').forEach((btn)=>btn.addEventListener('click',()=>loadTableOrderToCart(btn.dataset.posLoadTable)));
+    root.querySelectorAll('[data-pos-release-cart]').forEach((btn)=>btn.addEventListener('click',releaseLoadedCart));
+    root.querySelectorAll('[data-pos-cancel-table]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handleCancelAndLiberateTable(btn.dataset.posCancelTable, btn);
+      });
+    });
+    root.querySelectorAll('[data-pos-pick-table]').forEach((btn)=>btn.addEventListener('click',()=>{
+      state.tablePickerAction = 'select';
+      state.modal='tablePicker';
+      renderModal();
+    }));
+    root.querySelectorAll('[data-pos-set-dest="takeout"]').forEach((btn) => btn.addEventListener('click', () => {
+      state.posDestination = 'takeout';
+      if (state.posPaymentMethod === 'delivery_cod') state.posPaymentMethod = 'cash';
+      state.loadedOrderId = '';
+      state.loadedTableId = '';
+      if (state.posDraft) state.posDraft.tableId = '';
+      const sel = root.querySelector('#pos-table-select');
+      if (sel) sel.value = '';
+      renderContent();
+    }));
+    root.querySelectorAll('[data-pos-set-dest="table"]').forEach((btn) => btn.addEventListener('click', () => {
+      state.posDestination = 'table';
+      if (state.posPaymentMethod === 'delivery_cod') state.posPaymentMethod = 'cash';
+      state.tablePickerAction = 'select';
+      state.modal = 'tablePicker';
+      renderModal();
+    }));
+    root.querySelectorAll('[data-pos-set-dest="delivery"]').forEach((btn) => btn.addEventListener('click', () => {
+      state.posDestination = 'delivery';
+      if (state.posPaymentMethod === 'cash') state.posPaymentMethod = 'delivery_cod';
+      state.loadedOrderId = '';
+      state.loadedTableId = '';
+      if (state.posDraft) state.posDraft.tableId = '';
+      const sel = root.querySelector('#pos-table-select');
+      if (sel) sel.value = '';
+      renderContent();
+    }));
+    root.querySelectorAll('[data-pos-settle-driver]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const driverId = btn.dataset.posSettleDriver;
+        const driver = (state.deliveryDrivers || []).find((d) => d.id === driverId || d.name === driverId) || { id: driverId, name: driverId || 'Mensajero' };
+        const pendingInvoices = (state.invoices || []).filter((inv) =>
+          (inv.deliveryDriverId === driverId || inv.deliveryDriverName === driverId || (!inv.deliveryDriverId && inv.paymentMethod === 'delivery_cod')) &&
+          inv.status !== 'paid' && inv.status !== 'cancelled'
+        );
+        state.selectedDeliveryDriver = driver;
+        state.selectedDeliveryInvoices = pendingInvoices;
+        state.modal = 'deliverySettle';
+        renderModal();
+      });
+    });
+    root.querySelectorAll('[data-pos-clear-client]').forEach((btn) => btn.addEventListener('click', () => {
+      const input = root.querySelector('#pos-client-name');
+      if (input) input.value = '';
+      if (state.posDraft) state.posDraft.clientName = '';
+      const debtWarning = root.querySelector('#pos-client-debt-warning');
+      if (debtWarning) debtWarning.classList.add('hidden');
+      renderContent();
+    }));
+
+    function bindClientAutocomplete(inputSelector, dropdownSelector) {
+      const input = root.querySelector(inputSelector);
+      const dropdown = root.querySelector(dropdownSelector);
+      if (!input || !dropdown) return;
+
+      const handleSearch = (term) => {
+        const q = String(term || '').trim();
+        if (!q) {
+          dropdown.innerHTML = '';
+          dropdown.classList.add('hidden');
+          const debtWarning = root.querySelector('#pos-client-debt-warning');
+          if (debtWarning && inputSelector === '#pos-client-name') debtWarning.classList.add('hidden');
+          return;
+        }
+
+        const memory = getClientMemory(state);
+        const suggestions = searchClientMemory(memory, q, 6);
+
+        if (!suggestions.length) {
+          dropdown.innerHTML = '';
+          dropdown.classList.add('hidden');
+          return;
+        }
+
+        dropdown.innerHTML = suggestions.map(c => `
+          <div
+            class="client-autocomplete-item"
+            data-ac-name="${escapeHtml(c.name)}"
+            data-ac-id="${escapeHtml(c.id || '')}"
+            data-ac-phone="${escapeHtml(c.phone || '')}"
+            data-ac-address="${escapeHtml(c.address || '')}"
+            data-ac-notes="${escapeHtml(c.notes || '')}"
+            data-ac-debt="${c.totalDebtCents}"
+            data-ac-fiao="${c.fiaoDebtCents}"
+            data-ac-deliv="${c.deliveryDebtCents}"
+          >
+            <div class="client-ac-main">
+              <strong class="client-ac-name">${escapeHtml(c.name)}</strong>
+              ${c.fiaoDebtCents > 0 ? `<span class="client-ac-badge debt"><i data-lucide="alert-circle" style="width:11px;height:11px;display:inline-block;vertical-align:-1px;margin-right:3px;"></i>Debe ${formatMoney(c.fiaoDebtCents)}</span>` : ''}
+              ${c.deliveryDebtCents > 0 ? `<span class="client-ac-badge info"><i data-lucide="bike" style="width:11px;height:11px;display:inline-block;vertical-align:-1px;margin-right:3px;"></i>${formatMoney(c.deliveryDebtCents)}</span>` : ''}
+              ${c.totalDebtCents === 0 ? `<span class="client-ac-badge ok"><i data-lucide="check-circle" style="width:11px;height:11px;display:inline-block;vertical-align:-1px;margin-right:3px;"></i>Al día</span>` : ''}
+            </div>
+            ${(c.phone || c.address) ? `
+              <div class="client-ac-details">
+                ${c.phone ? `<span><i data-lucide="phone" style="width:11px;height:11px;display:inline-block;vertical-align:-1px;margin-right:3px;"></i>${escapeHtml(c.phone)}</span>` : ''}
+                ${c.address ? `<span><i data-lucide="map-pin" style="width:11px;height:11px;display:inline-block;vertical-align:-1px;margin-right:3px;"></i>${escapeHtml(c.address)}</span>` : ''}
+              </div>
+            ` : ''}
+          </div>
+        `).join('');
+        dropdown.classList.remove('hidden');
+        if (window.lucide && typeof window.lucide.createIcons === 'function') {
+          try { window.lucide.createIcons(); } catch (_) {}
+        }
+
+        dropdown.querySelectorAll('.client-autocomplete-item').forEach(item => {
+          item.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            const name = item.dataset.acName;
+            const id = item.dataset.acId;
+            const phone = item.dataset.acPhone;
+            const address = item.dataset.acAddress;
+            const notes = item.dataset.acNotes;
+            const totalDebt = Number(item.dataset.acDebt || 0);
+            const fiaoDebt = Number(item.dataset.acFiao || 0);
+            const delivDebt = Number(item.dataset.acDeliv || 0);
+
+            input.value = name;
+            if (state.posDraft) {
+              state.posDraft.clientName = name;
+              state.posDraft.clientId = id;
+              if (phone) state.posDraft.deliveryPhone = phone;
+              if (address) state.posDraft.deliveryAddress = address;
+              if (notes && !state.posDraft.deliveryNotes) state.posDraft.deliveryNotes = notes;
+            }
+
+            // Actualizar inputs en toda la vista de POS
+            const mainClientInput = root.querySelector('#pos-client-name');
+            if (mainClientInput && mainClientInput !== input) mainClientInput.value = name;
+
+            const phoneInputs = root.querySelectorAll('#pos-delivery-phone, #pos-fiao-phone');
+            phoneInputs.forEach(pIn => {
+              if (phone) pIn.value = phone;
+            });
+
+            const addressInputs = root.querySelectorAll('#pos-delivery-address');
+            addressInputs.forEach(aIn => {
+              if (address) aIn.value = address;
+            });
+
+            const delivClientInput = root.querySelector('#pos-delivery-client-name');
+            if (delivClientInput && delivClientInput !== input) delivClientInput.value = name;
+
+            const fiaoNameInput = root.querySelector('#pos-fiao-name');
+            if (fiaoNameInput && fiaoNameInput !== input) fiaoNameInput.value = name;
+
+            const fiaoIdInput = root.querySelector('#pos-fiao-client-id');
+            if (fiaoIdInput && id) fiaoIdInput.value = id;
+
+            // Alerta visual de fiao pendiente en el panel de crédito
+            const debtInfo = root.querySelector('#pos-fiao-debt-info');
+            const debtText = root.querySelector('#pos-fiao-debt-text');
+            if (debtInfo && debtText) {
+              if (totalDebt > 0) {
+                debtText.textContent = `Atención: ${name} tiene ${formatMoney(totalDebt)} pendientes (${formatMoney(fiaoDebt)} fiao, ${formatMoney(delivDebt)} delivery).`;
+                debtInfo.style.display = 'block';
+              } else {
+                debtInfo.style.display = 'none';
+              }
+            }
+
+            // Alerta de fiao pendiente en el carrito
+            const debtWarning = root.querySelector('#pos-client-debt-warning');
+            if (debtWarning) {
+              if (totalDebt > 0) {
+                debtWarning.innerHTML = `
+                  <i data-lucide="alert-triangle" style="width:16px;height:16px;color:#f87171;flex-shrink:0;"></i>
+                  <div>
+                    <strong>Cliente con saldo pendiente:</strong> ${escapeHtml(name)} debe <strong>${formatMoney(totalDebt)}</strong> (${fiaoDebt > 0 ? `Fiao: ${formatMoney(fiaoDebt)}` : ''}${fiaoDebt > 0 && delivDebt > 0 ? ' · ' : ''}${delivDebt > 0 ? `Delivery: ${formatMoney(delivDebt)}` : ''}).
+                  </div>
+                `;
+                if (window.lucide && typeof window.lucide.createIcons === 'function') {
+                  try { window.lucide.createIcons(); } catch (_) {}
+                }
+                debtWarning.classList.remove('hidden');
+              } else {
+                debtWarning.classList.add('hidden');
+              }
+            }
+
+            dropdown.classList.add('hidden');
+            dropdown.innerHTML = '';
+          });
+        });
+      };
+
+      input.addEventListener('input', (e) => handleSearch(e.target.value));
+      input.addEventListener('focus', (e) => {
+        if (e.target.value.trim()) handleSearch(e.target.value);
+      });
+      input.addEventListener('blur', () => {
+        setTimeout(() => {
+          dropdown.classList.add('hidden');
+        }, 220);
+      });
+    }
+
+    bindClientAutocomplete('#pos-client-name', '#pos-client-autocomplete-list');
+    bindClientAutocomplete('#pos-fiao-name', '#pos-fiao-autocomplete-list');
+    bindClientAutocomplete('#pos-delivery-client-name', '#pos-delivery-autocomplete-list');
+    root.querySelectorAll('[data-pos-send-table]').forEach((btn)=>btn.addEventListener('click',()=>{
+      const tableId = root.querySelector('#pos-table-select')?.value || state.loadedTableId || state.posDraft?.tableId || '';
+      if (tableId) {
+        sendComandaToTable(tableId);
+      } else {
+        state.tablePickerAction = 'send';
+        state.modal = 'tablePicker';
+        renderModal();
+      }
+    }));
     root.querySelectorAll('[data-cart-set-qty]').forEach((btn)=>btn.addEventListener('click',()=>openQuantityModal(Number(btn.dataset.cartSetQty))));
+    root.querySelectorAll('[data-cart-set-price]').forEach((btn)=>btn.addEventListener('click',()=>openItemPriceModal(Number(btn.dataset.cartSetPrice))));
     root.querySelector('#pos-discount-value')?.addEventListener('input',updatePosChange);
     root.querySelector('#pos-discount-type')?.addEventListener('change',updatePosChange);
     root.querySelector('#pos-legal-tip')?.addEventListener('change',updatePosChange);
@@ -681,14 +948,234 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       renderModal();
     });
 
-    // Fiao / Cuentas por Cobrar
-    root.querySelector('#fiao-search')?.addEventListener('input', (e) => {
-      const q = e.target.value.toLowerCase().trim();
-      root.querySelectorAll('[data-fiao-card]').forEach((card) => {
-        const search = (card.dataset.search || '').toLowerCase();
-        card.hidden = q ? !search.includes(q) : false;
+    function syncDeliveryFee(feeVal) {
+      const feeNum = Number(String(feeVal || 0).replace(/,/g, '').trim());
+      const feeCents = Number.isFinite(feeNum) && feeNum > 0 ? Math.round(feeNum * 100) : 0;
+      const existingIndex = state.cart.findIndex(i => i.isDeliveryFee || i.productId === 'prod-costo-de-envio-delivery' || (i.name && i.name.toLowerCase().includes('costo de envío')));
+      if (feeCents > 0) {
+        if (existingIndex >= 0) {
+          state.cart[existingIndex].unitPriceCents = feeCents;
+        } else {
+          state.cart.push({
+            productId: 'prod-costo-de-envio-delivery',
+            name: 'Costo de Envío (Delivery)',
+            quantity: 1,
+            unitPriceCents: feeCents,
+            taxRate: 0,
+            notes: '',
+            isDeliveryFee: true
+          });
+        }
+      } else if (existingIndex >= 0) {
+        state.cart.splice(existingIndex, 1);
+      }
+      renderPosCartOnly();
+      capturePosDraft();
+    }
+
+    root.querySelector('#pos-delivery-fee')?.addEventListener('input', (e) => {
+      syncDeliveryFee(e.target.value);
+    });
+    root.querySelectorAll('[data-quick-delivery-fee]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const val = btn.dataset.quickDeliveryFee;
+        const feeInput = root.querySelector('#pos-delivery-fee');
+        if (feeInput) feeInput.value = Number(val) > 0 ? Number(val).toFixed(2) : '';
+        syncDeliveryFee(val);
       });
     });
+
+    // Fiao / Cuentas por Cobrar
+    root.querySelectorAll('[data-receivables-tab]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.receivablesTab = btn.dataset.receivablesTab || 'debts';
+        renderContent();
+      });
+    });
+    root.querySelectorAll('[data-receivables-channel]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.receivablesChannelFilter = btn.dataset.receivablesChannel || 'all';
+        renderContent();
+      });
+    });
+    root.querySelectorAll('[data-receivables-view]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.receivablesViewMode = btn.dataset.receivablesView || 'clients';
+        renderContent();
+      });
+    });
+    root.querySelectorAll('[data-receivables-age]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.receivablesAgeFilter = btn.dataset.receivablesAge || 'all';
+        renderContent();
+      });
+    });
+    root.querySelector('#fiao-amount-filter')?.addEventListener('change', (e) => {
+      state.receivablesAmountFilter = e.target.value;
+      renderContent();
+    });
+    root.querySelector('#fiao-contact-filter')?.addEventListener('change', (e) => {
+      state.receivablesContactFilter = e.target.value;
+      renderContent();
+    });
+    root.querySelector('#fiao-sort-select')?.addEventListener('change', (e) => {
+      state.receivablesSort = e.target.value;
+      renderContent();
+    });
+    root.querySelector('[data-receivables-clear-filters]')?.addEventListener('click', () => {
+      state.receivablesChannelFilter = 'all';
+      state.receivablesAgeFilter = 'all';
+      state.receivablesAmountFilter = 'all';
+      state.receivablesContactFilter = 'all';
+      state.receivablesSearch = '';
+      renderContent();
+    });
+
+    root.querySelector('#fiao-search')?.addEventListener('input', (e) => {
+      state.receivablesSearch = e.target.value;
+      const q = (e.target.value || '').trim();
+      root.querySelectorAll('[data-fiao-card]').forEach((card) => {
+        const search = card.dataset.search || '';
+        card.hidden = q ? !matchesFuzzy(q, search) : false;
+      });
+      root.querySelectorAll('[data-fiao-row]').forEach((row) => {
+        const search = row.dataset.search || '';
+        row.hidden = q ? !matchesFuzzy(q, search) : false;
+      });
+    });
+
+    // Imprimir Arqueo / Reporte General de Fiaos en Térmica
+    root.querySelector('[data-receivables-print-report]')?.addEventListener('click', async () => {
+      const channel = state.receivablesChannelFilter || 'all';
+      let pendingInvoices = (state.invoices || []).filter(
+        (inv) => inv.documentType === 'invoice' &&
+          inv.status !== 'paid' &&
+          inv.status !== 'cancelled' &&
+          (Number(inv.totalCents || 0) - Number(inv.paidCents || 0)) > 0
+      );
+      if (channel === 'fiao') {
+        pendingInvoices = pendingInvoices.filter(i => !isDeliveryInvoice(i));
+      } else if (channel === 'delivery') {
+        pendingInvoices = pendingInvoices.filter(i => isDeliveryInvoice(i));
+      }
+      const clientMap = new Map();
+      for (const inv of pendingInvoices) {
+        const name = String(inv.clientName || 'Cliente').trim();
+        if (!clientMap.has(name)) {
+          clientMap.set(name, { name, phone: inv.clientPhone || '', totalDebtCents: 0, maxAgeDays: 0 });
+        }
+        const c = clientMap.get(name);
+        if (!c.phone && inv.clientPhone) c.phone = inv.clientPhone;
+        const bal = Number(inv.totalCents || 0) - Number(inv.paidCents || 0);
+        c.totalDebtCents += bal;
+        const invDate = inv.createdAt?.toDate ? inv.createdAt.toDate() : new Date(inv.createdAt || 0);
+        const age = Math.max(0, Math.floor((Date.now() - invDate.getTime()) / (1000 * 60 * 60 * 24)));
+        if (age > c.maxAgeDays) c.maxAgeDays = age;
+      }
+      const clients = Array.from(clientMap.values()).sort((a, b) => b.totalDebtCents - a.totalDebtCents);
+      const totalDebtCents = clients.reduce((sum, c) => sum + c.totalDebtCents, 0);
+      const overdueDebtCents = pendingInvoices.reduce((sum, inv) => {
+        const invDate = inv.createdAt?.toDate ? inv.createdAt.toDate() : new Date(inv.createdAt || 0);
+        const age = Math.max(0, Math.floor((Date.now() - invDate.getTime()) / (1000 * 60 * 60 * 24)));
+        return age >= 15 ? sum + (Number(inv.totalCents || 0) - Number(inv.paidCents || 0)) : sum;
+      }, 0);
+
+      const reportData = {
+        date: new Date(),
+        totalDebtCents,
+        clientsCount: clients.length,
+        invoicesCount: pendingInvoices.length,
+        overdueDebtCents,
+        clients
+      };
+
+      const b = buildReceivablesReportEscPos(reportData, state.settings);
+      const plainText = buildReceivablesReportPlainText(reportData, state.settings);
+      const res = await sendEscPosToPrinter(b, { plainText, openDrawer: false });
+      if (res?.success) toast('Reporte de cuentas por cobrar impreso con éxito.', 'success');
+      else toast('No se pudo enviar a la impresora.', 'warning');
+    });
+
+    // Abrir Modal de Cobro Masivo / Abonar a Deuda Global del Cliente
+    root.querySelectorAll('[data-client-bulk-pay]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const clientName = btn.dataset.clientBulkPay;
+        const pendingInvoices = (state.invoices || []).filter(
+          (inv) => inv.documentType === 'invoice' &&
+            inv.status !== 'paid' &&
+            inv.status !== 'cancelled' &&
+            String(inv.clientName || inv.deliveryClientName || '').trim().toLowerCase() === String(clientName || '').trim().toLowerCase() &&
+            (Number(inv.totalCents || 0) - Number(inv.paidCents || 0)) > 0
+        ).map(inv => ({
+          ...inv,
+          balanceCents: Number(inv.totalCents || 0) - Number(inv.paidCents || 0),
+          ageDays: Math.max(0, Math.floor((Date.now() - (inv.createdAt?.toDate ? inv.createdAt.toDate() : new Date(inv.createdAt || 0)).getTime()) / (1000 * 60 * 60 * 24)))
+        })).sort((a, b) => {
+          const da = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
+          const db = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
+          return da - db;
+        });
+
+        const totalDebtCents = pendingInvoices.reduce((sum, i) => sum + i.balanceCents, 0);
+        const regClient = (state.clients || []).find(c => c.name && c.name.trim().toLowerCase() === clientName.toLowerCase());
+
+        state.selectedClientBulkPay = {
+          name: clientName,
+          phone: pendingInvoices[0]?.clientPhone || pendingInvoices[0]?.deliveryPhone || regClient?.phone || '',
+          address: pendingInvoices[0]?.deliveryAddress || pendingInvoices[0]?.clientAddress || regClient?.address || '',
+          invoices: pendingInvoices,
+          totalDebtCents
+        };
+        state.modal = 'clientBulkPay';
+        renderModal();
+      });
+    });
+
+    // Abrir Estado de Cuenta del Cliente
+    root.querySelectorAll('[data-client-statement]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const clientName = btn.dataset.clientStatement;
+        const pendingInvoices = (state.invoices || []).filter(
+          (inv) => inv.documentType === 'invoice' &&
+            inv.status !== 'paid' &&
+            inv.status !== 'cancelled' &&
+            String(inv.clientName || inv.deliveryClientName || '').trim().toLowerCase() === String(clientName || '').trim().toLowerCase() &&
+            (Number(inv.totalCents || 0) - Number(inv.paidCents || 0)) > 0
+        ).map(inv => ({
+          ...inv,
+          balanceCents: Number(inv.totalCents || 0) - Number(inv.paidCents || 0),
+          ageDays: Math.max(0, Math.floor((Date.now() - (inv.createdAt?.toDate ? inv.createdAt.toDate() : new Date(inv.createdAt || 0)).getTime()) / (1000 * 60 * 60 * 24)))
+        })).sort((a, b) => {
+          const da = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
+          const db = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
+          return da - db;
+        });
+
+        const totalDebtCents = pendingInvoices.reduce((sum, i) => sum + i.balanceCents, 0);
+        const regClient = (state.clients || []).find(c => c.name && c.name.trim().toLowerCase() === clientName.toLowerCase());
+
+        state.selectedClientStatement = {
+          name: clientName,
+          phone: pendingInvoices[0]?.clientPhone || pendingInvoices[0]?.deliveryPhone || regClient?.phone || '',
+          address: pendingInvoices[0]?.deliveryAddress || pendingInvoices[0]?.clientAddress || regClient?.address || '',
+          creditLimitCents: Math.max(0, Number(regClient?.creditLimitCents || 0)),
+          invoices: pendingInvoices,
+          totalDebtCents
+        };
+        state.modal = 'clientStatement';
+        renderModal();
+      });
+    });
+
+    // Ver Factura Completa desde el listado de fiao
+    root.querySelectorAll('[data-fiao-invoice-view]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const invId = btn.dataset.fiaoInvoiceView;
+        if (invId) openInvoice(invId);
+      });
+    });
+
+    // Cobrar factura individual de fiao
     root.querySelectorAll('[data-fiao-pay]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const invId = btn.dataset.fiaoPay;
@@ -698,7 +1185,90 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       });
     });
 
+    // Reimprimir comprobante de cobro desde historial
+    root.querySelectorAll('[data-print-fiao-invoice]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const invId = btn.dataset.printFiaoInvoice;
+        if (invId) void printInvoice(invId);
+      });
+    });
+
     // Deliveries y Mensajeros
+    root.querySelectorAll('[data-deliveries-tab]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.deliveriesTab = btn.dataset.deliveriesTab || 'active';
+        renderContent();
+      });
+    });
+    root.querySelectorAll('[data-deliveries-view]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.deliveriesViewMode = btn.dataset.deliveriesView || 'drivers';
+        renderContent();
+      });
+    });
+    root.querySelectorAll('[data-deliveries-driver-filter]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.deliveriesDriverFilter = btn.dataset.deliveriesDriverFilter || 'all';
+        renderContent();
+      });
+    });
+    root.querySelector('#delivery-sort-select')?.addEventListener('change', (e) => {
+      state.deliveriesSort = e.target.value;
+      renderContent();
+    });
+    root.querySelector('[data-deliveries-clear-filters]')?.addEventListener('click', () => {
+      state.deliveriesDriverFilter = 'all';
+      state.deliveriesSearch = '';
+      renderContent();
+    });
+    root.querySelector('#delivery-search')?.addEventListener('input', (e) => {
+      state.deliveriesSearch = e.target.value;
+      const q = (e.target.value || '').trim();
+      root.querySelectorAll('[data-delivery-card]').forEach((card) => {
+        const search = card.dataset.search || '';
+        card.hidden = q ? !matchesFuzzy(q, search) : false;
+      });
+      root.querySelectorAll('[data-delivery-order-item]').forEach((item) => {
+        const search = item.dataset.search || '';
+        item.hidden = q ? !matchesFuzzy(q, search) : false;
+      });
+    });
+    root.querySelectorAll('[data-delivery-invoice-view]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const invId = btn.dataset.deliveryInvoiceView;
+        if (invId) openInvoice(invId);
+      });
+    });
+    root.querySelectorAll('[data-toggle-driver-card]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const driverId = btn.dataset.toggleDriverCard;
+        const count = btn.dataset.count || '0';
+        const card = btn.closest('.driver-delivery-card');
+        const container = card?.querySelector('.driver-invoices-container');
+        if (container) {
+          const isHidden = container.style.display === 'none';
+          container.style.display = isHidden ? 'flex' : 'none';
+          if (!state.deliveriesExpandedDrivers) state.deliveriesExpandedDrivers = {};
+          state.deliveriesExpandedDrivers[driverId] = isHidden;
+          btn.innerHTML = isHidden
+            ? '<i data-lucide="chevron-up"></i> Ocultar pedidos'
+            : `<i data-lucide="chevron-down"></i> Ver ${count} pedidos`;
+          refreshScopedIcons(btn);
+        }
+      });
+    });
+    root.querySelector('[data-deliveries-toggle-all]')?.addEventListener('click', () => {
+      state.deliveriesAllExpanded = state.deliveriesAllExpanded !== true;
+      if (!state.deliveriesExpandedDrivers) state.deliveriesExpandedDrivers = {};
+      state.deliveryDrivers?.forEach(d => {
+        state.deliveriesExpandedDrivers[d.id] = state.deliveriesAllExpanded;
+        state.deliveriesExpandedDrivers[d.name] = state.deliveriesAllExpanded;
+      });
+      state.deliveriesExpandedDrivers['__unassigned__'] = state.deliveriesAllExpanded;
+      renderContent();
+    });
+
     root.querySelectorAll('[data-driver-new]').forEach((btn) => {
       btn.addEventListener('click', () => {
         capturePosDraft();
@@ -741,6 +1311,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         renderModal();
       });
     });
+    root.querySelectorAll('[data-delivery-reassign]').forEach((btn) => {
+      btn.addEventListener('click', () => openReassignDeliveryModal(btn.dataset.deliveryReassign));
+    });
 
     // Selector de fecha en Reportes
     root.querySelector('#report-date-selector')?.addEventListener('change', (e) => {
@@ -780,23 +1353,100 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       state.auditDisplayLimit = (state.auditDisplayLimit || 50) + 50;
       renderContent();
     });
+    root.querySelectorAll('[data-audit-category]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.auditCategoryFilter = btn.dataset.auditCategory;
+        renderContent();
+      });
+    });
+    root.querySelectorAll('[data-audit-time]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.auditTimeFilter = btn.dataset.auditTime;
+        renderContent();
+      });
+    });
+    root.querySelector('[data-audit-export]')?.addEventListener('click', () => {
+      const rawLogs = state.auditLogs || [];
+      const enriched = rawLogs.map((l) => enrichAuditLog(l, state));
+      const timeFiltered = filterAuditByTime(enriched, state.auditTimeFilter || 'all');
+      const categoryFiltered = (state.auditCategoryFilter && state.auditCategoryFilter !== 'all')
+        ? timeFiltered.filter((l) => l.category === state.auditCategoryFilter)
+        : timeFiltered;
+      const term = (state.auditSearchTerm || '').trim().toLowerCase();
+      const finalLogs = term
+        ? categoryFiltered.filter((l) => matchesFuzzy(term, l.searchBlob))
+        : categoryFiltered;
+
+      const csvContent = buildAuditLogsCsv(finalLogs);
+      const filename = `auditoria-panitas-${businessDateKey(new Date())}.csv`;
+      downloadText(filename, csvContent);
+      toast(`Bitácora exportada (${finalLogs.length} registros)`, 'success');
+    });
     root.querySelectorAll('[data-product-new]').forEach((button)=>button.addEventListener('click',()=>openForm('product')));
+    root.querySelectorAll('[data-product-edit]').forEach((button) => {
+      button.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openForm('product', button.dataset.productEdit);
+      });
+    });
     root.querySelectorAll('[data-products-tab]').forEach((button) => {
       button.addEventListener('click', () => {
         state.productsTab = button.dataset.productsTab;
         renderContent();
       });
     });
-    root.querySelectorAll('[data-stock-adjust]').forEach((button) => {
-      button.addEventListener('click', (e) => {
+    root.querySelectorAll('[data-products-category-filter]').forEach((button) => {
+      button.addEventListener('click', () => {
+        state.productsCategoryFilter = button.dataset.productsCategoryFilter;
+        renderContent();
+      });
+    });
+    root.querySelectorAll('[data-products-type-filter]').forEach((button) => {
+      button.addEventListener('click', () => {
+        state.productsTypeFilter = button.dataset.productsTypeFilter;
+        renderContent();
+      });
+    });
+    root.querySelectorAll('[data-products-view]').forEach((button) => {
+      button.addEventListener('click', () => {
+        state.productsViewMode = button.dataset.productsView;
+        renderContent();
+      });
+    });
+    root.querySelector('[data-products-clear-filters]')?.addEventListener('click', () => {
+      state.productsCategoryFilter = 'all';
+      state.productsTypeFilter = 'all';
+      state.productsSearch = '';
+      renderContent();
+    });
+    root.querySelector('#products-sort-select')?.addEventListener('change', (e) => {
+      state.productsSort = e.target.value;
+      renderContent();
+    });
+    root.querySelector('#directory-search')?.addEventListener('input', (e) => {
+      if (state.route === 'products') state.productsSearch = e.target.value;
+      if (state.route === 'clients') state.clientsSearch = e.target.value;
+      const q = (e.target.value || '').trim();
+      root.querySelectorAll('[data-directory-row]').forEach((row) => {
+        const search = row.dataset.search || '';
+        row.hidden = q ? !matchesFuzzy(q, search) : false;
+      });
+    });
+    root.querySelectorAll('[data-stock-adjust]').forEach((badge) => {
+      const openStockAdjust = (e) => {
         e.stopPropagation();
-        const pid = button.dataset.stockAdjust;
+        e.preventDefault();
+        const pid = badge.dataset.stockAdjust;
         const p = (state.products || []).find((x) => x.id === pid);
         if (p) {
           state.editingStockProduct = p;
           state.modal = 'stockAdjust';
           renderModal();
         }
+      };
+      badge.addEventListener('click', openStockAdjust);
+      badge.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') openStockAdjust(e);
       });
     });
     root.querySelectorAll('[data-end-day-waste]').forEach((button) => {
@@ -808,17 +1458,185 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelectorAll('[data-client-new]').forEach((button)=>button.addEventListener('click',()=>openForm('client')));
     root.querySelector('[data-user-new]')?.addEventListener('click',()=>openUserForm());
     root.querySelectorAll('[data-user-edit]').forEach((button)=>button.addEventListener('click',()=>openUserForm(button.dataset.userEdit)));
+
+    // Directorio de Clientes: Filtros rápidos, vistas, orden y acciones táctiles
+    root.querySelectorAll('[data-clients-filter]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.clientsFilter = btn.dataset.clientsFilter || 'all';
+        renderContent();
+      });
+    });
+    root.querySelectorAll('[data-clients-view]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.clientsViewMode = btn.dataset.clientsView || 'table';
+        renderContent();
+      });
+    });
+    root.querySelector('#clients-sort-select')?.addEventListener('change', (e) => {
+      state.clientsSort = e.target.value;
+      renderContent();
+    });
+    root.querySelectorAll('[data-client-to-pos]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const clientName = btn.dataset.clientToPos || '';
+        if (clientName) {
+          if (!state.posDraft) state.posDraft = {};
+          state.posDraft.clientName = clientName;
+          const posInput = root.querySelector('#pos-client-name');
+          if (posInput) posInput.value = clientName;
+        }
+        state.route = 'pos';
+        renderContent();
+        toast(`Cliente "${clientName}" seleccionado en Terminal POS.`, 'info');
+      });
+    });
     root.querySelectorAll('[data-client-edit]').forEach((button) => {
       button.addEventListener('click', () => {
         const id = button.dataset.clientEdit || '';
         const name = button.dataset.clientName || '';
-        state.editingId = id;
-        state.editingClientDraft = id ? null : { name };
+        const phone = button.dataset.clientPhone || '';
+        const address = button.dataset.clientAddress || '';
+        const rnc = button.dataset.clientRnc || '';
+        const notes = button.dataset.clientNotes || '';
+        const creditLimitCents = Number(button.dataset.clientCreditLimit || 0);
+
+        const existing = id 
+          ? (state.clients || []).find(c => c.id === id)
+          : (state.clients || []).find(c => c.name && c.name.trim().toLowerCase() === name.trim().toLowerCase());
+
+        if (existing) {
+          state.editingId = existing.id;
+          state.editingClientDraft = null;
+        } else {
+          state.editingId = '';
+          state.editingClientDraft = {
+            name,
+            phone,
+            address,
+            rnc,
+            notes,
+            creditLimitCents
+          };
+        }
         state.modal = 'client';
         renderModal();
       });
     });
-    // Nómina y Personal
+    // Nómina y Personal - Seguridad y Desbloqueo Confidencial
+    disposePayrollPin();
+    disposePayrollPin = () => {};
+
+    const payrollUnlockForm = root.querySelector('#payroll-unlock-form');
+    if (payrollUnlockForm) {
+      const pinInput = payrollUnlockForm.querySelector('#payroll-unlock-input');
+      const errBox = payrollUnlockForm.querySelector('#payroll-unlock-error');
+      const submitBtn = payrollUnlockForm.querySelector('#payroll-unlock-submit');
+
+      disposePayrollPin = bindPinPad({
+        form: payrollUnlockForm,
+        input: pinInput,
+        slots: [...payrollUnlockForm.querySelectorAll('#payroll-unlock-slots .pin-slot')],
+        digits: [...payrollUnlockForm.querySelectorAll('.pin-num-btn')],
+        clear: payrollUnlockForm.querySelector('#payroll-unlock-clear'),
+        backspace: payrollUnlockForm.querySelector('#payroll-unlock-del'),
+        submit: submitBtn,
+        error: errBox,
+        isBusy: () => false
+      });
+
+      payrollUnlockForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const pin = String(pinInput?.value || '').trim();
+        if (!/^\d{6}$/.test(pin)) {
+          if (errBox) errBox.textContent = 'Ingresa tu PIN de 6 dígitos.';
+          return;
+        }
+        setBusy(submitBtn, true);
+        try {
+          await service.verifyDrawerPin(pin, 'Acceso confidencial a nómina');
+          state.payrollUnlocked = true;
+          renderContent();
+          toast('Acceso a nómina autorizado.', 'success');
+        } catch (err) {
+          beepHardware('error').catch(() => {});
+          if (errBox) errBox.textContent = err?.message || 'PIN incorrecto.';
+          if (pinInput) pinInput.value = '';
+          payrollUnlockForm.querySelectorAll('.pin-slot').forEach((s) => s.classList.remove('filled'));
+        } finally {
+          setBusy(submitBtn, false);
+        }
+      });
+    }
+
+    root.querySelectorAll('[data-payroll-lock]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.payrollUnlocked = false;
+        renderContent();
+        toast('Sección de nómina protegida y bloqueada.', 'info');
+      });
+    });
+
+    // Usuarios y Permisos - Seguridad y Desbloqueo Confidencial
+    disposeUsersPin();
+    disposeUsersPin = () => {};
+
+    const usersUnlockForm = root.querySelector('#users-unlock-form');
+    if (usersUnlockForm) {
+      const pinInput = usersUnlockForm.querySelector('#users-unlock-input');
+      const errBox = usersUnlockForm.querySelector('#users-unlock-error');
+      const submitBtn = usersUnlockForm.querySelector('#users-unlock-submit');
+
+      disposeUsersPin = bindPinPad({
+        form: usersUnlockForm,
+        input: pinInput,
+        slots: [...usersUnlockForm.querySelectorAll('#users-unlock-slots .pin-slot')],
+        digits: [...usersUnlockForm.querySelectorAll('.pin-num-btn')],
+        clear: usersUnlockForm.querySelector('#users-unlock-clear'),
+        backspace: usersUnlockForm.querySelector('#users-unlock-del'),
+        submit: submitBtn,
+        error: errBox,
+        isBusy: () => false
+      });
+
+      usersUnlockForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const pin = String(pinInput?.value || '').trim();
+        if (!/^\d{6}$/.test(pin)) {
+          if (errBox) errBox.textContent = 'Ingresa tu PIN de 6 dígitos.';
+          return;
+        }
+        setBusy(submitBtn, true);
+        try {
+          await service.verifyDrawerPin(pin, 'Acceso confidencial a gestión de usuarios');
+          state.usersUnlocked = true;
+          renderContent();
+          toast('Acceso a administración de usuarios autorizado.', 'success');
+        } catch (err) {
+          beepHardware('error').catch(() => {});
+          if (errBox) errBox.textContent = err?.message || 'PIN incorrecto.';
+          if (pinInput) pinInput.value = '';
+          usersUnlockForm.querySelectorAll('.pin-slot').forEach((s) => s.classList.remove('filled'));
+        } finally {
+          setBusy(submitBtn, false);
+        }
+      });
+    }
+
+    root.querySelectorAll('[data-users-lock]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.usersUnlocked = false;
+        renderContent();
+        toast('Sección de usuarios protegida y bloqueada.', 'info');
+      });
+    });
+
+    root.querySelectorAll('[data-payroll-mask-toggle]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.payrollMasked = !state.payrollMasked;
+        renderContent();
+      });
+    });
+
     root.querySelectorAll('[data-payroll-tab]').forEach((button) => {
       button.addEventListener('click', () => {
         state.payrollTab = button.dataset.payrollTab;
@@ -826,17 +1644,17 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       });
     });
     root.querySelector('#payroll-payments-search')?.addEventListener('input', (e) => {
-      const q = (e.target.value || '').toLowerCase().trim();
+      const q = (e.target.value || '').trim();
       root.querySelectorAll('#main-content [data-payroll-row]').forEach((row) => {
         const text = row.dataset.search || '';
-        row.style.display = !q || text.includes(q) ? '' : 'none';
+        row.style.display = !q || matchesFuzzy(q, text) ? '' : 'none';
       });
     });
     root.querySelector('#payroll-employees-search')?.addEventListener('input', (e) => {
-      const q = (e.target.value || '').toLowerCase().trim();
+      const q = (e.target.value || '').trim();
       root.querySelectorAll('#main-content [data-employee-row]').forEach((row) => {
         const text = row.dataset.search || '';
-        row.style.display = !q || text.includes(q) ? '' : 'none';
+        row.style.display = !q || matchesFuzzy(q, text) ? '' : 'none';
       });
     });
     root.querySelectorAll('[data-employee-new]').forEach((btn) => {
@@ -889,12 +1707,53 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelector('#cash-close-form')?.addEventListener('submit',closeCash);
     root.querySelector('#cash-movement-form')?.addEventListener('submit',createCashMovement);
     root.querySelector('#settings-form')?.addEventListener('submit',saveSettings);
-    root.querySelectorAll('[data-drawer-kick]').forEach((btn)=>btn.addEventListener('click', promptDrawerPin));
+    root.querySelectorAll('[data-drawer-kick]').forEach((btn)=>btn.addEventListener('click', () => promptDrawerPin(btn.dataset.drawerKick || 'open_only')));
     root.querySelectorAll('[data-quick-open-cash]').forEach((btn)=>btn.addEventListener('click', () => { state.modal = 'quickCash'; renderModal(); }));
-    root.querySelectorAll('[data-cash-movement-open]').forEach((btn)=>btn.addEventListener('click', () => { state.modal = 'cashMovement'; renderModal(); }));
+    root.querySelectorAll('[data-cash-movement-open]').forEach((btn)=>btn.addEventListener('click', () => {
+      state.cashMovementModalType = btn.dataset.cashMovementOpen === 'in' ? 'in' : 'out';
+      state.modal = 'cashMovement';
+      renderModal();
+    }));
     root.querySelectorAll('[data-cash-close-open]').forEach((btn)=>btn.addEventListener('click', () => { state.modal = 'cashClose'; renderModal(); }));
-    root.querySelectorAll('[data-test-drawer]').forEach((btn)=>btn.addEventListener('click', promptDrawerPin));
+    root.querySelectorAll('[data-cash-tab]').forEach((btn) => btn.addEventListener('click', () => {
+      state.cashTab = btn.dataset.cashTab;
+      renderContent();
+    }));
+    root.querySelectorAll('[data-cash-movement-type-filter]').forEach((btn) => btn.addEventListener('click', () => {
+      state.cashMovementTypeFilter = btn.dataset.cashMovementTypeFilter;
+      renderContent();
+    }));
+    const cashSearchInput = root.querySelector('[data-cash-movement-search]');
+    if (cashSearchInput) {
+      cashSearchInput.addEventListener('input', (e) => {
+        state.cashMovementSearch = e.target.value;
+        const term = (e.target.value || '').toLowerCase().trim();
+        root.querySelectorAll('#main-content tbody tr').forEach((row) => {
+          const text = (row.textContent || '').toLowerCase();
+          row.hidden = term ? !text.includes(term) : false;
+        });
+      });
+    }
+    root.querySelectorAll('[data-cash-movement-print]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const movId = btn.dataset.cashMovementPrint;
+        const mov = (state.cashMovements || []).find((m) => m.id === movId);
+        if (!mov) return toast('Movimiento no encontrado.', 'warning');
+        const session = (state.cashSessions || []).find((s) => s.id === mov.cashSessionId) || state.activeCash || {};
+        try {
+          const escpos = buildCashMovementEscPos(mov, session, state.settings || {});
+          const plain = buildCashMovementPlainText(mov, session, state.settings || {});
+          await sendEscPosToPrinter(escpos, { plainText: plain, openDrawer: false });
+          toast('Comprobante de movimiento enviado a la impresora.', 'success');
+          beepHardware('ok').catch(() => {});
+        } catch (err) {
+          toast('Error al imprimir comprobante: ' + err.message, 'danger');
+        }
+      });
+    });
+    root.querySelectorAll('[data-test-drawer]').forEach((btn)=>btn.addEventListener('click', () => promptDrawerPin('open_only')));
     root.querySelectorAll('[data-test-print]').forEach((btn)=>btn.addEventListener('click', testPrint));
+    root.querySelectorAll('[data-test-sleep]').forEach((btn)=>btn.addEventListener('click', () => sleepManager.sleep()));
     bindUpdateActions(root);
     root.querySelectorAll('[data-cash-corte-x]').forEach((btn)=>btn.addEventListener('click',()=>printCashSession(btn.dataset.cashCorteX, 'X')));
     root.querySelectorAll('[data-cash-report-print]').forEach((btn)=>btn.addEventListener('click',()=>printCashSession(btn.dataset.cashReportPrint, 'Z')));
@@ -1024,13 +1883,202 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         }
       });
     }
-    modalRoot?.querySelector('#product-form')?.addEventListener('submit',saveProduct);
+    // Formulario de Producto e Inventario
+    const productForm = modalRoot?.querySelector('#product-form');
+    if (productForm) {
+      productForm.addEventListener('submit', saveProduct);
+
+      // Selección táctil de Dinámica de Inventario (Cocina, Vitrina, Nevera)
+      const typeCards = productForm.querySelectorAll('[data-inventory-type-card]');
+      const stockRow = productForm.querySelector('#product-stock-fields-row');
+      const preparedMsg = productForm.querySelector('#product-prepared-message-box');
+      const isPreparedHidden = productForm.querySelector('#product-is-prepared-hidden');
+
+      typeCards.forEach((card) => {
+        card.addEventListener('click', () => {
+          const type = card.dataset.inventoryTypeCard;
+          typeCards.forEach((c) => c.classList.remove('selected'));
+          card.classList.add('selected');
+          const radio = card.querySelector('input[type="radio"]');
+          if (radio) radio.checked = true;
+
+          const isPrep = type === 'prepared';
+          if (isPreparedHidden) isPreparedHidden.value = isPrep ? 'on' : 'off';
+          if (stockRow) stockRow.style.display = isPrep ? 'none' : 'grid';
+          if (preparedMsg) preparedMsg.style.display = isPrep ? 'block' : 'none';
+        });
+      });
+
+      // Sugerencias de categorías rápidas
+      productForm.querySelectorAll('[data-category-suggestion]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const catInput = productForm.querySelector('#product-form-category');
+          if (catInput) {
+            catInput.value = btn.dataset.categorySuggestion;
+          }
+        });
+      });
+
+      // Cálculo de margen, ganancia y fijación de precios en tiempo real
+      const calculatePricesFromCost = () => {
+        const costStr = productForm.querySelector('#product-form-cost')?.value || '0';
+        const cost = parseFloat(costStr) || 0;
+
+        // Actualizar valores sugeridos en los botones de margen
+        const presets = [
+          { id: 'preset-price-30', margin: 0.30 },
+          { id: 'preset-price-40', margin: 0.40 },
+          { id: 'preset-price-50', margin: 0.50 },
+          { id: 'preset-price-60', margin: 0.60 },
+          { id: 'preset-price-markup100', markup: 1.00 }
+        ];
+
+        presets.forEach(p => {
+          const el = productForm.querySelector(`#${p.id}`);
+          if (!el) return;
+          if (cost <= 0) {
+            el.textContent = 'RD$ —';
+            return;
+          }
+          let price = 0;
+          if (p.margin) {
+            price = Math.round(cost / (1 - p.margin));
+          } else if (p.markup) {
+            price = Math.round(cost * (1 + p.markup));
+          }
+          el.textContent = `RD$ ${price}`;
+        });
+      };
+
+      const updateMarginPreview = () => {
+        const priceStr = productForm.querySelector('#product-form-price')?.value || '0';
+        const costStr = productForm.querySelector('#product-form-cost')?.value || '0';
+        const price = parseFloat(priceStr) || 0;
+        const cost = parseFloat(costStr) || 0;
+        const pctEl = productForm.querySelector('#margin-percent-display');
+        const profitEl = productForm.querySelector('#margin-profit-display');
+        const badgeEl = productForm.querySelector('#margin-health-badge');
+        const multiplierEl = productForm.querySelector('#margin-multiplier-display');
+        const lossAlert = productForm.querySelector('#margin-loss-alert');
+        const iconBox = productForm.querySelector('#margin-icon-box');
+
+        calculatePricesFromCost();
+
+        if (price > 0) {
+          const profit = price - cost;
+          const margin = Math.round(((price - cost) / price) * 100);
+          const mult = cost > 0 ? (price / cost).toFixed(1) + 'x' : '—';
+
+          if (pctEl) {
+            pctEl.textContent = `${margin}%`;
+            pctEl.style.color = margin < 0 ? '#f43f5e' : (margin < 30 ? '#f59e0b' : (margin < 50 ? '#38bdf8' : '#10b981'));
+          }
+          if (profitEl) {
+            profitEl.textContent = formatMoney(Math.round(profit * 100));
+            profitEl.style.color = profit < 0 ? '#f43f5e' : (profit === 0 ? '#f59e0b' : 'var(--brand-2)');
+          }
+          if (multiplierEl) {
+            multiplierEl.textContent = cost > 0 ? `Multiplicador: ${mult} sobre el costo` : 'Costo no registrado';
+          }
+
+          if (badgeEl) {
+            if (profit < 0) {
+              badgeEl.textContent = 'Venta a Pérdida';
+              badgeEl.style.background = 'rgba(244,63,94,.18)';
+              badgeEl.style.color = '#f43f5e';
+            } else if (profit === 0) {
+              badgeEl.textContent = 'Sin Ganancia (Costo)';
+              badgeEl.style.background = 'rgba(245,158,11,.18)';
+              badgeEl.style.color = '#f59e0b';
+            } else if (margin < 30) {
+              badgeEl.textContent = 'Margen Ajustado';
+              badgeEl.style.background = 'rgba(245,158,11,.15)';
+              badgeEl.style.color = '#f59e0b';
+            } else if (margin < 50) {
+              badgeEl.textContent = 'Margen Aceptable';
+              badgeEl.style.background = 'rgba(56,189,248,.15)';
+              badgeEl.style.color = '#38bdf8';
+            } else {
+              badgeEl.textContent = 'Margen Excelente';
+              badgeEl.style.background = 'rgba(16,185,129,.15)';
+              badgeEl.style.color = '#10b981';
+            }
+          }
+
+          if (lossAlert) {
+            lossAlert.style.display = profit <= 0 && cost > 0 ? 'flex' : 'none';
+          }
+          if (iconBox) {
+            iconBox.style.color = profit < 0 ? '#f43f5e' : (margin >= 50 ? '#10b981' : '#38bdf8');
+            iconBox.style.background = profit < 0 ? 'rgba(244,63,94,.12)' : (margin >= 50 ? 'rgba(16,185,129,.12)' : 'rgba(56,189,248,.12)');
+            iconBox.style.borderColor = profit < 0 ? 'rgba(244,63,94,.25)' : (margin >= 50 ? 'rgba(16,185,129,.25)' : 'rgba(56,189,248,.25)');
+          }
+        } else {
+          if (pctEl) { pctEl.textContent = '—'; pctEl.style.color = '#38bdf8'; }
+          if (profitEl) { profitEl.textContent = 'RD$ 0.00'; profitEl.style.color = 'var(--brand-2)'; }
+          if (badgeEl) { badgeEl.textContent = 'Precio no asignado'; badgeEl.style.background = 'rgba(255,255,255,.06)'; badgeEl.style.color = 'var(--muted)'; }
+          if (multiplierEl) multiplierEl.textContent = 'Multiplicador: —';
+          if (lossAlert) lossAlert.style.display = 'none';
+        }
+      };
+
+      // Click en los botones de Margen Sugerido (Fijar precio automático)
+      productForm.querySelectorAll('[data-margin-target]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const costStr = productForm.querySelector('#product-form-cost')?.value || '0';
+          const cost = parseFloat(costStr) || 0;
+          if (cost <= 0) {
+            toast('Ingresa primero el costo unitario del producto para calcular el precio sugerido.', 'warning');
+            return;
+          }
+          const target = btn.dataset.marginTarget;
+          let calculatedPrice = 0;
+          if (target === 'markup_100') {
+            calculatedPrice = Math.round(cost * 2);
+          } else {
+            const m = parseFloat(target) / 100;
+            calculatedPrice = Math.round(cost / (1 - m));
+          }
+          const priceInput = productForm.querySelector('#product-form-price');
+          if (priceInput) {
+            priceInput.value = calculatedPrice.toFixed(2);
+            updateMarginPreview();
+            toast(`Precio fijado en RD$ ${calculatedPrice} (${btn.textContent.trim().split(' ')[0]} margen).`, 'success');
+          }
+        });
+      });
+
+      productForm.querySelector('#product-form-price')?.addEventListener('input', updateMarginPreview);
+      productForm.querySelector('#product-form-cost')?.addEventListener('input', updateMarginPreview);
+
+      // Calcular y poblar al renderizar el modal
+      updateMarginPreview();
+    }
     bindStockAdjustModal(modalRoot);
     bindEndDayWasteModal(modalRoot);
     modalRoot?.querySelector('#employee-form')?.addEventListener('submit', saveEmployee);
     bindPayrollPaymentModal(modalRoot);
     modalRoot?.querySelector('#client-form')?.addEventListener('submit',saveClient);
     modalRoot?.querySelector('#driver-form')?.addEventListener('submit',saveDeliveryDriver);
+    modalRoot?.querySelectorAll('[data-delivery-reassign]').forEach((btn) => {
+      btn.addEventListener('click', () => openReassignDeliveryModal(btn.dataset.deliveryReassign));
+    });
+    modalRoot?.querySelector('#reassign-delivery-form')?.addEventListener('submit', saveReassignDelivery);
+    const reassignSelect = modalRoot?.querySelector('#reassign-new-driver-select');
+    const reassignHiddenName = modalRoot?.querySelector('#reassign-new-driver-name');
+    reassignSelect?.addEventListener('change', () => {
+      const opt = reassignSelect.options[reassignSelect.selectedIndex];
+      if (reassignHiddenName) {
+        reassignHiddenName.value = opt ? (opt.dataset.name || opt.textContent.split(' · ')[0] || '').trim() : '';
+      }
+    });
+    modalRoot?.querySelectorAll('[data-driver-new]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.editingDriver = null;
+        state.modal = 'driverForm';
+        renderModal();
+      });
+    });
     modalRoot?.querySelector('#user-access-form')?.addEventListener('submit',saveUserAccess);
     modalRoot?.querySelector('#password-change-form')?.addEventListener('submit',submitPasswordChange);
     modalRoot?.querySelector('#drawer-pin-update-form')?.addEventListener('submit',submitDrawerPinChange);
@@ -1049,10 +2097,64 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       renderModal();
     });
     modalRoot?.querySelector('#item-note-form')?.addEventListener('submit',saveItemNote);
+    modalRoot?.querySelector('#clear-item-note-btn')?.addEventListener('click', () => {
+      const input = modalRoot.querySelector('#item-note-input');
+      if (input) { input.value = ''; input.focus(); }
+    });
     modalRoot?.querySelectorAll('[data-quick-note]').forEach((btn)=>{
       btn.addEventListener('click',()=>{
         const input=modalRoot.querySelector('#item-note-input');
-        if(input){input.value=btn.dataset.quickNote;input.focus();}
+        if(input){
+          const val = input.value.trim();
+          const chip = btn.dataset.quickNote;
+          if (!val) {
+            input.value = chip;
+          } else if (!val.toLowerCase().includes(chip.toLowerCase())) {
+            input.value = `${val}, ${chip}`;
+          }
+          input.focus();
+        }
+      });
+    });
+    modalRoot?.querySelectorAll('[data-pick-table-id]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const tableId = btn.dataset.pickTableId;
+        const hasOrder = btn.dataset.hasOrder === '1';
+        const action = state.tablePickerAction || 'select';
+        state.tablePickerAction = 'select';
+        closeModal();
+        if (!tableId) {
+          state.loadedOrderId = '';
+          state.loadedTableId = '';
+          if (state.posDraft) state.posDraft.tableId = '';
+          const sel = root.querySelector('#pos-table-select');
+          if (sel) sel.value = '';
+          renderContent();
+          return;
+        }
+        if (hasOrder && (!state.cart.length || state.loadedTableId !== tableId)) {
+          loadTableOrderToCart(tableId);
+          return;
+        }
+        if (action === 'send' && state.cart.length) {
+          sendComandaToTable(tableId);
+        } else {
+          state.loadedTableId = tableId;
+          if (state.posDraft) state.posDraft.tableId = tableId;
+          const sel = root.querySelector('#pos-table-select');
+          if (sel) sel.value = tableId;
+          renderContent();
+          setTimeout(() => {
+            const clientInput = root.querySelector('#pos-client-name');
+            if (clientInput && !clientInput.value) clientInput.focus();
+          }, 60);
+        }
+      });
+    });
+    modalRoot?.querySelectorAll('[data-pos-cancel-table]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handleCancelAndLiberateTable(btn.dataset.posCancelTable, btn);
       });
     });
     const qtyForm = modalRoot?.querySelector('#quantity-form');
@@ -1094,6 +2196,97 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     modalRoot?.querySelector('.qty-del-btn')?.addEventListener('click',()=>{
       const qtyInput=modalRoot.querySelector('#item-qty-input');
       if(qtyInput)qtyInput.value=qtyInput.value.slice(0,-1);
+    });
+
+    modalRoot?.querySelector('[data-jump-to-price]')?.addEventListener('click', () => {
+      openItemPriceModal(state.editingCartIndex);
+    });
+
+    const priceForm = modalRoot?.querySelector('#item-price-form');
+    if (priceForm) {
+      const priceInput = priceForm.querySelector('#item-price-input');
+      priceForm.addEventListener('keydown', (e) => {
+        if (['0','1','2','3','4','5','6','7','8','9'].includes(e.key)) {
+          e.preventDefault();
+          if (priceInput) {
+            let val = priceInput.value.replace(/,/g, '').trim();
+            if (val === '0' || val === '0.00' || val === '') priceInput.value = e.key;
+            else if (val.length < 7) priceInput.value = val + e.key;
+          }
+        } else if (e.key === 'Backspace') {
+          e.preventDefault();
+          if (priceInput) {
+            let val = priceInput.value.replace(/,/g, '').trim();
+            priceInput.value = val.length > 1 ? val.slice(0, -1) : '0';
+          }
+        }
+      });
+    }
+    modalRoot?.querySelector('#item-price-form')?.addEventListener('submit', saveItemPrice);
+    modalRoot?.querySelectorAll('.price-preset-chip').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const input = modalRoot.querySelector('#item-price-input');
+        if (input) {
+          input.value = Number(btn.dataset.setPrice).toFixed(2);
+          const note = modalRoot.querySelector('#item-price-note');
+          if (note && !note.value) {
+            note.value = `Porción de RD$ ${btn.dataset.setPrice}`;
+          }
+        }
+      });
+    });
+    modalRoot?.querySelectorAll('.price-delta-chip').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const input = modalRoot.querySelector('#item-price-input');
+        if (input) {
+          const current = parseFloat(input.value.replace(/,/g, '')) || 0;
+          const next = Math.max(0, current + Number(btn.dataset.deltaPrice));
+          input.value = next.toFixed(2);
+        }
+      });
+    });
+    modalRoot?.querySelector('.price-restore-btn')?.addEventListener('click', (e) => {
+      const input = modalRoot.querySelector('#item-price-input');
+      if (input) {
+        input.value = e.currentTarget.dataset.restorePrice || '0.00';
+        const note = modalRoot.querySelector('#item-price-note');
+        if (note && note.value.startsWith('Porción')) {
+          note.value = '';
+        }
+      }
+    });
+    modalRoot?.querySelectorAll('.price-num-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const input = modalRoot.querySelector('#item-price-input');
+        if (!input) return;
+        const digit = btn.dataset.priceNum;
+        let val = input.value.replace(/,/g, '').trim();
+        if (val === '0' || val === '0.00' || val === '') {
+          input.value = digit;
+        } else {
+          if (val.length < 7) input.value = val + digit;
+        }
+      });
+    });
+    modalRoot?.querySelector('.price-clear-btn')?.addEventListener('click', () => {
+      const input = modalRoot.querySelector('#item-price-input');
+      if (input) input.value = '0';
+    });
+    modalRoot?.querySelector('.price-del-btn')?.addEventListener('click', () => {
+      const input = modalRoot.querySelector('#item-price-input');
+      if (input) {
+        let val = input.value.replace(/,/g, '').trim();
+        input.value = val.length > 1 ? val.slice(0, -1) : '0';
+      }
+    });
+    modalRoot?.querySelectorAll('.price-note-chip').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const note = modalRoot.querySelector('#item-price-note');
+        if (note) {
+          note.value = btn.dataset.quickPortionNote;
+          note.focus();
+        }
+      });
     });
     modalRoot?.querySelector('[data-order-prebill]')?.addEventListener('click',()=>printOrderPrebill(state.selectedOrderId));
     modalRoot?.querySelector('#quick-cash-form')?.addEventListener('submit', openCash);
@@ -1196,6 +2389,55 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     // Formulario de movimiento de caja (Entrada / Salida) con teclado táctil
     const cashMovementForm = modalRoot?.querySelector('#cash-movement-form');
     if (cashMovementForm) {
+      const active = state.activeCash;
+      const outCategories = CASH_MOVEMENT_CATEGORIES.out;
+      const inCategories = CASH_MOVEMENT_CATEGORIES.in;
+      const outPresets = [50, 100, 200, 500, 1000, 2000];
+      const inPresets = [200, 500, 1000, 2000, 5000];
+
+      const renderCategoriesForType = (type) => {
+        const catGrid = modalRoot.querySelector('#cash-movement-cat-grid');
+        if (!catGrid) return;
+        const cats = type === 'in' ? inCategories : outCategories;
+        const firstCat = cats[0].label;
+        const catInput = modalRoot.querySelector('#cash-movement-category');
+        if (catInput) catInput.value = firstCat;
+
+        catGrid.innerHTML = cats.map((c, i) => `
+          <button type="button" class="cash-modal-cat-chip ${i === 0 ? 'active' : ''}" data-select-cat="${escapeHtml(c.label)}" style="display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:8px;font-size:0.76rem;font-weight:700;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.03);color:#cbd5e1;cursor:pointer;text-align:left;">
+            <i data-lucide="${c.icon}" style="width:14px;height:14px;color:${c.color};flex-shrink:0;"></i>
+            <span>${escapeHtml(c.label)}</span>
+          </button>
+        `).join('');
+        iconsRefresh(catGrid);
+
+        catGrid.querySelectorAll('[data-select-cat]').forEach((chip) => {
+          chip.addEventListener('click', () => {
+            const val = chip.dataset.selectCat;
+            if (catInput) catInput.value = val;
+            catGrid.querySelectorAll('[data-select-cat]').forEach(b => b.classList.toggle('active', b.dataset.selectCat === val));
+          });
+        });
+      };
+
+      const renderPresetsForType = (type) => {
+        const presetsRow = modalRoot.querySelector('#cash-movement-presets');
+        if (!presetsRow) return;
+        const presets = type === 'in' ? inPresets : outPresets;
+        presetsRow.innerHTML = presets.map(p => `
+          <button type="button" class="drawer-outflow-chip" data-set-movement-amount="${p}">
+            RD$ ${p.toLocaleString('es-DO')}
+          </button>
+        `).join('');
+
+        presetsRow.querySelectorAll('[data-set-movement-amount]').forEach((chip) => {
+          chip.addEventListener('click', () => {
+            const amountInput = modalRoot.querySelector('#cash-movement-amount');
+            if (amountInput) amountInput.value = Number(chip.dataset.setMovementAmount).toFixed(2);
+          });
+        });
+      };
+
       modalRoot.querySelectorAll('[data-movement-type]').forEach((btn) => {
         btn.addEventListener('click', () => {
           const type = btn.dataset.movementType;
@@ -1206,8 +2448,39 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           });
           const submitText = type === 'in' ? 'Registrar Entrada' : 'Registrar Salida';
           const submitBtn = modalRoot.querySelector('#cash-movement-submit');
-          if (submitBtn) submitBtn.innerHTML = `<i data-lucide="${type === 'in' ? 'plus-circle' : 'minus-circle'}"></i> ${submitText}`;
-          iconsRefresh(submitBtn);
+          if (submitBtn) {
+            submitBtn.className = `button ${type === 'in' ? 'primary' : 'danger'}`;
+            submitBtn.style = type === 'in' ? '' : 'background:#dc2626;border-color:#b91c1c;color:#fff;';
+            submitBtn.innerHTML = `<i data-lucide="${type === 'in' ? 'trending-up' : 'trending-down'}"></i> ${submitText}`;
+            iconsRefresh(submitBtn);
+          }
+
+          const availRow = modalRoot.querySelector('#cash-movement-available-row');
+          if (availRow) availRow.style.display = type === 'out' ? 'flex' : 'none';
+
+          const amountInput = modalRoot.querySelector('#cash-movement-amount');
+          if (amountInput) amountInput.style.color = type === 'out' ? '#f87171' : '#10b981';
+
+          renderCategoriesForType(type);
+          renderPresetsForType(type);
+        });
+      });
+
+      // Bind initial category chips
+      modalRoot.querySelectorAll('[data-select-cat]').forEach((chip) => {
+        chip.addEventListener('click', () => {
+          const val = chip.dataset.selectCat;
+          const catInput = modalRoot.querySelector('#cash-movement-category');
+          if (catInput) catInput.value = val;
+          modalRoot.querySelectorAll('[data-select-cat]').forEach(b => b.classList.toggle('active', b.dataset.selectCat === val));
+        });
+      });
+
+      // Bind initial presets
+      modalRoot.querySelectorAll('[data-set-movement-amount]').forEach((chip) => {
+        chip.addEventListener('click', () => {
+          const amountInput = modalRoot.querySelector('#cash-movement-amount');
+          if (amountInput) amountInput.value = Number(chip.dataset.setMovementAmount).toFixed(2);
         });
       });
 
@@ -1308,6 +2581,62 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         });
       };
 
+      modalRoot.querySelectorAll('[data-drawer-tab]').forEach((tabBtn) => {
+        tabBtn.addEventListener('click', () => {
+          const tabMode = tabBtn.dataset.drawerTab;
+          state.drawerModalMode = tabMode;
+          const modeInput = modalRoot.querySelector('#drawer-mode-input');
+          if (modeInput) modeInput.value = tabMode;
+
+          modalRoot.querySelectorAll('[data-drawer-tab]').forEach((b) => {
+            const isMatch = b.dataset.drawerTab === tabMode;
+            b.classList.toggle('active', isMatch);
+            if (b.dataset.drawerTab === 'outflow') b.classList.toggle('outflow', isMatch);
+          });
+
+          const openSec = modalRoot.querySelector('#drawer-open-only-section');
+          const outflowSec = modalRoot.querySelector('#drawer-outflow-section');
+          if (openSec) openSec.style.display = tabMode === 'open_only' ? '' : 'none';
+          if (outflowSec) outflowSec.style.display = tabMode === 'outflow' ? '' : 'none';
+
+          const submitBtn = modalRoot.querySelector('#drawer-pin-submit');
+          if (submitBtn) {
+            if (tabMode === 'outflow') {
+              submitBtn.className = 'button danger';
+              submitBtn.style.background = '#dc2626';
+              submitBtn.style.borderColor = '#b91c1c';
+              submitBtn.style.color = '#fff';
+              submitBtn.innerHTML = '<i data-lucide="trending-down"></i> Autorizar y Registrar Salida';
+            } else {
+              submitBtn.className = 'button primary';
+              submitBtn.style.background = '';
+              submitBtn.style.borderColor = '';
+              submitBtn.style.color = '';
+              submitBtn.innerHTML = '<i data-lucide="key-round"></i> Autorizar y Abrir';
+            }
+            iconsRefresh(submitBtn);
+          }
+        });
+      });
+
+      modalRoot.querySelectorAll('[data-set-outflow]').forEach((chip) => {
+        chip.addEventListener('click', () => {
+          const amountInput = modalRoot.querySelector('#drawer-outflow-amount');
+          if (amountInput) amountInput.value = Number(chip.dataset.setOutflow).toFixed(2);
+        });
+      });
+
+      modalRoot.querySelectorAll('.drawer-category-chip').forEach((chip) => {
+        chip.addEventListener('click', () => {
+          const cat = chip.dataset.category;
+          const catInput = modalRoot.querySelector('#drawer-outflow-category');
+          if (catInput) catInput.value = cat;
+          modalRoot.querySelectorAll('.drawer-category-chip').forEach((c) => {
+            c.classList.toggle('active', c.dataset.category === cat);
+          });
+        });
+      });
+
       disposePinPad = bindPinPad({
         form: drawerPinForm, input: pinInput,
         slots: [...modalRoot.querySelectorAll('#drawer-pin-slots .pin-slot')],
@@ -1320,30 +2649,118 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         e.preventDefault();
         if (drawerInProgress) return;
         const pin = (pinInput?.value || '').trim();
-        const reason = modalRoot.querySelector('#drawer-pin-reason')?.value || 'Apertura manual';
+        const mode = modalRoot.querySelector('#drawer-mode-input')?.value || 'open_only';
+
         if (!/^\d{6}$/.test(pin)) {
           if (errBox) errBox.textContent = 'Ingresa tu PIN de 6 dígitos.';
           return;
         }
-        try {
-          drawerInProgress = true;
-          setBusy(submitBtn, true);
-          const result = await service.verifyDrawerPin(pin, reason);
-          const hardwareResult = await auditedDrawerPulse(reason);
-          if (!hardwareResult?.success) throw new Error('PIN correcto, pero la gaveta no respondió. Revisa la conexión de la impresora Star.');
-          beepHardware('ok');
-          toast(`Pulso de apertura enviado por ${result.user.displayName}. Comprueba la gaveta.`, 'success');
-          closeModal();
-        } catch (err) {
-          beepHardware('error');
-          if (errBox) errBox.textContent = err.message || 'PIN incorrecto.';
-          if (pinInput) {
-            pinInput.value = '';
-            updateDrawerPinSlots();
+
+        if (mode === 'outflow') {
+          if (!state.activeCash) {
+            if (errBox) errBox.textContent = 'No hay una caja abierta para registrar salidas.';
+            return;
           }
-        } finally {
-          drawerInProgress = false;
-          setBusy(submitBtn, false);
+          const rawAmount = modalRoot.querySelector('#drawer-outflow-amount')?.value || '';
+          const amountCents = toCents(rawAmount);
+          if (!amountCents || amountCents <= 0) {
+            if (errBox) errBox.textContent = 'Ingresa el monto a retirar en pesos (DOP).';
+            return;
+          }
+          const category = modalRoot.querySelector('#drawer-outflow-category')?.value || 'Pago de Servicio';
+          const justification = (modalRoot.querySelector('#drawer-outflow-justification')?.value || '').trim();
+          if (justification.length < 3) {
+            if (errBox) errBox.textContent = 'Escribe una justificación de al menos 3 caracteres.';
+            return;
+          }
+
+          // Validar contra efectivo disponible en la caja
+          const sessionPayments = (state.payments || []).filter((item) => item.cashSessionId === state.activeCash.id);
+          const sessionMovements = (state.cashMovements || []).filter((item) => item.cashSessionId === state.activeCash.id);
+          const cashCollected = sessionPayments.filter((item) => item.method === 'cash').reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+          const cashIn = sessionMovements.filter((item) => item.type === 'in').reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+          const cashOut = sessionMovements.filter((item) => item.type === 'out').reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+          const expectedCashCents = Number(state.activeCash.openingCents || 0) + cashCollected + cashIn - cashOut;
+
+          if (amountCents > expectedCashCents) {
+            if (errBox) errBox.textContent = `La salida (${formatMoney(amountCents)}) supera el efectivo en caja (${formatMoney(expectedCashCents)}).`;
+            return;
+          }
+
+          const fullReason = `[${category}] ${justification}`;
+          try {
+            drawerInProgress = true;
+            setBusy(submitBtn, true);
+            const result = await service.verifyDrawerPin(pin, `Salida de efectivo: ${fullReason}`);
+            const hardwareResult = await auditedDrawerPulse(`Salida de caja: ${formatMoney(amountCents)} - ${fullReason}`);
+            if (!hardwareResult?.success) throw new Error('PIN correcto, pero la gaveta no respondió. Revisa la conexión de la impresora Star.');
+
+            const movementId = await service.createCashMovement({
+              cashSessionId: state.activeCash.id,
+              type: 'out',
+              amountCents,
+              reason: fullReason
+            });
+
+            const printVoucher = modalRoot.querySelector('#drawer-outflow-print')?.checked;
+            if (printVoucher) {
+              try {
+                const mov = {
+                  id: movementId,
+                  type: 'out',
+                  amountCents,
+                  category,
+                  reason: justification,
+                  createdAt: new Date(),
+                  createdByName: result.user.displayName || result.user.username
+                };
+                const updatedSession = { ...state.activeCash, expectedCents: expectedCashCents - amountCents };
+                const voucher = buildCashMovementEscPos(mov, updatedSession, state.settings);
+                const plainText = buildCashMovementPlainText(mov, updatedSession, state.settings);
+                await sendEscPosToPrinter(voucher, { plainText, openDrawer: false });
+              } catch (printErr) {
+                console.warn('Error imprimiendo comprobante de salida:', printErr);
+              }
+            }
+
+            beepHardware('ok');
+            toast(`Gaveta abierta. Salida de ${formatMoney(amountCents)} registrada por ${result.user.displayName}.`, 'success');
+            closeModal();
+          } catch (err) {
+            beepHardware('error');
+            if (errBox) errBox.textContent = err.message || 'Error autorizando salida.';
+            if (pinInput) {
+              pinInput.value = '';
+              updateDrawerPinSlots();
+            }
+          } finally {
+            drawerInProgress = false;
+            setBusy(submitBtn, false);
+          }
+        } else {
+          // Modo 1: Solo abrir gaveta
+          const reason = modalRoot.querySelector('#drawer-pin-reason')?.value || 'Apertura manual';
+          try {
+            drawerInProgress = true;
+            setBusy(submitBtn, true);
+            const result = await service.verifyDrawerPin(pin, reason);
+            const hardwareResult = await auditedDrawerPulse(reason);
+            if (!hardwareResult?.success) throw new Error('PIN correcto, pero la gaveta no respondió. Revisa la conexión de la impresora Star.');
+            beepHardware('ok');
+            toast(`Pulso de apertura enviado por ${result.user.displayName}. Comprueba la gaveta.`, 'success');
+            closeModal();
+            showPostDrawerPrompt();
+          } catch (err) {
+            beepHardware('error');
+            if (errBox) errBox.textContent = err.message || 'PIN incorrecto.';
+            if (pinInput) {
+              pinInput.value = '';
+              updateDrawerPinSlots();
+            }
+          } finally {
+            drawerInProgress = false;
+            setBusy(submitBtn, false);
+          }
         }
       });
     }
@@ -1377,7 +2794,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           const current = state.pendingPosPayload.printReceipt !== false;
           state.pendingPosPayload.printReceipt = !current;
           const nowPrint = state.pendingPosPayload.printReceipt;
-          togglePrintBtn.textContent = nowPrint ? '✓ Sí, imprimir' : '✕ No imprimir';
+          togglePrintBtn.textContent = nowPrint ? 'Sí, imprimir' : 'No imprimir';
           togglePrintBtn.style.background = nowPrint ? 'rgba(63,185,80,.18)' : 'rgba(255,255,255,.08)';
           togglePrintBtn.style.color = nowPrint ? '#3fb950' : 'var(--muted)';
           togglePrintBtn.style.border = nowPrint ? '1px solid rgba(63,185,80,.4)' : '1px solid var(--line)';
@@ -1575,6 +2992,220 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       });
     }
 
+    // Imprimir Estado de Cuenta del Cliente desde el modal
+    const statementPrintBtn = modalRoot?.querySelector('[data-print-client-statement-btn]');
+    if (statementPrintBtn) {
+      statementPrintBtn.addEventListener('click', async () => {
+        if (!state.selectedClientStatement) return;
+        const b = buildClientStatementEscPos(state.selectedClientStatement, state.settings);
+        const plainText = buildClientStatementPlainText(state.selectedClientStatement, state.settings);
+        const res = await sendEscPosToPrinter(b, { plainText, openDrawer: false });
+        if (res?.success) toast('Estado de cuenta impreso con éxito.', 'success');
+        else toast('No se pudo enviar a la impresora.', 'warning');
+      });
+    }
+
+    // Formulario para Cobro Global / Abonar a Deuda del Cliente (Bulk Pay)
+    const clientBulkPayForm = modalRoot?.querySelector('#client-bulk-pay-form');
+    if (clientBulkPayForm) {
+      const amountInput = modalRoot.querySelector('#bulk-pay-amount');
+      const receivedInput = modalRoot.querySelector('#bulk-cash-received');
+      const changeDisplay = modalRoot.querySelector('#bulk-change-amount');
+      const methodSelect = modalRoot.querySelector('#bulk-pay-method');
+      const cashCalc = modalRoot.querySelector('#bulk-cash-calculator');
+      const totalDisplay = modalRoot.querySelector('#bulk-total-display');
+
+      const updateBulkTotal = () => {
+        let totalCents = 0;
+        clientBulkPayForm.querySelectorAll('input[name="invoiceIds"]:checked').forEach(cb => {
+          totalCents += Number(cb.dataset.balanceCents || 0);
+        });
+        if (totalDisplay) totalDisplay.textContent = formatMoney(totalCents);
+        if (amountInput) {
+          amountInput.max = (totalCents / 100).toFixed(2);
+          amountInput.value = (totalCents / 100).toFixed(2);
+        }
+        updateBulkChange();
+      };
+
+      clientBulkPayForm.querySelectorAll('input[name="invoiceIds"]').forEach(cb => {
+        cb.addEventListener('change', updateBulkTotal);
+      });
+
+      const updateBulkChange = () => {
+        const amt = Math.round(Number(amountInput?.value || 0) * 100);
+        const rec = Math.round(Number(receivedInput?.value || 0) * 100);
+        const change = Math.max(0, rec - amt);
+        if (changeDisplay) {
+          changeDisplay.textContent = formatMoney(change);
+          changeDisplay.style.color = rec >= amt ? '#3fb950' : 'var(--brand-2)';
+        }
+      };
+
+      amountInput?.addEventListener('input', updateBulkChange);
+      receivedInput?.addEventListener('input', updateBulkChange);
+      methodSelect?.addEventListener('change', () => {
+        if (cashCalc) cashCalc.style.display = methodSelect.value === 'cash' ? 'block' : 'none';
+      });
+
+      modalRoot.querySelectorAll('[data-bulk-cash-val]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const val = btn.dataset.bulkCashVal;
+          if (val === 'exact') {
+            if (receivedInput && amountInput) receivedInput.value = amountInput.value;
+          } else {
+            if (receivedInput) receivedInput.value = val;
+          }
+          updateBulkChange();
+        });
+      });
+
+      const pinInput = clientBulkPayForm.querySelector('#bulk-pay-pin');
+      const errBox = clientBulkPayForm.querySelector('#bulk-pin-error');
+      const submitBtn = clientBulkPayForm.querySelector('#bulk-pay-submit') || clientBulkPayForm.querySelector('button[type="submit"]');
+
+      disposePinPad = bindPinPad({
+        form: clientBulkPayForm,
+        input: pinInput,
+        slots: [...clientBulkPayForm.querySelectorAll('#bulk-pin-slots .pin-slot')],
+        digits: [...clientBulkPayForm.querySelectorAll('.pin-num-btn')],
+        clear: clientBulkPayForm.querySelector('#bulk-pin-clear'),
+        backspace: clientBulkPayForm.querySelector('#bulk-pin-del'),
+        submit: submitBtn,
+        error: errBox,
+        isBusy: () => state.saleInProgress
+      });
+
+      clientBulkPayForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (state.saleInProgress) return toast('Ya se está procesando un cobro.', 'warning');
+        const form = new FormData(clientBulkPayForm);
+        const selectedCbs = [...clientBulkPayForm.querySelectorAll('input[name="invoiceIds"]:checked')];
+        if (!selectedCbs.length) return toast('Selecciona al menos una factura a liquidar.', 'warning');
+
+        const clientName = form.get('clientName');
+        const clientPhone = form.get('clientPhone') || '';
+        const amount = Number(form.get('amount') || 0);
+        const method = form.get('method') || 'cash';
+        const reference = form.get('reference') || '';
+        const pin = String(form.get('pin') || '').trim();
+        const shouldPrint = form.get('printSettlement') === 'on' || Boolean(clientBulkPayForm.querySelector('#bulk-print-receipt')?.checked);
+
+        if (!amount || amount <= 0) return toast('Ingresa un monto válido a cobrar.', 'warning');
+        if (!/^\d{6}$/.test(pin)) {
+          if (errBox) errBox.textContent = 'Digita tu PIN personal de 6 dígitos.';
+          return toast('Digita tu PIN personal de 6 dígitos.', 'warning');
+        }
+
+        const totalAmountCents = Math.round(amount * 100);
+        const tenderedCents = method === 'cash' ? Math.round(Number(receivedInput?.value || amount) * 100) : totalAmountCents;
+        if (method === 'cash' && tenderedCents < totalAmountCents) {
+          return toast('El efectivo recibido es menor al monto a abonar.', 'warning');
+        }
+
+        const button = e.submitter || submitBtn;
+        state.saleInProgress = true;
+        setBusy(button, true);
+
+        try {
+          const verifyRes = await service.verifyDrawerPin(pin, `Cobro consolidado fiao - ${clientName}`);
+          if (!state.activeCash?.id) {
+            const sessionId = await service.openCashSession({
+              openingCents: 0,
+              notes: `Apertura rápida autorizada por PIN: ${verifyRes.user.displayName}`
+            });
+            state.activeCash = {
+              id: typeof sessionId === 'string' ? sessionId : sessionId.id,
+              status: 'open',
+              openingCents: 0,
+              openedBy: user.uid,
+              openedByName: verifyRes.user.displayName,
+              optimistic: true
+            };
+          }
+
+          let remainingToApplyCents = totalAmountCents;
+          const appliedInvoices = [];
+
+          for (const cb of selectedCbs) {
+            if (remainingToApplyCents <= 0) break;
+            const invoiceId = cb.value;
+            const invNumber = cb.dataset.invoiceNumber;
+            const balanceCents = Number(cb.dataset.balanceCents || 0);
+            if (balanceCents <= 0) continue;
+
+            const applyCents = Math.min(remainingToApplyCents, balanceCents);
+            remainingToApplyCents -= applyCents;
+
+            await service.recordPayment(invoiceId, {
+              requestId: createOperationId('fiao-payment'),
+              amountCents: applyCents,
+              method,
+              reference: reference || `Abono fiao ${clientName}`,
+              tenderedCents: method === 'cash' ? applyCents : 0,
+              cashSessionId: state.activeCash.id,
+              cashierId: verifyRes.user.id,
+              cashierName: verifyRes.user.displayName
+            });
+
+            appliedInvoices.push({
+              invoiceId,
+              invoiceNumber: invNumber,
+              appliedCents: applyCents,
+              newBalanceCents: balanceCents - applyCents
+            });
+          }
+
+          beepHardware('ok');
+          closeModal();
+          toast(`Cobro de ${formatMoney(totalAmountCents)} registrado con éxito para ${clientName}.`, 'success');
+
+          setTimeout(async () => {
+            if (method === 'cash' && state.settings?.autoOpenDrawer !== false) {
+              void kickDrawer({ silentFailure: true });
+            }
+            if (shouldPrint && state.settings?.autoPrintInvoice !== false) {
+              const clientTotalPending = (state.invoices || []).filter(
+                i => i.documentType === 'invoice' && i.status !== 'paid' && i.status !== 'cancelled' &&
+                String(i.clientName || '').trim().toLowerCase() === String(clientName || '').trim().toLowerCase()
+              ).reduce((sum, i) => sum + Math.max(0, Number(i.totalCents || 0) - Number(i.paidCents || 0)), 0);
+
+              const settlementData = {
+                createdAt: new Date(),
+                clientName,
+                clientPhone,
+                cashierName: verifyRes.user.displayName,
+                method,
+                reference,
+                totalPaidCents: totalAmountCents,
+                tenderedCents,
+                changeCents: method === 'cash' ? tenderedCents - totalAmountCents : 0,
+                remainingDebtCents: clientTotalPending,
+                invoices: appliedInvoices
+              };
+
+              const b = buildClientSettlementEscPos(settlementData, state.settings);
+              const plainText = buildClientSettlementPlainText(settlementData, state.settings);
+              await sendEscPosToPrinter(b, { plainText, openDrawer: false });
+            }
+          }, 350);
+
+        } catch (err) {
+          beepHardware('error');
+          toast(err.message, 'danger');
+          if (errBox) errBox.textContent = err.message || 'PIN incorrecto.';
+          if (pinInput) {
+            pinInput.value = '';
+            clientBulkPayForm.querySelectorAll('#bulk-pin-slots .pin-slot').forEach(s => s.classList.remove('filled'));
+          }
+        } finally {
+          state.saleInProgress = false;
+          setBusy(button, false);
+          if (!destroyed) renderContent();
+        }
+      });
+    }
+
     // Formulario de Liquidación de Deliveries
     const deliverySettleForm = modalRoot?.querySelector('#delivery-settle-form');
     if (deliverySettleForm) {
@@ -1714,11 +3345,14 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   }
 
   function route(id){
+    if (id === 'tables' || id === 'kds') id = 'pos';
     if(!allowedNavigation(user).includes(id))return;
     if(state.route === id && !state.modal) {
       root.querySelector('.sidebar')?.classList.remove('open');
       return;
     }
+    if (id !== 'payroll') state.payrollUnlocked = false;
+    if (id !== 'users') state.usersUnlocked = false;
     state.route=id;
     state.modal='';
     root.querySelector('.sidebar')?.classList.remove('open');
@@ -1767,6 +3401,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       linesEl.querySelectorAll('[data-cart-set-qty]').forEach((btn) =>
         btn.addEventListener('click', () => openQuantityModal(Number(btn.dataset.cartSetQty)))
       );
+      linesEl.querySelectorAll('[data-cart-set-price]').forEach((btn) =>
+        btn.addEventListener('click', () => openItemPriceModal(Number(btn.dataset.cartSetPrice)))
+      );
     }
 
     const totalsEl = cartPanel.querySelector('.cart-totals-block');
@@ -1774,10 +3411,15 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       totalsEl.innerHTML = renderCartTotals(state.cart, state.posDiscountState);
     }
 
+    const sendBtn = root.querySelector('[data-pos-send-table]');
+    if (sendBtn) {
+      sendBtn.disabled = !state.cart.length;
+    }
+
     const totals = calculateDocument(state.cart, state.posDiscountState || {});
-    const selectedTableId = state.posDraft?.tableId ?? state.preselectedTableId ?? '';
-    const actionText = selectedTableId
-      ? 'Enviar comanda a cocina'
+    const loadedTable = state.loadedTableId ? (state.tables || []).find((t) => t.id === state.loadedTableId) : null;
+    const actionText = loadedTable
+      ? `Cobrar ${loadedTable.name} ${formatMoney(totals.totalCents)}`
       : (state.posPaymentMethod === 'credit'
         ? `Registrar fiao ${formatMoney(totals.totalCents)}`
         : (state.posPaymentMethod === 'delivery_cod'
@@ -1795,7 +3437,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     if (mobileBtn) {
       mobileBtn.disabled = !state.cart.length;
       const mobileSpan = mobileBtn.querySelector('span');
-      if (mobileSpan) mobileSpan.textContent = selectedTableId ? 'Enviar comanda' : actionText;
+      if (mobileSpan) mobileSpan.textContent = actionText;
     }
 
     const prebillBtn = root.querySelector('[data-print-cart-prebill]');
@@ -1813,20 +3455,29 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     capturePosDraft();
     const product=state.products.find((item)=>item.id===id);
     if(!product)return;
+    const isPrepared = Boolean(product.isPrepared);
     const stock = Number(product.stock || 0);
-    if (stock < 1) {
+    if (!isPrepared && stock < 1) {
       toast(`${product.name} está agotado. Abriendo ajuste rápido para reabastecer...`, 'warning');
       state.editingStockProduct = product;
       state.modal = 'stockAdjust';
       renderModal();
       return;
     }
-    const line=state.cart.find((item)=>item.productId===id);
+    const line=state.cart.find((item)=>item.productId===id && !item.isCustomPrice);
     if(line) {
-      if (line.quantity >= Math.min(stock, 999)) return toast(`No hay más existencia disponible de ${product.name}.`, 'warning');
+      if (!isPrepared && line.quantity >= Math.min(stock, 999)) return toast(`No hay más existencia disponible de ${product.name}.`, 'warning');
       line.quantity+=1;
     }
-    else state.cart.push({productId:id,name:product.name,quantity:1,unitPriceCents:product.priceCents,taxRate:product.taxRate||0,notes:''});
+    else state.cart.push({
+      productId:id,
+      name:product.name,
+      quantity:1,
+      unitPriceCents:product.priceCents,
+      originalPriceCents:product.priceCents,
+      taxRate:product.taxRate||0,
+      notes:''
+    });
     renderPosCartOnly();
     const totals = calculateDocument(state.cart);
     setVFDMessage(product.name.slice(0, 20), `TOT: ${formatMoney(totals.totalCents)}`);
@@ -1837,10 +3488,17 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     if(!state.cart[index])return;
     const line = state.cart[index];
     const product = state.products.find((item) => item.id === line.productId);
-    const maximum = Math.min(Number(product?.stock || 0), 999);
-    if (delta > 0 && line.quantity >= maximum) return toast(`No hay más existencia disponible de ${line.name}.`, 'warning');
+    const isPrepared = Boolean(product?.isPrepared);
+    const maximum = isPrepared ? 999 : Math.min(Number(product?.stock || 0), 999);
+    if (delta > 0 && !line.isDeliveryFee && !isPrepared && line.quantity >= maximum) return toast(`No hay más existencia disponible de ${line.name}.`, 'warning');
     line.quantity+=delta;
-    if(state.cart[index].quantity<=0)state.cart.splice(index,1);
+    if(state.cart[index].quantity<=0) {
+      if (line.isDeliveryFee || line.productId === 'prod-costo-de-envio-delivery') {
+        const feeInput = root.querySelector('#pos-delivery-fee');
+        if (feeInput) feeInput.value = '';
+      }
+      state.cart.splice(index,1);
+    }
     renderPosCartOnly();
     const totals = calculateDocument(state.cart);
     if (state.cart.length) {
@@ -1850,10 +3508,143 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     }
   }
 
+  function loadTableOrderToCart(tableId) {
+    const table = (state.tables || []).find((t) => t.id === tableId);
+    if (!table) return;
+    if (!table.currentOrderId) {
+      state.loadedOrderId = '';
+      state.loadedTableId = table.id;
+      if (state.posDraft) state.posDraft.tableId = table.id;
+      toast(`Mesa ${table.name} seleccionada. Agrega productos y pulsa Mandar a mesa.`, 'info');
+      renderContent();
+      return;
+    }
+    const order = (state.orders || []).find((o) => o.id === table.currentOrderId);
+    if (!order) return toast('No se encontró la comanda activa de la mesa.', 'warning');
+
+    if (state.cart.length && state.loadedOrderId !== order.id) {
+      const ok = confirm(`Hay productos en la cuenta actual. ¿Deseas descartarlos para cargar la comanda de ${table.name}?`);
+      if (!ok) return;
+    }
+
+    state.loadedOrderId = order.id;
+    state.loadedTableId = table.id;
+    state.cart = (order.items || []).map((i) => ({ ...i }));
+    state.posDraft = {
+      ...(state.posDraft || {}),
+      tableId: table.id,
+      clientName: order.clientName && order.clientName !== 'Consumidor final' ? order.clientName : '',
+      notes: order.notes || '',
+      printReceipt: state.posDraft?.printReceipt !== false
+    };
+    state.posDiscountState = {
+      discount: order.discountCents ? order.discountCents / 100 : 0,
+      discountType: 'amount',
+      includeLegalTip: Boolean(order.tipCents)
+    };
+    toast(`Comanda de ${table.name} cargada. Puedes cobrarla o agregar más productos.`, 'success');
+    renderContent();
+  }
+
+  function releaseLoadedCart() {
+    const tableName = (state.tables || []).find((t) => t.id === state.loadedTableId)?.name || 'Mesa';
+    state.loadedOrderId = '';
+    state.loadedTableId = '';
+    state.cart = [];
+    resetPosDraft();
+    toast(`Comanda de ${tableName} liberada. La mesa continúa abierta en cola.`, 'info');
+    renderContent();
+  }
+
+  async function handleCancelAndLiberateTable(tableId, triggerBtn) {
+    const table = (state.tables || []).find((t) => t.id === tableId);
+    const tableName = table?.name || 'la mesa';
+    const order = (state.orders || []).find((o) => o.id === (table?.currentOrderId || (state.loadedTableId === tableId ? state.loadedOrderId : null)));
+    const itemsCount = order?.items?.length || (state.loadedTableId === tableId ? state.cart?.length : 0);
+
+    const ok = confirm(`¿Deseas cancelar la comanda y liberar ${tableName}?\n\n${itemsCount > 0 ? `Se anularán los ${itemsCount} productos asignados a la comanda y la mesa quedará disponible de inmediato.` : 'La mesa quedará disponible de inmediato.'}`);
+    if (!ok) return;
+
+    if (triggerBtn) setBusy(triggerBtn, true);
+    try {
+      if (typeof service.liberateTable === 'function') {
+        await service.liberateTable(tableId, 'Liberada desde terminal POS');
+      } else if (order?.id) {
+        await service.transitionOrder(order.id, 'cancelled', 'cancelled', 'Liberada desde terminal POS');
+      }
+      if (state.loadedTableId === tableId) {
+        state.loadedTableId = '';
+        state.loadedOrderId = '';
+        state.cart = [];
+        resetPosDraft();
+      }
+      closeModal();
+      toast(`${tableName} liberada correctamente.`, 'success');
+      renderContent();
+    } catch (err) {
+      toast(`Error al liberar ${tableName}: ${err.message}`, 'danger');
+    } finally {
+      if (triggerBtn) setBusy(triggerBtn, false);
+    }
+  }
+
+  async function sendComandaToTable(tableId) {
+    if (!state.cart.length) return toast('Agrega al menos un producto a la cuenta antes de mandar a la mesa.', 'warning');
+    const table = (state.tables || []).find((t) => t.id === tableId);
+    const tableName = table ? table.name : 'Mesa';
+    const formElement = root.querySelector('#pos-checkout-form');
+    const form = formElement ? new FormData(formElement) : new FormData();
+    const discountVal = Number(form.get('posDiscountValue') || state.posDiscountState?.discount || 0);
+    const discountType = form.get('posDiscountType') || state.posDiscountState?.discountType || 'amount';
+    const includeLegalTip = form.get('posIncludeLegalTip') === 'on' || Boolean(state.posDiscountState?.includeLegalTip);
+    const totals = calculateDocument(state.cart, { discount: discountVal, discountType, includeLegalTip });
+    const clientName = String(form.get('clientName') || state.posDraft?.clientName || 'Consumidor final').trim() || 'Consumidor final';
+
+    try {
+      toast(`Enviando comanda a ${tableName}...`, 'info');
+      const orderId = await service.createOrder({
+        items: state.cart.map((i) => ({ ...i })),
+        clientName,
+        clientRnc: String(form.get('posClientRnc') || '').trim(),
+        notes: String(form.get('notes') || state.posDraft?.notes || '').trim(),
+        priority: 'normal',
+        discount: discountVal,
+        discountType,
+        includeLegalTip,
+        tableId,
+        replaceItems: Boolean(state.loadedOrderId)
+      });
+      toast(`Comanda enviada a ${tableName}.`, 'success');
+      beepHardware('ok').catch(() => {});
+      if (state.settings?.autoPrintKitchen !== false) {
+        void printOrder(orderId, {
+          id: orderId,
+          tableId,
+          tableName,
+          clientName,
+          items: state.cart.map((item) => ({ ...item })),
+          notes: String(form.get('notes') || state.posDraft?.notes || '').trim(),
+          priority: 'normal',
+          ...totals,
+          createdAt: new Date()
+        });
+      }
+      state.cart = [];
+      state.loadedOrderId = '';
+      state.loadedTableId = '';
+      state.preselectedTableId = '';
+      resetPosDraft();
+      renderContent();
+    } catch (err) {
+      console.error(err);
+      toast(err.message || 'Error al enviar comanda a la mesa.', 'danger');
+    }
+  }
+
   function updatePosSubmitLabel() {
     const totals = calculateDocument(state.cart, state.posDiscountState || {});
     const method = root.querySelector('#pos-payment-method')?.value || 'cash';
-    const tableId = root.querySelector('#pos-table-select')?.value || '';
+    const loadedTable = state.loadedTableId ? (state.tables || []).find((t) => t.id === state.loadedTableId) : null;
     const printReceipt = root.querySelector('#pos-print-receipt') ? root.querySelector('#pos-print-receipt').checked : (state.posDraft?.printReceipt !== false);
     const badge = root.querySelector('#pos-print-status-badge');
     if (badge) {
@@ -1863,11 +3654,11 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     }
     const labels = root.querySelectorAll('#pos-submit-label, .mobile-pos-charge span');
     labels.forEach((label) => {
-      if (tableId) {
-        label.textContent = 'Enviar comanda a cocina';
+      if (loadedTable) {
+        label.textContent = `Cobrar ${loadedTable.name} ${formatMoney(totals.totalCents)}`;
       } else if (method === 'credit') {
         label.textContent = `Registrar Fiao ${formatMoney(totals.totalCents)}`;
-      } else if (method === 'delivery_cod') {
+      } else if (method === 'delivery_cod' || state.posDestination === 'delivery') {
         label.textContent = `Despachar Delivery ${formatMoney(totals.totalCents)}`;
       } else if (!printReceipt) {
         label.textContent = `Cobrar sin ticket ${formatMoney(totals.totalCents)}`;
@@ -1884,7 +3675,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const formElement = root.querySelector('#pos-checkout-form');
     if (formElement && !formElement.reportValidity()) return;
     const form = formElement ? new FormData(formElement) : new FormData();
-    const tableId = form.get('tableId') || root.querySelector('#pos-table-select')?.value || '';
+    const tableId = form.get('tableId') || root.querySelector('#pos-table-select')?.value || state.loadedTableId || '';
     const documentType = form.get('documentType') || 'invoice';
     if(!tableId&&!state.capabilities.bill)return toast('Selecciona una mesa para enviar la comanda.','danger');
 
@@ -1896,19 +3687,20 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const totals = calculateDocument(state.cart, state.posDiscountState);
     const method = form.get('paymentMethod') || root.querySelector('#pos-payment-method')?.value || state.posPaymentMethod || 'cash';
     const isCredit = method === 'credit';
-    const isDelivery = method === 'delivery_cod';
+    const isDeliveryDest = state.posDestination === 'delivery';
+    const isDelivery = method === 'delivery_cod' || isDeliveryDest;
 
-    const deliveryDriverId = String(form.get('deliveryDriverId') || '').trim();
+    const deliveryDriverId = String(form.get('deliveryDriverId') || root.querySelector('#pos-delivery-driver-select')?.value || state.posDraft?.deliveryDriverId || '').trim();
     const deliveryDriver = (state.deliveryDrivers || []).find(d => d.id === deliveryDriverId);
-    const deliveryDriverName = deliveryDriver ? deliveryDriver.name : String(form.get('deliveryDriverName') || '').trim();
-    const deliveryClientName = String(form.get('deliveryClientName') || '').trim();
-    const deliveryPhone = String(form.get('deliveryPhone') || '').trim();
-    const deliveryAddress = String(form.get('deliveryAddress') || '').trim();
-    const rawDeliveryChange = String(root.querySelector('#pos-delivery-change-for')?.value || form.get('deliveryChangeFor') || '').trim();
+    const deliveryDriverName = deliveryDriver ? deliveryDriver.name : String(form.get('deliveryDriverName') || state.posDraft?.deliveryDriverName || '').trim();
+    const deliveryClientName = String(form.get('deliveryClientName') || root.querySelector('#pos-client-name')?.value || state.posDraft?.clientName || '').trim();
+    const deliveryPhone = String(form.get('deliveryPhone') || root.querySelector('#pos-delivery-phone')?.value || state.posDraft?.deliveryPhone || '').trim();
+    const deliveryAddress = String(form.get('deliveryAddress') || root.querySelector('#pos-delivery-address')?.value || state.posDraft?.deliveryAddress || '').trim();
+    const rawDeliveryChange = String(root.querySelector('#pos-delivery-change-for')?.value || form.get('deliveryChangeFor') || state.posDraft?.deliveryChangeFor || '').trim();
     const deliveryChangeForCents = rawDeliveryChange && Number(rawDeliveryChange) > 0 ? Math.round(Number(rawDeliveryChange) * 100) : 0;
-    const deliveryNotes = String(form.get('deliveryNotes') || '').trim();
+    const deliveryNotes = String(form.get('deliveryNotes') || root.querySelector('#pos-delivery-notes')?.value || state.posDraft?.deliveryNotes || '').trim();
 
-    if (isDelivery) {
+    if (isDelivery || isDeliveryDest) {
       if (!deliveryDriverId && !deliveryDriverName) {
         return toast('Selecciona o indica el mensajero/repartidor responsable.', 'warning');
       }
@@ -1921,7 +3713,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       ? String(form.get('fiaoClientName') || '').trim()
       : isDelivery
       ? (deliveryClientName || 'Cliente Delivery')
-      : String(form.get('clientName') || 'Consumidor final').trim();
+      : String(form.get('clientName') || state.posDraft?.clientName || 'Consumidor final').trim() || 'Consumidor final';
     const clientPhone = isCredit
       ? String(form.get('fiaoClientPhone') || '').trim()
       : isDelivery
@@ -1952,49 +3744,17 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const clientRnc = String(form.get('posClientRnc') || '').trim();
     const ncfType = String(form.get('ncfType') || '');
 
-    if (tableId) {
-      try {
-        setBusy(event.submitter, true);
-        const orderId = await service.createOrder({
-          items: state.cart.map(i => ({ ...i })),
-          clientName: clientName || 'Consumidor final',
-          clientRnc,
-          notes: form.get('notes') || '',
-          priority: form.get('priority') || 'normal',
-          discount: discountVal,
-          discountType,
-          includeLegalTip,
-          tableId
-        });
-        toast('Comanda enviada a cocina.', 'success');
-        beepHardware('ok');
-        if (state.settings?.autoPrintKitchen !== false) {
-          const table = state.tables.find((item) => item.id === tableId);
-          void printOrder(orderId, {
-            id:orderId, tableId, tableName:table?.name || 'Mesa', clientName:clientName || 'Consumidor final',
-            clientRnc, items:state.cart.map((item) => ({...item})), notes:form.get('notes') || '',
-            priority:form.get('priority') || 'normal', ...totals, createdAt:new Date()
-          });
-        }
-        state.cart = [];
-        state.preselectedTableId = '';
-        resetPosDraft();
-        renderContent();
-      } catch (err) {
-        toast(err.message, 'danger');
-      } finally {
-        setBusy(event.submitter, false);
-      }
-      return;
-    }
-
     const cardReference = String(form.get('cardReference') || '').trim();
     const transferReference = String(form.get('transferReference') || '').trim();
     const reference = method === 'card' ? cardReference : (method === 'transfer' ? transferReference : '');
 
-    // El PIN de seis dígitos es el único paso de autorización para una venta rápida.
+    const activeTable = tableId ? (state.tables || []).find((t) => t.id === tableId) : null;
+    const targetOrderId = state.loadedOrderId || activeTable?.currentOrderId || '';
+
+    // El PIN de seis dígitos es el único paso de autorización para una venta rápida o cobro de mesa.
     // Si no existe un turno, el mismo PIN abre la caja con fondo inicial de RD$0.00.
     state.pendingPosPayload = {
+      orderId: targetOrderId,
       items: state.cart.map(i => ({ ...i })),
       method,
       reference,
@@ -2014,7 +3774,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       deliveryChangeForCents,
       deliveryNotes,
       printReceipt: form.get('printReceipt') !== null ? form.get('printReceipt') === 'on' : (state.posDraft.printReceipt !== false),
-      tableId: '',
+      tableId: tableId || state.loadedTableId || '',
       ncfType,
       notes: form.get('notes') || '',
       discount: discountVal,
@@ -2041,6 +3801,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       setBusy(submitButton, true);
       const isCredit = payload.method === 'credit';
       const isDelivery = payload.method === 'delivery_cod';
+      const hasDelivery = isDelivery || Boolean(payload.deliveryDriverId);
       const fiaoNoteCombined = [payload.notes, payload.fiaoNotes].filter(Boolean).join(' | ');
       const docPayload = {
         requestId: payload.requestId,
@@ -2065,7 +3826,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         deliveryPhone: payload.deliveryPhone || '',
         deliveryNotes: payload.deliveryNotes || '',
         deliveryChangeForCents: payload.deliveryChangeForCents || 0,
-        deliveryStatus: isDelivery ? 'in_transit' : '',
+        deliveryStatus: hasDelivery ? 'in_transit' : '',
         payment: {
           method: payload.method,
           reference: payload.reference || '',
@@ -2080,19 +3841,45 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 
       // Esta transacción es el punto de verdad: inventario, factura, pago y auditoría se
       // confirman antes de tocar periféricos, para que una impresora fallida nunca borre una venta.
-      const created = await service.createDirectDocument(docPayload);
-      if (isCredit && payload.fiaoSaveAsClient && payload.clientName && payload.clientName !== 'Consumidor final') {
+      const created = payload.orderId
+        ? await service.chargeOrder(payload.orderId, {
+            requestId: payload.requestId,
+            method: payload.method,
+            reference: payload.reference || '',
+            amountCents: payload.totals.totalCents,
+            tenderedCents: payload.tenderedCents,
+            changeCents: payload.method === 'cash' ? Math.max(0, payload.tenderedCents - payload.totals.totalCents) : 0,
+            clientRnc: payload.clientRnc || '',
+            ncfType: payload.ncfType || '',
+            cashSessionId: state.activeCash?.id || '',
+            cashierId: employee.id,
+            cashierName: employee.displayName
+          }, payload.items)
+        : await service.createDirectDocument(docPayload);
+      // Memoria Activa: Registro y actualización transparente de clientes en fiao, delivery o POS
+      const targetClientName = String(payload.clientName || payload.deliveryClientName || '').trim();
+      if (targetClientName && targetClientName.toLowerCase() !== 'consumidor final') {
         const existingClient = (state.clients || []).find(c =>
           (payload.clientId && c.id === payload.clientId) ||
-          (c.name && c.name.trim().toLowerCase() === payload.clientName.trim().toLowerCase())
+          (c.name && c.name.trim().toLowerCase() === targetClientName.toLowerCase())
         );
-        service.saveClient({
-          id: existingClient?.id || payload.clientId || undefined,
-          name: payload.clientName,
-          phone: payload.clientPhone || existingClient?.phone || '',
-          notes: payload.fiaoNotes || existingClient?.notes || '',
-          active: true
-        }).catch((err) => console.warn('No se pudo guardar automáticamente el cliente fiado:', err));
+        const updatedPhone = payload.clientPhone || payload.deliveryPhone || existingClient?.phone || '';
+        const updatedAddress = payload.deliveryAddress || existingClient?.address || '';
+        const updatedNotes = payload.fiaoNotes || payload.deliveryNotes || existingClient?.notes || '';
+
+        if (!existingClient ||
+            (updatedPhone && updatedPhone !== existingClient.phone) ||
+            (updatedAddress && updatedAddress !== existingClient.address) ||
+            (updatedNotes && updatedNotes !== existingClient.notes)) {
+          service.saveClient({
+            id: existingClient?.id || payload.clientId || undefined,
+            name: targetClientName,
+            phone: updatedPhone,
+            address: updatedAddress,
+            notes: updatedNotes,
+            active: true
+          }).catch((err) => console.warn('No se pudo registrar cliente en memoria activa:', err));
+        }
       }
       const invoiceId = typeof created === 'string' ? created : created.id;
       const changeCents = payload.method === 'cash'
@@ -2126,7 +3913,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         deliveryPhone: payload.deliveryPhone || '',
         deliveryNotes: payload.deliveryNotes || '',
         deliveryChangeForCents: payload.deliveryChangeForCents || 0,
-        deliveryStatus: isDelivery ? 'in_transit' : '',
+        deliveryStatus: hasDelivery ? 'in_transit' : '',
         createdAt: new Date()
       };
       if (isCredit) {
@@ -2155,7 +3942,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         // Courier advances are explicit, audited Caja movements, never an
         // unconfirmed write after a completed dispatch or a silent drawer pulse.
       }, 0);
-      toast(isCredit ? `Fiao registrado a nombre de ${payload.clientName}.` : isDelivery ? `Pedido delivery despachado con ${payload.deliveryDriverName || 'mensajero'}.` : 'Venta registrada correctamente.', 'success');
+      toast(isCredit ? `Fiao registrado a nombre de ${payload.clientName}.` : hasDelivery ? `Pedido delivery despachado con ${payload.deliveryDriverName || 'mensajero'}.` : 'Venta registrada correctamente.', 'success');
       return { ok: true, result: created };
     } catch (err) {
       console.error(err);
@@ -2197,7 +3984,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
                 <i data-lucide="printer" style="width:15px;height:15px;"></i> Factura impresa:
               </span>
               <button type="button" class="button compact" id="chk-toggle-print" style="font-size:0.8rem;padding:4px 10px;font-weight:700;${payload.printReceipt !== false ? 'background:rgba(63,185,80,.18);color:#3fb950;border:1px solid rgba(63,185,80,.4);' : 'background:rgba(255,255,255,.08);color:var(--muted);border:1px solid var(--line);'}">
-                ${payload.printReceipt !== false ? '✓ Sí, imprimir' : '✕ No imprimir'}
+                ${payload.printReceipt !== false ? 'Sí, imprimir' : 'No imprimir'}
               </button>
             </div>
             <p style="margin:6px 0; font-size:.82rem; color:var(--muted);text-align:center;">
@@ -2302,7 +4089,12 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
             ` : isDelivery ? `
               <div style="background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35);border-radius:12px;padding:14px;margin:6px 0 12px;text-align:left;">
                 <span style="font-size:0.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:700;">Repartidor Asignado</span>
-                <strong style="font-size:1.3rem;color:#f59e0b;display:block;margin:3px 0 8px;">🛵 ${escapeHtml(data.deliveryDriverName || 'Mensajero')}</strong>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin:3px 0 8px;flex-wrap:wrap;gap:6px;">
+                  <strong style="display:flex;align-items:center;gap:6px;font-size:1.3rem;color:#f59e0b;"><i data-lucide="bike" style="width:20px;height:20px;"></i> ${escapeHtml(data.deliveryDriverName || 'Mensajero')}</strong>
+                  <button type="button" class="button secondary compact" data-delivery-reassign="${escapeHtml(data.id)}" style="font-size:0.75rem;padding:3px 8px;gap:4px;">
+                    <i data-lucide="arrow-left-right" style="width:12px;height:12px;"></i> Cambiar repartidor
+                  </button>
+                </div>
                 <div style="font-size:0.88rem;color:#ddd;display:flex;flex-direction:column;gap:3px;">
                   <div><span style="color:var(--muted);">Cliente:</span> <b>${escapeHtml(data.clientName || 'Cliente')}</b></div>
                   ${data.deliveryPhone ? `<div><span style="color:var(--muted);">Teléfono:</span> <b>${escapeHtml(data.deliveryPhone)}</b></div>` : ''}
@@ -2357,7 +4149,101 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     }), f.get('id') ? 'Repartidor actualizado.' : 'Repartidor registrado.', closeModal);
   }
 
-  async function saveProduct(event){event.preventDefault();const f=new FormData(event.currentTarget);await perform(()=>service.saveProduct({id:f.get('id'),name:f.get('name'),sku:f.get('sku'),category:f.get('category'),priceCents:toCents(f.get('price')),costCents:toCents(f.get('cost')||0),taxRate:Number(f.get('taxRate')||0),stock:Number(f.get('stock')||0),active:f.get('active')==='on'}),'Producto guardado.',closeModal);}
+  function openReassignDeliveryModal(invoiceId) {
+    if (!invoiceId) return;
+    const inv = (state.invoices || []).find((i) => i.id === invoiceId) || (state.lastSaleResult?.id === invoiceId ? state.lastSaleResult : null);
+    if (!inv) return toast('No se encontró la factura para reasignar.', 'warning');
+    state.reassigningInvoiceId = inv.id;
+    state.modal = 'reassignDelivery';
+    renderModal();
+  }
+
+  async function saveReassignDelivery(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const invoiceId = String(data.get('invoiceId') || '').trim();
+    const newDriverId = String(data.get('newDriverId') || '').trim();
+    const select = form.querySelector('#reassign-new-driver-select');
+    const selectedOpt = select ? select.options[select.selectedIndex] : null;
+    const newDriverName = String(data.get('newDriverName') || selectedOpt?.dataset.name || selectedOpt?.textContent || '').trim().replace(/\s*\(Actual\)$/, '');
+    const deliveryNotes = String(data.get('deliveryNotes') || '').trim();
+
+    if (!newDriverName || !newDriverId) {
+      return toast('Selecciona el nuevo repartidor responsable de la entrega.', 'warning');
+    }
+
+    const button = form.querySelector('button[type="submit"]');
+    setBusy(button, true);
+
+    try {
+      const outcome = await perform(
+        () => service.reassignDeliveryDriver(invoiceId, {
+          driverId: newDriverId,
+          driverName: newDriverName,
+          notes: deliveryNotes
+        }),
+        `Entrega reasignada a ${newDriverName}.`,
+        'No se pudo reasignar el repartidor.'
+      );
+      if (!outcome.ok) return;
+
+      if (state.lastSaleResult && state.lastSaleResult.id === invoiceId) {
+        state.lastSaleResult.deliveryDriverId = newDriverId;
+        state.lastSaleResult.deliveryDriverName = newDriverName;
+        if (deliveryNotes) state.lastSaleResult.deliveryNotes = deliveryNotes;
+      }
+
+      beepHardware('ok').catch(() => {});
+      closeModal();
+      renderContent();
+    } catch (err) {
+      console.error(err);
+      toast(err.message || 'Error al reasignar el repartidor.', 'danger');
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function saveProduct(event) {
+    event.preventDefault();
+    const f = new FormData(event.currentTarget);
+    const name = String(f.get('name') || '').trim();
+    if (!name) return toast('El nombre del producto es obligatorio.', 'warning');
+    const priceVal = f.get('price');
+    let priceCents = 0;
+    try {
+      priceCents = toCents(priceVal);
+    } catch {
+      return toast('Indica un precio de venta válido.', 'warning');
+    }
+    const costVal = f.get('cost') || '0';
+    let costCents = 0;
+    try {
+      costCents = toCents(costVal);
+    } catch {
+      costCents = 0;
+    }
+    const productId = f.get('id') || undefined;
+    const inventoryType = f.get('inventoryType') || (f.get('isPrepared') === 'on' ? 'prepared' : 'resale');
+    const minStock = Number(f.get('minStock') || 5);
+    const isPrepared = inventoryType === 'prepared' || f.get('isPrepared') === 'on';
+
+    await perform(() => service.saveProduct({
+      id: productId,
+      name,
+      sku: String(f.get('sku') || '').trim(),
+      category: String(f.get('category') || 'General').trim(),
+      priceCents,
+      costCents,
+      taxRate: Number(f.get('taxRate') || 0),
+      stock: isPrepared ? 0 : Number(f.get('stock') || 0),
+      inventoryType,
+      minStock,
+      isPrepared,
+      active: f.get('active') === 'on'
+    }), productId ? 'Producto actualizado correctamente.' : 'Producto creado correctamente.', closeModal);
+  }
   async function saveMobileInventory(event){
     event.preventDefault();
     const form = event.currentTarget;
@@ -2391,10 +4277,20 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const reasonChips = form.querySelectorAll('.reason-chip');
 
     function updateCalculations() {
-      const op = opInput?.value || 'count';
+      const op = opInput?.value || 'restock';
       const qty = Math.max(0, Number(qtyInput?.value || 0));
 
-      if (op === 'waste') {
+      if (op === 'restock') {
+        const resulting = currentStock + qty;
+        if (impactTitle) {
+          impactTitle.textContent = 'Nuevo Stock en Inventario:';
+          impactTitle.style.color = '#10b981';
+        }
+        if (impactVal) {
+          impactVal.textContent = `${resulting} uds (+${qty})`;
+          impactVal.style.color = '#10b981';
+        }
+      } else if (op === 'waste') {
         const unitVal = cost > 0 ? cost : price;
         const lossCents = Math.round(unitVal * qty);
         if (impactTitle) {
@@ -2437,7 +4333,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         opBtns.forEach((b) => {
           const isAct = b === btn;
           b.classList.toggle('active', isAct);
-          if (b.dataset.adjustOp === 'waste') {
+          if (b.dataset.adjustOp === 'restock') {
+            b.style.background = isAct ? 'rgba(16,185,129,.25)' : 'rgba(255,255,255,.04)';
+            b.style.color = isAct ? '#10b981' : '#cbd5e1';
+          } else if (b.dataset.adjustOp === 'waste') {
             b.style.background = isAct ? 'rgba(248,81,73,.25)' : 'rgba(255,255,255,.04)';
             b.style.color = isAct ? '#f85149' : '#cbd5e1';
           } else if (b.dataset.adjustOp === 'prep') {
@@ -2449,9 +4348,12 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           }
         });
 
-        if (op === 'waste') {
+        if (op === 'restock') {
+          if (qtyLabel) qtyLabel.textContent = 'Cantidad de Unidades que Entraron *';
+          if (reasonInput) reasonInput.value = 'restock';
+        } else if (op === 'waste') {
           if (qtyLabel) qtyLabel.textContent = 'Cantidad de Unidades a Descartar *';
-          if (reasonInput) reasonInput.value = 'waste_unsold';
+          if (reasonInput) reasonInput.value = 'waste_damaged';
         } else if (op === 'prep') {
           if (qtyLabel) qtyLabel.textContent = 'Cantidad de Unidades Preparadas / Entrantes *';
           if (reasonInput) reasonInput.value = 'production_demand';
@@ -2516,8 +4418,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       const submitBtn = form.querySelector('#stock-adjust-submit-btn');
       const data = new FormData(form);
       const productId = String(data.get('productId') || '').trim();
-      const operation = String(data.get('operation') || 'count');
-      const reasonCategory = String(data.get('reasonCategory') || 'audit_count');
+      const operation = String(data.get('operation') || 'restock');
+      const reasonCategory = String(data.get('reasonCategory') || 'restock');
       const quantity = Number(data.get('quantity') || 0);
       const notes = String(data.get('notes') || '').trim();
       const pin = String(data.get('pin') || '').trim();
@@ -2545,10 +4447,21 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           adjustInput.quantity = quantity;
         }
 
+        const isPreparedChecked = form.querySelector('#adjust-is-prepared')?.checked;
+        const originalProduct = (state.products || []).find((p) => p.id === productId);
+        if (originalProduct && isPreparedChecked !== undefined && Boolean(originalProduct.isPrepared) !== isPreparedChecked) {
+          await service.saveProduct({
+            ...originalProduct,
+            isPrepared: isPreparedChecked
+          });
+        }
+
         const res = await perform(() => service.adjustInventoryItem(adjustInput), null, closeModal);
         if (res.ok) {
           const pName = state.editingStockProduct?.name || 'Producto';
-          if (operation === 'waste') {
+          if (operation === 'restock') {
+            toast(`Entrada registrada: +${quantity} uds de ${pName}.`, 'success');
+          } else if (operation === 'waste') {
             toast(`Merma registrada: ${quantity} uds de ${pName}.`, 'success');
           } else if (operation === 'prep') {
             toast(`Cocinado registrado: +${quantity} uds de ${pName}.`, 'success');
@@ -2878,13 +4791,68 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     if(!state.activeCash)return toast('Abre una caja antes de registrar movimientos.','danger');
     const form=event.currentTarget;
     const f=new FormData(form);
-    const payload = { cashSessionId: state.activeCash.id, type: f.get('type'), amountCents: toCents(f.get('amount')), reason: String(f.get('reason') || '').trim() };
+    const type = String(f.get('type') || 'in');
+    const rawCategory = String(f.get('category') || '').trim();
+    const rawReason = String(f.get('reason') || '').trim();
+    const reason = rawCategory && !rawReason.startsWith(`[${rawCategory}]`)
+      ? `[${rawCategory}] ${rawReason}`
+      : rawReason;
+    const amountCents = toCents(f.get('amount'));
+    const printVoucher = Boolean(form.querySelector('#cash-movement-print')?.checked);
+
+    if (type === 'out') {
+      const sessionPayments = (state.payments || []).filter((item) => item.cashSessionId === state.activeCash.id);
+      const sessionMovements = (state.cashMovements || []).filter((item) => item.cashSessionId === state.activeCash.id);
+      const cashCollected = sessionPayments.filter((item) => item.method === 'cash').reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+      const cashIn = sessionMovements.filter((item) => item.type === 'in').reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+      const cashOut = sessionMovements.filter((item) => item.type === 'out').reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+      const expectedCashCents = Number(state.activeCash.openingCents || 0) + cashCollected + cashIn - cashOut;
+
+      if (amountCents > expectedCashCents) {
+        const errBox = form.querySelector('#cash-movement-pin-error') || form.querySelector('.pin-error-box');
+        if (errBox) errBox.textContent = `La salida (${formatMoney(amountCents)}) supera el efectivo en caja (${formatMoney(expectedCashCents)}).`;
+        return toast(`El monto supera el efectivo disponible en caja (${formatMoney(expectedCashCents)}).`, 'danger');
+      }
+    }
+
+    const payload = { cashSessionId: state.activeCash.id, type, amountCents, reason };
     const fingerprint = JSON.stringify(payload);
     if (movementAttempt?.fingerprint !== fingerprint) movementAttempt = { fingerprint, requestId: createOperationId('cash-movement') };
-    const outcome = await authorizeCashForm(event, 'Registro de entrada/salida', () => service.createCashMovement({
-      ...payload, requestId: movementAttempt.requestId
-    }), 'Movimiento de caja registrado.', () => { movementAttempt = null; form.reset(); });
-    if (outcome.ok && state.settings?.autoOpenDrawer !== false) void kickDrawer();
+
+    let createdId = null;
+    const outcome = await authorizeCashForm(event, `Movimiento de caja (${type === 'in' ? 'Entrada' : 'Salida'})`, async () => {
+      const res = await service.createCashMovement({
+        ...payload, requestId: movementAttempt.requestId
+      });
+      createdId = res;
+      return res;
+    }, 'Movimiento de caja registrado.', () => {
+      movementAttempt = null;
+      closeModal();
+    });
+
+    if (outcome.ok) {
+      if (state.settings?.autoOpenDrawer !== false) void kickDrawer();
+      if (printVoucher) {
+        try {
+          const mov = {
+            id: createdId || movementAttempt?.requestId,
+            cashSessionId: state.activeCash.id,
+            type,
+            amountCents,
+            category: rawCategory,
+            reason: rawReason,
+            createdAt: new Date(),
+            createdByName: user.displayName || user.username || 'Cajero'
+          };
+          const voucher = buildCashMovementEscPos(mov, state.activeCash, state.settings || {});
+          const plainText = buildCashMovementPlainText(mov, state.activeCash, state.settings || {});
+          await sendEscPosToPrinter(voucher, { plainText, openDrawer: false });
+        } catch (printErr) {
+          console.warn('Error imprimiendo comprobante de movimiento:', printErr);
+        }
+      }
+    }
   }
 
   async function authorizeCashForm(event, reason, task, success, after) {
@@ -2911,6 +4879,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     event.preventDefault();
     const f=Object.fromEntries(new FormData(event.currentTarget));
     f.defaultTaxRate=Number(f.defaultTaxRate||0);
+    f.screenSleepTimeout = Number(f.screenSleepTimeout ?? 180);
     f.autoOpenDrawer = event.currentTarget.elements.autoOpenDrawer?.checked ?? true;
     f.autoPrintInvoice = event.currentTarget.elements.autoPrintInvoice?.checked ?? false;
     f.autoPrintKitchen = event.currentTarget.elements.autoPrintKitchen?.checked ?? false;
@@ -2919,6 +4888,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const outcome = await perform(()=>service.saveSettings(f),'Configuración guardada.');
     if (!outcome.ok) return;
     state.settings={...state.settings,...f};
+    sleepManager.reset();
     updateForms.markSaved(form);
     syncNativeUpdateState();
     if (!f.enableEloScanner && state.scannerActive) {
@@ -3248,7 +5218,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       if (statusRes && statusRes.ok) {
         state.hardwareStatus = statusRes;
         setVal('#diag-server-val', `Activo (127.0.0.1:${eloPort})`, true);
-        setVal('#diag-printer-val', statusRes.printerConnected ? 'Conectada ✓' : 'Sin detectar', statusRes.printerConnected);
+        setVal('#diag-printer-val', statusRes.printerConnected ? 'Conectada' : 'Sin detectar', statusRes.printerConnected);
 
         // Sensor de Papel
         if (statusRes.paperStatus === 'unsupported') {
@@ -3258,15 +5228,15 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         } else if (statusRes.paperLow) {
           setVal('#diag-paper-val', 'Poco papel restante', null);
         } else if (statusRes.printerConnected) {
-          setVal('#diag-paper-val', 'Rollo instalado ✓', true);
+          setVal('#diag-paper-val', 'Rollo instalado', true);
         } else {
           setVal('#diag-paper-val', 'Sin detectar', null);
         }
 
-        setVal('#diag-drawer-val', statusRes.drawerAvailable ? 'Lista por impresora ✓' : 'No disponible', Boolean(statusRes.drawerAvailable));
-        setVal('#diag-scanner-val', statusRes.scannerAvailable ? (statusRes.scannerActive ? 'Activa ✓' : 'Disponible · apagada') : 'No detectada', Boolean(statusRes.scannerAvailable));
-        setVal('#diag-vfd-val', statusRes.vfdConnected ? 'Conectado ✓' : 'No reportado', Boolean(statusRes.vfdConnected));
-        setVal('#diag-msr-val', statusRes.msrActive ? 'MagTek activo ✓' : 'No disponible', Boolean(statusRes.msrActive));
+        setVal('#diag-drawer-val', statusRes.drawerAvailable ? 'Lista por impresora' : 'No disponible', Boolean(statusRes.drawerAvailable));
+        setVal('#diag-scanner-val', statusRes.scannerAvailable ? (statusRes.scannerActive ? 'Activa' : 'Disponible · apagada') : 'No detectada', Boolean(statusRes.scannerAvailable));
+        setVal('#diag-vfd-val', statusRes.vfdConnected ? 'Conectado' : 'No reportado', Boolean(statusRes.vfdConnected));
+        setVal('#diag-msr-val', statusRes.msrActive ? 'MagTek activo' : 'No disponible', Boolean(statusRes.msrActive));
         setVal('#diag-model-val', `${statusRes.model || 'Terminal Android'} · Android ${statusRes.androidVersion || 'N/D'}`, null);
         setVal('#diag-ip-val', statusRes.wifiIp || 'No reportada', Boolean(statusRes.wifiIp));
         setAdbHint(statusRes);
@@ -3283,7 +5253,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
               `<div style="padding:6px 0; border-bottom:1px solid rgba(255,255,255,.06);">
                 <strong>${d.name}</strong>
                 <span style="margin-left:8px; color:var(--muted);">VID=${d.vendorId} PID=${d.productId} · Clase ${d.class} · ${d.interfaces} interfaz(es)</span>
-                <span style="margin-left:8px; color:${d.hasPermission ? '#3fb950' : '#f85149'}">${d.hasPermission ? '✓ Con permiso' : '✗ Sin permiso'}</span>
+                <span style="margin-left:8px; color:${d.hasPermission ? '#3fb950' : '#f85149'}">${d.hasPermission ? 'Con permiso' : 'Sin permiso'}</span>
               </div>`
             ).join('');
           }
@@ -3316,7 +5286,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
             if (paperRes.paperStatus === 'unsupported') {
               toast('Impresora conectada; el sensor de papel no es compatible con este modelo. Comprueba el rollo manualmente.', 'warning');
             } else if (paperRes.paperOut) {
-              toast('⚠️ La impresora no tiene papel térmico. Reemplaza el rollo de 80mm.', 'danger');
+              toast('La impresora no tiene papel térmico. Reemplaza el rollo de 80mm.', 'danger');
               beepHardware('error');
             } else if (paperRes.paperLow) {
               toast('Aviso: Poco papel en la impresora.', 'warning');
@@ -3392,6 +5362,16 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const res = await sendEscPosToPrinter(b, { plainText, openDrawer: false });
     if (res.success) toast(`Corte ${mode} de caja enviado a la impresora térmica.`, 'success');
     else toast('Error al imprimir arqueo.', 'danger');
+  }
+
+  async function printCashMovement(movement, sessionOverride = null) {
+    const session = sessionOverride || state.activeCash;
+    const b = buildCashMovementEscPos(movement, session || {}, state.settings);
+    const plainText = buildCashMovementPlainText(movement, session || {}, state.settings);
+    const res = await sendEscPosToPrinter(b, { plainText, openDrawer: false });
+    if (res.success) toast('Comprobante de salida impreso.', 'success');
+    else toast('No se pudo imprimir el comprobante térmico.', 'warning');
+    return res;
   }
 
   async function printCartPrebill() {
@@ -3549,8 +5529,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     if (state.cart[state.editingCartIndex]) {
       const line = state.cart[state.editingCartIndex];
       const product = state.products.find((item) => item.id === line.productId);
-      const maximum = Math.min(Number(product?.stock || 0), 999);
-      if (val > maximum) return toast(`Solo hay ${maximum} unidades disponibles de ${line.name}.`, 'warning');
+      const isPrepared = Boolean(product?.isPrepared);
+      const maximum = isPrepared ? 999 : Math.min(Number(product?.stock || 0), 999);
+      if (!isPrepared && val > maximum) return toast(`Solo hay ${maximum} unidades disponibles de ${line.name}.`, 'warning');
       if (val > 0) {
         state.cart[state.editingCartIndex].quantity = val;
       } else {
@@ -3580,10 +5561,21 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   }
 
   function filterAuditRows(event) {
-    const term = (event.target.value || '').toLowerCase().trim();
+    const term = (event.target.value || '').trim();
+    state.auditSearchTerm = term;
+    let visible = 0;
     root.querySelectorAll('[data-audit-row]').forEach((row) => {
-      row.hidden = !row.dataset.search.includes(term);
+      const match = term ? matchesFuzzy(term, row.dataset.search) : true;
+      row.hidden = !match;
+      if (match) visible++;
     });
+    const summary = root.querySelector('.audit-result-summary');
+    if (summary) {
+      const total = root.querySelectorAll('[data-audit-row]').length;
+      summary.textContent = term
+        ? `Encontrados ${visible} de ${total} eventos`
+        : `Mostrando ${visible} de ${total} eventos`;
+    }
   }
 
   function itemNoteModal() {
@@ -3591,17 +5583,21 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     if (!item) return '';
     return `
       <div class="modal-backdrop" data-modal-close>
-        <form id="item-note-form" class="modal-card form-modal" style="max-width:420px;" data-modal-card>
+        <form id="item-note-form" class="modal-card form-modal" style="max-width:440px;" data-modal-card>
           <header>
-            <div><span class="eyebrow">${escapeHtml(item.name)}</span><h2>Nota de preparación</h2></div>
+            <div><span class="eyebrow">${escapeHtml(item.name)}</span><h2>Comentario del plato</h2></div>
             <button type="button" class="icon-button" data-modal-close><i data-lucide="x"></i></button>
           </header>
           <div class="stack-form" style="padding-top:8px;">
-            <label>Instrucciones especiales para cocina
-              <input name="itemNote" id="item-note-input" maxlength="200" placeholder="Ej: Sin cebolla, término medio, salsa aparte..." value="${escapeHtml(item.notes || '')}" autofocus>
+            <label>Instrucciones o especificaciones para este artículo
+              <input name="itemNote" id="item-note-input" maxlength="200" placeholder="Ej: Ricky sin cebolla, salsa aparte, bien cocido..." value="${escapeHtml(item.notes || '')}" autofocus>
             </label>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0;">
-              ${['Sin cebolla', 'Término medio', 'Bien cocido', 'Salsa aparte', 'Sin sal', 'Poco picante', 'Para llevar'].map(q => `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0 4px;">
+              <span style="font-size:0.75rem;color:var(--muted);font-weight:600;">Opciones rápidas:</span>
+              <button type="button" id="clear-item-note-btn" class="button secondary compact" style="font-size:0.72rem;padding:2px 8px;color:#f87171;">Borrar nota</button>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 8px;">
+              ${['Sin cebolla', 'Sin mayonesa', 'Sin ketchup', 'Con picante', 'Sin picante', 'Bien cocido', 'Término medio', 'Salsa aparte', 'Extra queso', 'Para llevar'].map(q => `
                 <button type="button" class="button secondary compact" data-quick-note="${q}" style="font-size:0.75rem;padding:4px 8px;">${q}</button>
               `).join('')}
             </div>
@@ -3635,6 +5631,11 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
               <button type="button" class="button secondary qty-num-btn" data-qty-num="0" style="font-size:1.2rem;font-weight:700;padding:10px 0;">0</button>
               <button type="button" class="button secondary qty-del-btn" style="font-size:1.1rem;font-weight:700;padding:10px 0;">⌫</button>
             </div>
+            <div style="margin-top:6px;border-top:1px solid var(--line);padding-top:8px;">
+              <button type="button" class="button secondary" data-jump-to-price style="width:100%;font-size:0.82rem;display:flex;align-items:center;justify-content:center;gap:6px;color:var(--brand-2);border-color:rgba(245,158,11,0.3);">
+                <i data-lucide="badge-dollar-sign"></i> Cambiar precio / porción (${formatMoney(item.unitPriceCents)})
+              </button>
+            </div>
           </div>
           <footer class="modal-actions">
             <button type="button" class="button secondary" data-modal-close>Cancelar</button>
@@ -3643,6 +5644,142 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         </form>
       </div>
     `;
+  }
+
+  function openItemPriceModal(index) {
+    if (index < 0 || !state.cart[index]) return;
+    capturePosDraft();
+    state.editingCartIndex = index;
+    state.modal = 'itemPrice';
+    renderModal();
+  }
+
+  function itemPriceModal() {
+    const item = state.cart[state.editingCartIndex];
+    if (!item) return '';
+    const product = state.products.find((p) => p.id === item.productId);
+    const originalPriceCents = item.originalPriceCents != null ? item.originalPriceCents : (product?.priceCents ?? item.unitPriceCents);
+    const currentPricePesos = (item.unitPriceCents / 100).toFixed(2);
+    const originalPricePesos = (originalPriceCents / 100).toFixed(2);
+    const isCustom = Boolean(item.isCustomPrice || (item.unitPriceCents !== originalPriceCents));
+
+    return `
+      <div class="modal-backdrop" data-modal-close>
+        <form id="item-price-form" class="modal-card form-modal" style="max-width:440px;" data-modal-card>
+          <header>
+            <div>
+              <span class="eyebrow" style="color:var(--brand-2);"><i data-lucide="badge-dollar-sign" style="width:13px;height:13px;vertical-align:-2px;display:inline-block;"></i> Porción / Precio en POS</span>
+              <h2 style="font-size:1.2rem;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:320px;">${escapeHtml(item.name)}</h2>
+            </div>
+            <button type="button" class="icon-button" data-modal-close><i data-lucide="x"></i></button>
+          </header>
+
+          <div class="stack-form" style="padding-top:4px;gap:10px;">
+            <div style="background:rgba(255,255,255,0.04);border:1px solid var(--line);border-radius:10px;padding:6px 12px;display:flex;align-items:center;justify-content:space-between;">
+              <span style="font-size:0.8rem;color:var(--muted);">Precio base en menú:</span>
+              <strong style="font-size:0.95rem;color:#f8fafc;">${formatMoney(originalPriceCents)}</strong>
+            </div>
+
+            <label style="gap:4px;">
+              <span style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:0.8rem;">Precio de la porción / medida (RD$)</span>
+                ${isCustom ? '<span style="display:inline-flex;align-items:center;gap:3px;font-size:0.7rem;color:var(--brand-2);font-weight:700;"><i data-lucide="sparkles" style="width:11px;height:11px;"></i> Precio personalizado</span>' : ''}
+              </span>
+              <input name="itemPrice" id="item-price-input" type="text" data-touch-numpad="money" data-numpad-title="Precio de Porción" value="${currentPricePesos}" readonly inputmode="none" style="font-size:1.55rem;text-align:center;font-weight:800;color:var(--brand-2);background:rgba(255,255,255,0.05);border:2px solid rgba(245,158,11,0.5);border-radius:12px;padding:6px;cursor:pointer;" required>
+            </label>
+
+            <!-- Quick Preset Chips -->
+            <div>
+              <span style="font-size:0.72rem;color:var(--muted);font-weight:700;display:block;margin-bottom:4px;">Montos rápidos de porción común:</span>
+              <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:5px;">
+                ${[50, 75, 100, 150, 200, 250, 300, 400].map((amt) => `
+                  <button type="button" class="button secondary compact price-preset-chip" data-set-price="${amt}" style="font-size:0.8rem;font-weight:700;padding:5px 2px;justify-content:center;">RD$ ${amt}</button>
+                `).join('')}
+              </div>
+            </div>
+
+            <!-- Increments & Restore -->
+            <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
+              <span style="font-size:0.72rem;color:var(--muted);font-weight:700;">Sumar:</span>
+              ${['+10', '+25', '+50', '+100'].map((inc) => `
+                <button type="button" class="button secondary compact price-delta-chip" data-delta-price="${inc.replace('+', '')}" style="font-size:0.75rem;padding:3px 7px;">${inc}</button>
+              `).join('')}
+              <button type="button" class="button secondary compact price-restore-btn" data-restore-price="${originalPricePesos}" style="margin-left:auto;font-size:0.72rem;padding:3px 7px;color:#cbd5e1;border-color:rgba(255,255,255,0.15);" title="Volver al precio original del menú">
+                ↺ Menú (${formatMoney(originalPriceCents)})
+              </button>
+            </div>
+
+            <!-- Tactile numeric keypad -->
+            <div class="pin-pad" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:6px;margin:2px 0;">
+              ${[1,2,3,4,5,6,7,8,9].map((n) => `<button type="button" class="button secondary price-num-btn" data-price-num="${n}" style="font-size:1.15rem;font-weight:700;padding:8px 0;">${n}</button>`).join('')}
+              <button type="button" class="button secondary price-clear-btn" style="font-size:.82rem;font-weight:600;padding:8px 0;color:#f85149;">Borrar</button>
+              <button type="button" class="button secondary price-num-btn" data-price-num="0" style="font-size:1.15rem;font-weight:700;padding:8px 0;">0</button>
+              <button type="button" class="button secondary price-del-btn" style="font-size:1.05rem;font-weight:700;padding:8px 0;">⌫</button>
+            </div>
+
+            <!-- Optional portion note -->
+            <label style="gap:3px;">
+              <span style="font-size:0.72rem;color:var(--muted);">Nota para comanda de cocina (opcional):</span>
+              <input name="portionNote" id="item-price-note" maxlength="100" placeholder="Ej: Porción pequeña, RD$100 de chicharrón..." value="${escapeHtml(item.notes || '')}" style="font-size:0.82rem;padding:5px 8px;">
+            </label>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;">
+              ${['Porción especial', 'Media orden', 'Ración grande', 'Poco frito', 'A petición cliente'].map((txt) => `
+                <button type="button" class="button secondary compact price-note-chip" data-quick-portion-note="${txt}" style="font-size:0.68rem;padding:2px 6px;">${txt}</button>
+              `).join('')}
+            </div>
+          </div>
+
+          <footer class="modal-actions" style="margin-top:12px;">
+            <button type="button" class="button secondary" data-modal-close>Cancelar</button>
+            <button class="button primary" type="submit" style="font-weight:800;gap:6px;">
+              <i data-lucide="check"></i> Aplicar Precio
+            </button>
+          </footer>
+        </form>
+      </div>
+    `;
+  }
+
+  function saveItemPrice(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const input = form.querySelector('#item-price-input');
+    const noteInput = form.querySelector('#item-price-note');
+    const line = state.cart[state.editingCartIndex];
+    if (!line) {
+      closeModal();
+      return;
+    }
+
+    const val = parseFloat(String(input?.value || '0').replace(/,/g, '').trim());
+    if (isNaN(val) || val < 0) {
+      toast('Ingresa un monto válido en pesos.', 'warning');
+      return;
+    }
+
+    const newCents = Math.round(val * 100);
+    if (line.originalPriceCents == null) {
+      const product = state.products.find((p) => p.id === line.productId);
+      line.originalPriceCents = product ? product.priceCents : line.unitPriceCents;
+    }
+
+    line.unitPriceCents = newCents;
+    line.isCustomPrice = (line.unitPriceCents !== line.originalPriceCents);
+
+    const portionNote = (noteInput?.value || '').trim();
+    if (portionNote) {
+      line.notes = portionNote;
+    }
+
+    closeModal();
+    renderPosCartOnly();
+    const totals = calculateDocument(state.cart);
+    if (state.cart.length) {
+      setVFDMessage('TOTAL CUENTA:', formatMoney(totals.totalCents));
+    } else {
+      vfdWelcome(state.settings?.name || 'Los Panitas');
+    }
+    toast(`Precio ajustado a ${formatMoney(newCents)} para ${line.name}.`, 'success');
   }
 
   function resumePendingPosSubmit(delay = 400) {
@@ -3744,45 +5881,94 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   function cashMovementModal() {
     const active = state.activeCash;
     if (!active) return '';
+    const initialType = state.cashMovementModalType === 'in' ? 'in' : 'out';
+    const isOut = initialType === 'out';
+
+    const sessionPayments = (state.payments || []).filter((item) => item.cashSessionId === active.id);
+    const sessionMovements = (state.cashMovements || []).filter((item) => item.cashSessionId === active.id);
+    const cashCollected = sessionPayments.filter((item) => item.method === 'cash').reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+    const cashIn = sessionMovements.filter((item) => item.type === 'in').reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+    const cashOut = sessionMovements.filter((item) => item.type === 'out').reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+    const expectedCashCents = Number(active.openingCents || 0) + cashCollected + cashIn - cashOut;
+
+    const cats = isOut ? CASH_MOVEMENT_CATEGORIES.out : CASH_MOVEMENT_CATEGORIES.in;
+    const presets = isOut ? [50, 100, 200, 500, 1000, 2000] : [200, 500, 1000, 2000, 5000];
+    const defaultCat = cats[0]?.label || 'General';
+
     return `
       <div class="modal-backdrop" data-modal-close>
-        <article class="modal-card" style="max-width:460px;" data-modal-card>
+        <article class="modal-card" style="max-width:480px;" data-modal-card>
           <header>
-            <div><span class="eyebrow">Libro de Efectivo</span><h2>Registrar Movimiento</h2></div>
+            <div>
+              <span class="eyebrow">Control de Caja & Gastos</span>
+              <h2 id="cash-movement-title">Registrar Movimiento</h2>
+            </div>
             <button type="button" class="icon-button" data-modal-close><i data-lucide="x"></i></button>
           </header>
-          <form id="cash-movement-form" class="stack-form" style="padding-top:10px;">
+          <form id="cash-movement-form" class="stack-form" style="padding-top:6px;">
             <div class="cash-type-toggle">
-              <button type="button" class="cash-type-btn active type-in" data-movement-type="in">
-                <i data-lucide="plus-circle" style="width:18px;height:18px;"></i> Entrada
+              <button type="button" class="cash-type-btn ${!isOut ? 'active type-in' : ''}" data-movement-type="in">
+                <i data-lucide="plus-circle" style="width:18px;height:18px;"></i> Entrada de Dinero
               </button>
-              <button type="button" class="cash-type-btn type-out" data-movement-type="out">
+              <button type="button" class="cash-type-btn ${isOut ? 'active type-out' : ''}" data-movement-type="out">
                 <i data-lucide="minus-circle" style="width:18px;height:18px;"></i> Salida / Gasto
               </button>
             </div>
-            <input type="hidden" name="type" id="cash-movement-type" value="in">
+            <input type="hidden" name="type" id="cash-movement-type" value="${initialType}">
+            <input type="hidden" name="category" id="cash-movement-category" value="${escapeHtml(defaultCat)}">
 
-            <label>Monto (DOP)
-              <input name="amount" id="cash-movement-amount" type="text" placeholder="0.00" value="" data-touch-numpad="money" data-numpad-title="Monto del Movimiento" readonly inputmode="none" required style="font-size:1.4rem;font-weight:700;color:var(--brand-2);cursor:pointer;">
+            <!-- Efectivo disponible en gaveta (para salidas) -->
+            <div id="cash-movement-available-row" style="display:${isOut ? 'flex' : 'none'};align-items:center;justify-content:space-between;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);padding:8px 12px;border-radius:10px;font-size:0.84rem;">
+              <span style="color:#f87171;display:flex;align-items:center;gap:6px;">
+                <i data-lucide="wallet" style="width:15px;height:15px;"></i> Efectivo disponible en gaveta:
+              </span>
+              <strong style="color:#fff;font-size:0.95rem;">${formatMoney(expectedCashCents)}</strong>
+            </div>
+
+            <label style="margin-top:2px;">Monto (DOP)
+              <input name="amount" id="cash-movement-amount" type="text" placeholder="0.00" value="" data-touch-numpad="money" data-numpad-title="Monto del Movimiento" readonly inputmode="none" required style="font-size:1.45rem;font-weight:700;color:${isOut ? '#f87171' : '#10b981'};cursor:pointer;">
             </label>
 
-            <label style="margin-bottom:4px;">Motivo del movimiento
-              <input name="reason" id="cash-movement-reason" minlength="3" maxlength="300" placeholder="Ej: Compra menor, cambio, pago…" required>
+            <!-- Montos Rápidos -->
+            <div id="cash-movement-presets" class="drawer-outflow-presets">
+              ${presets.map(p => `
+                <button type="button" class="drawer-outflow-chip" data-set-movement-amount="${p}">
+                  RD$ ${p.toLocaleString('es-DO')}
+                </button>
+              `).join('')}
+            </div>
+
+            <!-- Categoría -->
+            <label style="margin-bottom:2px;font-size:0.84rem;color:#94a3b8;">Categoría del movimiento
+              <div id="cash-movement-cat-grid" style="display:grid;grid-template-columns:repeat(2, 1fr);gap:6px;margin-top:4px;">
+                ${cats.map((c, i) => `
+                  <button type="button" class="cash-modal-cat-chip ${i === 0 ? 'active' : ''}" data-select-cat="${escapeHtml(c.label)}" style="display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:8px;font-size:0.78rem;font-weight:700;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.03);color:#cbd5e1;cursor:pointer;text-align:left;">
+                    <i data-lucide="${c.icon}" style="width:15px;height:15px;color:${c.color};flex-shrink:0;"></i>
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(c.label)}</span>
+                  </button>
+                `).join('')}
+              </div>
             </label>
 
-            <div class="quick-reason-grid">
-              <button type="button" class="quick-reason-chip" data-set-reason="Cambio / Sencillo para caja">Cambio / Sencillo</button>
-              <button type="button" class="quick-reason-chip" data-set-reason="Compra menor de insumo">Compra de insumo</button>
-              <button type="button" class="quick-reason-chip" data-set-reason="Pago a repartidor / delivery">Pago delivery</button>
-              <button type="button" class="quick-reason-chip" data-set-reason="Retiro parcial de efectivo">Retiro parcial</button>
+            <!-- Justificación / Motivo -->
+            <label style="margin-bottom:2px;font-size:0.84rem;color:#94a3b8;">Detalle / Justificación
+              <input name="reason" id="cash-movement-reason" minlength="3" maxlength="300" placeholder="Ej: Compra de hielo, pago delivery, cambio…" required style="font-size:0.9rem;">
+            </label>
+
+            <!-- Opciones extra -->
+            <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+              <label style="display:flex;align-items:center;gap:8px;font-size:0.82rem;color:#94a3b8;cursor:pointer;">
+                <input type="checkbox" name="printVoucher" id="cash-movement-print" checked style="width:16px;height:16px;cursor:pointer;">
+                <span>Imprimir comprobante térmico (voucher)</span>
+              </label>
             </div>
 
             ${renderPinPadHtml({ idPrefix: 'cash-movement-pin', label: 'Digita tu PIN para autorizar movimiento' })}
 
-            <footer class="modal-actions" style="margin-top:14px;">
+            <footer class="modal-actions" style="margin-top:8px;">
               <button type="button" class="button secondary" data-modal-close>Cancelar</button>
-              <button class="button primary" type="submit" id="cash-movement-submit">
-                <i data-lucide="check"></i> Registrar movimiento
+              <button class="button ${isOut ? 'danger' : 'primary'}" type="submit" id="cash-movement-submit" style="${isOut ? 'background:#dc2626;border-color:#b91c1c;color:#fff;' : ''}">
+                <i data-lucide="${isOut ? 'trending-down' : 'trending-up'}"></i> ${isOut ? 'Registrar Salida' : 'Registrar Entrada'}
               </button>
             </footer>
           </form>
@@ -3850,37 +6036,147 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     `;
   }
 
-  function promptDrawerPin() {
+  let postDrawerTimeout = null;
+  function showPostDrawerPrompt() {
+    clearTimeout(postDrawerTimeout);
+    document.querySelector('.post-drawer-prompt')?.remove();
+    if (!state.activeCash) return;
+
+    const promptEl = document.createElement('div');
+    promptEl.className = 'post-drawer-prompt';
+    promptEl.innerHTML = `
+      <span><i data-lucide="wallet" style="width:18px;height:18px;vertical-align:-3px;color:var(--brand-2);display:inline-block;"></i> Gaveta abierta. ¿Se retiró dinero de la caja?</span>
+      <button type="button" class="button danger compact" id="post-drawer-outflow-btn" style="background:#dc2626;border-color:#b91c1c;color:#fff;">
+        <i data-lucide="trending-down"></i> Registrar Salida
+      </button>
+      <button type="button" class="icon-button" id="post-drawer-close-btn" style="color:var(--muted);"><i data-lucide="x"></i></button>
+    `;
+    document.body.appendChild(promptEl);
+    iconsRefresh(promptEl);
+
+    promptEl.querySelector('#post-drawer-outflow-btn')?.addEventListener('click', () => {
+      promptEl.remove();
+      promptDrawerPin('outflow');
+    });
+    promptEl.querySelector('#post-drawer-close-btn')?.addEventListener('click', () => {
+      promptEl.remove();
+    });
+
+    postDrawerTimeout = setTimeout(() => {
+      promptEl.remove();
+    }, 15000);
+  }
+
+  function promptDrawerPin(mode = 'open_only') {
+    state.drawerModalMode = (typeof mode === 'string' && ['open_only', 'outflow'].includes(mode)) ? mode : 'open_only';
     state.modal = 'drawerPin';
     renderModal();
   }
 
   function drawerPinModal() {
+    const active = state.activeCash;
+    let expectedCashCents = 0;
+    if (active) {
+      const sessionPayments = (state.payments || []).filter((item) => item.cashSessionId === active.id);
+      const sessionMovements = (state.cashMovements || []).filter((item) => item.cashSessionId === active.id);
+      const cashCollected = sessionPayments.filter((item) => item.method === 'cash').reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+      const cashIn = sessionMovements.filter((item) => item.type === 'in').reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+      const cashOut = sessionMovements.filter((item) => item.type === 'out').reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+      expectedCashCents = Number(active.openingCents || 0) + cashCollected + cashIn - cashOut;
+    }
+    const currentMode = state.drawerModalMode || 'open_only';
+
     return `
       <div class="modal-backdrop" data-modal-close>
-        <article class="modal-card" style="max-width:440px;" data-modal-card>
+        <article class="modal-card" style="max-width:480px;" data-modal-card>
           <header>
             <div>
-              <span class="eyebrow">Seguridad de Caja</span>
-              <h2><i data-lucide="shield-check" style="width:20px;height:20px;display:inline-block;vertical-align:-3px;color:var(--brand-2);"></i> Abrir gaveta</h2>
+              <span class="eyebrow">Seguridad y Control de Caja</span>
+              <h2><i data-lucide="wallet" style="width:20px;height:20px;display:inline-block;vertical-align:-3px;color:var(--brand-2);"></i> Gaveta de Dinero</h2>
             </div>
             <button type="button" class="icon-button" data-modal-close><i data-lucide="x"></i></button>
           </header>
           <form id="drawer-pin-form" class="stack-form" style="padding-top:8px;">
+            <div class="drawer-mode-tabs" role="tablist">
+              <button type="button" class="drawer-mode-btn ${currentMode === 'open_only' ? 'active' : ''}" data-drawer-tab="open_only">
+                <i data-lucide="unlock"></i> Solo abrir gaveta
+              </button>
+              <button type="button" class="drawer-mode-btn ${currentMode === 'outflow' ? 'active outflow' : ''}" data-drawer-tab="outflow">
+                <i data-lucide="trending-down"></i> Salida / Gasto
+              </button>
+            </div>
+            <input type="hidden" name="drawerMode" id="drawer-mode-input" value="${currentMode}">
+
             <p style="margin:0 0 10px; font-size:.82rem; color:var(--muted);">
-              Ingresa el PIN personal de <strong>${escapeHtml(user.displayName || user.username)}</strong>. La acción quedará registrada con esta cuenta y la hora del servidor.
+              Ingresa el PIN de <strong>${escapeHtml(user.displayName || user.username)}</strong> para autorizar. Toda apertura queda registrada con fecha y hora del servidor.
             </p>
-            <label style="margin-bottom:6px;">Motivo de apertura
-              <select name="reason" id="drawer-pin-reason" style="width:100%;">
-                <option value="Dar cambio / Sencillo">Dar cambio / Sencillo</option>
-                <option value="Auditoría / Arqueo de efectivo">Auditoría / Arqueo de efectivo</option>
-                <option value="Retiro de efectivo / Caja">Retiro de efectivo / Caja</option>
-                <option value="Ingreso de efectivo / Fondo">Ingreso de efectivo / Fondo</option>
-                <option value="Apertura manual por revisión">Apertura manual por revisión</option>
-              </select>
-            </label>
+
+            <!-- Modo 1: Solo abrir gaveta -->
+            <div id="drawer-open-only-section" style="${currentMode === 'open_only' ? '' : 'display:none;'}">
+              <label style="margin-bottom:6px;">Motivo de apertura
+                <select name="reason" id="drawer-pin-reason" style="width:100%;">
+                  <option value="Dar cambio / Sencillo">Dar cambio / Sencillo</option>
+                  <option value="Auditoría / Arqueo de efectivo">Auditoría / Arqueo de efectivo</option>
+                  <option value="Apertura manual por revisión">Apertura manual por revisión</option>
+                  <option value="Ingreso de efectivo / Fondo">Ingreso de efectivo / Fondo</option>
+                </select>
+              </label>
+            </div>
+
+            <!-- Modo 2: Salida de Efectivo / Gasto -->
+            <div id="drawer-outflow-section" style="${currentMode === 'outflow' ? '' : 'display:none;'}">
+              <div class="drawer-outflow-panel">
+                ${active ? `
+                  <div class="drawer-available-box">
+                    <span>Efectivo disponible en caja:</span>
+                    <strong>${formatMoney(expectedCashCents)}</strong>
+                  </div>
+                ` : `
+                  <div style="background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:8px 12px;font-size:0.82rem;color:#f87171;">
+                    <i data-lucide="alert-triangle" style="width:15px;height:15px;display:inline-block;vertical-align:-2px;"></i>
+                    Atención: No hay una caja abierta. Abre turno de caja para registrar salidas.
+                  </div>
+                `}
+
+                <label style="margin-bottom:2px;">Monto a retirar (RD$)
+                  <input name="amount" id="drawer-outflow-amount" type="text" placeholder="0.00" value="" data-touch-numpad="money" data-numpad-title="Monto a Retirar" readonly inputmode="none" style="font-size:1.35rem;font-weight:700;color:#f87171;cursor:pointer;">
+                </label>
+
+                <div class="drawer-outflow-presets">
+                  <button type="button" class="drawer-outflow-chip" data-set-outflow="50">RD$ 50</button>
+                  <button type="button" class="drawer-outflow-chip" data-set-outflow="100">RD$ 100</button>
+                  <button type="button" class="drawer-outflow-chip" data-set-outflow="200">RD$ 200</button>
+                  <button type="button" class="drawer-outflow-chip" data-set-outflow="500">RD$ 500</button>
+                  <button type="button" class="drawer-outflow-chip" data-set-outflow="1000">RD$ 1,000</button>
+                  <button type="button" class="drawer-outflow-chip" data-set-outflow="2000">RD$ 2,000</button>
+                </div>
+
+                <label style="margin-top:6px;margin-bottom:2px;">Categoría del gasto
+                  <input type="hidden" name="category" id="drawer-outflow-category" value="Pago de Servicio">
+                  <div class="drawer-categories-grid">
+                    <button type="button" class="drawer-category-chip active" data-category="Pago de Servicio"><i data-lucide="zap"></i> Servicio</button>
+                    <button type="button" class="drawer-category-chip" data-category="Reparación"><i data-lucide="wrench"></i> Reparación</button>
+                    <button type="button" class="drawer-category-chip" data-category="Compra / Insumo"><i data-lucide="shopping-cart"></i> Insumos</button>
+                    <button type="button" class="drawer-category-chip" data-category="Pago Delivery"><i data-lucide="bike"></i> Delivery</button>
+                    <button type="button" class="drawer-category-chip" data-category="Pago Suplidor"><i data-lucide="truck"></i> Suplidor</button>
+                    <button type="button" class="drawer-category-chip" data-category="Otro gasto"><i data-lucide="file-text"></i> Otro</button>
+                  </div>
+                </label>
+
+                <label style="margin-top:4px;margin-bottom:4px;">Justificación / Detalle de la salida
+                  <input name="justification" id="drawer-outflow-justification" minlength="3" maxlength="300" placeholder="Ej: Botellón de agua, bombillo, hielo, taxi…" style="font-size:0.9rem;">
+                </label>
+
+                <label style="display:flex;align-items:center;gap:8px;font-size:0.83rem;color:#ccc;margin-top:2px;cursor:pointer;">
+                  <input type="checkbox" name="printVoucher" id="drawer-outflow-print" checked style="width:16px;height:16px;cursor:pointer;">
+                  <span>Imprimir comprobante térmico de salida (voucher)</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- PIN Pad -->
             <input id="drawer-pin-input" name="pin" type="password" inputmode="none" pattern="[0-9]{6}" maxlength="6" placeholder="" required readonly tabindex="-1" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;">
-            <div class="pin-slots-container" id="drawer-pin-slots">
+            <div class="pin-slots-container" id="drawer-pin-slots" style="margin-top:6px;">
               <span class="pin-slot" data-slot="0"></span>
               <span class="pin-slot" data-slot="1"></span>
               <span class="pin-slot" data-slot="2"></span>
@@ -3897,7 +6193,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
             <div id="drawer-pin-error" style="color:#f85149;font-size:0.82rem;min-height:18px;margin-bottom:6px;text-align:center;font-weight:600;"></div>
             <footer class="modal-actions" style="margin-top:0;">
               <button type="button" class="button secondary" data-modal-close>Cancelar</button>
-              <button class="button primary" type="submit" id="drawer-pin-submit"><i data-lucide="key-round"></i> Autorizar y Abrir</button>
+              <button class="button ${currentMode === 'outflow' ? 'danger' : 'primary'}" type="submit" id="drawer-pin-submit" style="${currentMode === 'outflow' ? 'background:#dc2626;border-color:#b91c1c;color:#fff;' : ''}">
+                <i data-lucide="${currentMode === 'outflow' ? 'trending-down' : 'key-round'}"></i>
+                ${currentMode === 'outflow' ? 'Autorizar y Registrar Salida' : 'Autorizar y Abrir'}
+              </button>
             </footer>
           </form>
         </article>
@@ -3926,7 +6225,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     if(!form)return;
     const data=new FormData(form);
     state.posDraft={
-      tableId:String(data.get('tableId')||''),ncfType:String(data.get('ncfType')||''),clientRnc:String(data.get('posClientRnc')||''),
+      tableId:String(data.get('tableId')||''),clientName:String(data.get('clientName')||root.querySelector('#pos-client-name')?.value||''),ncfType:String(data.get('ncfType')||''),clientRnc:String(data.get('posClientRnc')||''),
       notes:String(data.get('notes')||''),cashReceived:String(root.querySelector('#pos-cash-received')?.value||''),
       cardReference:String(data.get('cardReference')||''),transferReference:String(data.get('transferReference')||''),
       fiaoClientId:String(data.get('fiaoClientId')||''),fiaoClientName:String(data.get('fiaoClientName')||''),
@@ -3936,6 +6235,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       deliveryClientName:String(data.get('deliveryClientName')||''),deliveryPhone:String(data.get('deliveryPhone')||''),
       deliveryAddress:String(data.get('deliveryAddress')||''),
       deliveryChangeFor:String(root.querySelector('#pos-delivery-change-for')?.value||data.get('deliveryChangeFor')||''),
+      deliveryFee:String(root.querySelector('#pos-delivery-fee')?.value||data.get('deliveryFee')||''),
       deliveryNotes:String(data.get('deliveryNotes')||''),
       printReceipt:root.querySelector('#pos-print-receipt') ? root.querySelector('#pos-print-receipt').checked : (state.posDraft?.printReceipt !== false),
       advancedOpen:Boolean(root.querySelector('#pos-advanced-details')?.open),
@@ -3944,26 +6244,41 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     state.posPaymentMethod=String(data.get('paymentMethod')||state.posPaymentMethod||'cash');
   }
   function resetPosDraft(){
-    state.posDraft={ printReceipt: true };state.posSearch='';state.posCategory='Todos';state.posPaymentMethod='cash';
+    state.posDraft={ printReceipt: true, clientName: '' };state.posSearch='';state.posCategory='Todos';state.posPaymentMethod='cash';state.posDestination='takeout';
     state.posDiscountState={discount:0,discountType:'amount',includeLegalTip:false};
   }
   function filterCards(event){
-    const term=event.target.value.trim().toLowerCase();
+    const term = (event?.target?.value != null ? event.target.value : (state.posSearch || '')).trim();
     const activeCat = root.querySelector('[data-cat-filter].active')?.dataset.catFilter || 'Todos';
     let visibleCount = 0;
     root.querySelectorAll('#pos-products .product-card').forEach((item) => {
       const cardCat = item.dataset.category || 'General';
       const matchesCat = activeCat === 'Todos' || cardCat === activeCat;
-      const matchesQuery = !term || item.dataset.search.includes(term);
+      const score = term ? fuzzyScore(term, item.dataset.search) : 100;
+      const matchesQuery = !term || score > 0;
       const isVisible = matchesCat && matchesQuery;
       item.hidden = !isVisible;
+      item.style.order = term ? String(-score) : '';
       if (isVisible) visibleCount++;
     });
     const emptyState = root.querySelector('#pos-no-matches');
     if (emptyState) emptyState.hidden = visibleCount > 0;
   }
-  function filterDirectory(event){const term=event.target.value.trim().toLowerCase();root.querySelectorAll('[data-directory-row]').forEach((item)=>item.hidden=!item.dataset.search.includes(term));}
-  function filterInvoiceRows(){const term=root.querySelector('#invoice-search')?.value.trim().toLowerCase()||'';const status=root.querySelector('#invoice-status-filter')?.value||'';root.querySelectorAll('[data-invoice-row]').forEach((item)=>item.hidden=!item.dataset.search.includes(term)||(status&&item.dataset.status!==status));}
+  function filterDirectory(event){
+    const term = (event?.target?.value || '').trim();
+    root.querySelectorAll('[data-directory-row]').forEach((item) => {
+      item.hidden = term ? !matchesFuzzy(term, item.dataset.search) : false;
+    });
+  }
+  function filterInvoiceRows(){
+    const term = (root.querySelector('#invoice-search')?.value || '').trim();
+    const status = root.querySelector('#invoice-status-filter')?.value || '';
+    root.querySelectorAll('[data-invoice-row]').forEach((item) => {
+      const matchesTerm = !term || matchesFuzzy(term, item.dataset.search);
+      const matchesStatus = !status || item.dataset.status === status;
+      item.hidden = !(matchesTerm && matchesStatus);
+    });
+  }
   function updatePosFields(){
     const form=root.querySelector('#pos-checkout-form');
     if(!form)return;
@@ -3984,7 +6299,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   }
   function destroy(){
     destroyed=true;
+    sleepManager.destroy();
     disposePinPad();
+    disposePayrollPin();
+    disposeUsersPin();
     for (const finish of busyButtons.values()) finish();
     busyButtons.clear();
     updateSafety.setBlocker('application', false);
@@ -4002,8 +6320,13 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.innerHTML=`<div class="fatal-state"><h1>No pudimos iniciar el sistema</h1><p>${escapeHtml(error.message)}</p><button class="button primary" data-retry-start>Reintentar</button></div>`;
     root.querySelector('[data-retry-start]')?.addEventListener('click',()=>location.reload());
   });
-  return { destroy, state };
+  return { destroy, state, sleepManager };
 }
 
-function initialRoute(user){const allowed=allowedNavigation(user);return allowed.includes(location.hash.slice(1))?location.hash.slice(1):allowed[0]||'dashboard';}
+function initialRoute(user) {
+  const allowed = allowedNavigation(user).filter((id) => NAV.some((item) => item[0] === id));
+  const hash = (typeof location !== 'undefined' && location.hash) ? location.hash.slice(1) : '';
+  const target = (hash === 'tables' || hash === 'kds') ? 'pos' : hash;
+  return allowed.includes(target) ? target : (allowed[0] || 'pos');
+}
 function roleLabel(role){return({owner:'Propietario',manager:'Gerencia',cashier:'Caja',waiter:'Camarero',kitchen:'Cocina'})[role]||'Usuario';}

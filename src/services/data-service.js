@@ -153,10 +153,33 @@ export class DataService {
     const cleanPin = String(pin || '').trim();
     if (!/^\d{6}$/.test(cleanPin)) throw new Error('El PIN debe tener exactamente 6 dígitos.');
 
-    // Personal-session mode: never resolve another person's PIN or silently
-    // impersonate them. Firebase Authentication remains the identity boundary.
     let authorizingUser = null;
-    {
+
+    // 1. Intento de resolución multi-usuario por pinClaims (Terminal compartido)
+    try {
+      const claimSnap = await getDoc(doc(this.db, 'pinClaims', cleanPin));
+      if (claimSnap.exists()) {
+        const targetUid = claimSnap.data()?.userId;
+        if (targetUid) {
+          const profileSnap = await getDoc(doc(this.db, 'users', targetUid));
+          if (profileSnap.exists()) {
+            const account = profileSnap.data();
+            if (!account.active) throw new Error(`El usuario ${account.displayName || account.username} no está habilitado.`);
+            authorizingUser = {
+              id: targetUid, uid: targetUid,
+              displayName: account.displayName || account.username || 'Usuario',
+              username: account.username || '',
+              roles: account.roles || []
+            };
+          }
+        }
+      }
+    } catch (claimErr) {
+      if (claimErr.message?.includes('no está habilitado')) throw claimErr;
+    }
+
+    // 2. Fallback de sesión personal directa
+    if (!authorizingUser) {
       const [secretSnapshot, profileSnapshot] = await Promise.all([
         getDoc(doc(this.db, 'userSecrets', this.actor.uid)),
         getDoc(doc(this.db, 'users', this.actor.uid))
@@ -169,13 +192,11 @@ export class DataService {
           id: this.actor.uid, uid: this.actor.uid,
           displayName: account.displayName || this.actor.displayName,
           username: account.username || this.actor.username || '',
-          roles: account.roles || this.actor.roles || []
+          roles: account.roles || []
         };
         if (secretSnapshot.data()?.pinUnique !== true) {
           await this.saveMyDrawerPin(cleanPin).catch(() => {});
         }
-      } else if (!/^\d{6}$/.test(storedPin)) {
-        throw new Error('Configura primero tu PIN de 6 dígitos.');
       }
     }
 
@@ -223,6 +244,9 @@ export class DataService {
   }
 
   async saveProduct(product) {
+    const inventoryType = String(product.inventoryType || (product.isPrepared ? 'prepared' : 'resale')).trim();
+    const isPrepared = inventoryType === 'prepared' || Boolean(product.isPrepared);
+    const minStock = Number.isFinite(Number(product.minStock)) ? Math.max(0, Number(product.minStock)) : 5;
     const payload = {
       sku: String(product.sku || '').trim().slice(0, 80),
       name: String(product.name || '').trim().slice(0, 160),
@@ -232,6 +256,9 @@ export class DataService {
       taxRate: Number(product.taxRate || 0),
       stock: Number(product.stock || 0),
       active: product.active !== false,
+      isPrepared,
+      inventoryType,
+      minStock,
       updatedAt: serverTimestamp(),
       updatedBy: this.actor.uid
     };
@@ -435,6 +462,44 @@ export class DataService {
     await this.audit('delivery_driver.deactivated', `Repartidor desactivado (${id})`);
   }
 
+  async reassignDeliveryDriver(invoiceId, { driverId, driverName, notes } = {}) {
+    if (!can(this.actor, 'deliveries:*') && !can(this.actor, 'billing:*')) {
+      throw new Error('No tienes permisos para reasignar entregas de delivery.');
+    }
+    const name = String(driverName || '').trim().slice(0, 160);
+    if (!name) throw new Error('Debes indicar el nombre del nuevo repartidor.');
+    const invoiceRef = doc(this.db, 'invoices', invoiceId);
+    let updatedDoc = null;
+    await runTransaction(this.db, async (transaction) => {
+      const snap = await transaction.get(invoiceRef);
+      if (!snap.exists()) throw new Error('La factura no existe.');
+      const inv = snap.data();
+      if (inv.status === 'cancelled') throw new Error('No se puede reasignar una factura anulada.');
+      const oldDriver = inv.deliveryDriverName || 'Sin asignar';
+      const updates = {
+        deliveryDriverId: String(driverId || '').trim().slice(0, 60),
+        deliveryDriverName: name,
+        updatedAt: serverTimestamp(),
+        updatedBy: this.actor.uid
+      };
+      if (notes !== undefined) {
+        updates.deliveryNotes = String(notes || '').trim().slice(0, 300);
+      }
+      transaction.update(invoiceRef, updates);
+      const auditRef = doc(collection(this.db, 'auditLogs'));
+      transaction.set(auditRef, {
+        action: 'delivery.driver_reassigned',
+        details: `Factura ${inv.invoiceNumber || invoiceId}: reasignada de "${oldDriver}" a "${name}"`,
+        actorId: this.actor.uid,
+        actorName: this.actor.displayName || this.actor.username || '',
+        actorEmail: this.actor.email || '',
+        createdAt: serverTimestamp()
+      });
+      updatedDoc = { id: invoiceId, ...inv, ...updates };
+    });
+    return updatedDoc;
+  }
+
   async saveEmployee(employee) {
     if (!can(this.actor, 'payroll:*') && !can(this.actor, 'payroll:view')) {
       throw new Error('No tienes permisos para gestionar empleados.');
@@ -525,22 +590,61 @@ export class DataService {
   }
 
   async createOrder(input) {
-    const orderRef = doc(collection(this.db, 'orders'));
     const tableRef = doc(this.db, 'tables', input.tableId);
-    const eventRef = doc(collection(orderRef, 'events'));
+    let targetOrderId = null;
+
     const totals = calculateDocument(input.items, {
       discount: input.discount,
       discountType: input.discountType,
       includeLegalTip: input.includeLegalTip === true,
       tipCents: input.tipCents
     });
+
     await runTransaction(this.db, async (transaction) => {
       const tableSnapshot = await transaction.get(tableRef);
       if (!tableSnapshot.exists() || tableSnapshot.data().active === false) throw new Error('La mesa no está disponible.');
-      if (tableSnapshot.data().currentOrderId) throw new Error('La mesa ya tiene una comanda activa.');
+      const tableData = tableSnapshot.data();
+      const existingOrderId = tableData.currentOrderId;
+
+      if (existingOrderId) {
+        const existingOrderRef = doc(this.db, 'orders', existingOrderId);
+        const existingOrderSnap = await transaction.get(existingOrderRef);
+        if (existingOrderSnap.exists() && !['closed', 'cancelled'].includes(existingOrderSnap.data().status)) {
+          targetOrderId = existingOrderId;
+          const currentRevision = Number(existingOrderSnap.data().revision || 1) + 1;
+          const existingData = existingOrderSnap.data();
+          const finalItems = input.replaceItems ? input.items : [...(existingData.items || []), ...(input.items || [])];
+          const finalTotals = calculateDocument(finalItems, {
+            discount: input.discount ?? existingData.discount,
+            discountType: input.discountType ?? existingData.discountType,
+            includeLegalTip: input.includeLegalTip ?? existingData.includeLegalTip,
+            tipCents: input.tipCents ?? existingData.tipCents
+          });
+          transaction.update(existingOrderRef, {
+            items: finalItems,
+            notes: String(input.notes || existingData.notes || '').trim().slice(0, 500),
+            subtotalCents: finalTotals.subtotalCents,
+            discountCents: finalTotals.discountCents || 0,
+            taxableSubtotalCents: finalTotals.taxableSubtotalCents || finalTotals.subtotalCents,
+            taxCents: finalTotals.taxCents,
+            tipCents: finalTotals.tipCents || 0,
+            totalCents: finalTotals.totalCents,
+            revision: currentRevision,
+            updatedAt: serverTimestamp(),
+            updatedBy: this.actor.uid
+          });
+          const eventRef = doc(collection(existingOrderRef, 'events'));
+          transaction.set(eventRef, this.orderEvent(existingOrderId, existingData.status, existingData.status, 'items_updated', currentRevision));
+          return;
+        }
+      }
+
+      const orderRef = doc(collection(this.db, 'orders'));
+      targetOrderId = orderRef.id;
+      const eventRef = doc(collection(orderRef, 'events'));
       const payload = {
         tableId: input.tableId,
-        tableName: tableSnapshot.data().name,
+        tableName: tableData.name,
         clientName: String(input.clientName || 'Consumidor final').trim().slice(0, 160),
         clientRnc: String(input.clientRnc || '').trim().slice(0, 30),
         items: input.items,
@@ -565,7 +669,7 @@ export class DataService {
       transaction.update(tableRef, { currentOrderId: orderRef.id, status: 'occupied', updatedAt: serverTimestamp() });
       transaction.set(eventRef, this.orderEvent(orderRef.id, '', 'pending', 'created', 1));
     });
-    return orderRef.id;
+    return targetOrderId;
   }
 
   async transitionOrder(orderId, nextStatus, action = 'status_changed', reason = '') {
@@ -591,18 +695,59 @@ export class DataService {
     });
   }
 
+  async liberateTable(tableId, reason = 'Mesa liberada por el operador') {
+    const tableRef = doc(this.db, 'tables', tableId);
+    await runTransaction(this.db, async (transaction) => {
+      const snap = await transaction.get(tableRef);
+      if (!snap.exists()) return;
+      const tData = snap.data();
+      const orderId = tData.currentOrderId;
+      if (orderId) {
+        const orderRef = doc(this.db, 'orders', orderId);
+        const orderSnap = await transaction.get(orderRef);
+        if (orderSnap.exists()) {
+          const oData = orderSnap.data();
+          if (!['closed', 'cancelled'].includes(oData.status)) {
+            const revision = Number(oData.revision || 0) + 1;
+            transaction.update(orderRef, {
+              status: 'cancelled',
+              revision,
+              updatedAt: serverTimestamp(),
+              updatedBy: this.actor.uid,
+              statusChangedAt: serverTimestamp(),
+              cancelledAt: serverTimestamp(),
+              cancelledBy: this.actor.uid,
+              cancellationReason: String(reason).trim().slice(0, 500)
+            });
+            const eventRef = doc(collection(orderRef, 'events'));
+            transaction.set(eventRef, {
+              ...this.orderEvent(orderId, oData.status, 'cancelled', 'cancelled', revision),
+              reason: String(reason).trim().slice(0, 500)
+            });
+          }
+        }
+      }
+      transaction.update(tableRef, {
+        currentOrderId: null,
+        status: 'available',
+        updatedAt: serverTimestamp()
+      });
+    });
+  }
+
   async createDirectDocument(input) {
     return this.createInvoiceTransaction({ ...input, orderId: null, tableId: null });
   }
 
-  async chargeOrder(orderId, payment) {
+  async chargeOrder(orderId, payment, updatedItems) {
     const orderSnapshot = await getDoc(doc(this.db, 'orders', orderId));
     if (!orderSnapshot.exists()) throw new Error('La comanda no existe.');
     const order = { id: orderSnapshot.id, ...orderSnapshot.data() };
-    if (!['served', 'pending_payment'].includes(order.status)) throw new Error('La comanda todavía no está lista para cobro.');
+    if (['closed', 'cancelled'].includes(order.status)) throw new Error('La comanda ya fue cobrada o anulada.');
+    const itemsToCharge = Array.isArray(updatedItems) && updatedItems.length ? updatedItems : order.items;
     return this.createInvoiceTransaction({
       requestId: payment.requestId,
-      documentType: 'invoice', clientName: order.clientName, clientId: '', clientRnc: payment.clientRnc || order.clientRnc || '', items: order.items,
+      documentType: 'invoice', clientName: order.clientName, clientId: '', clientRnc: payment.clientRnc || order.clientRnc || '', items: itemsToCharge,
       discountCents: order.discountCents || 0,
       tipCents: order.tipCents || 0,
       ncfType: payment.ncfType || '', payment, orderId: order.id, tableId: order.tableId
@@ -718,11 +863,14 @@ export class DataService {
         if (!orderRef && (Number(line.unitPriceCents) !== Number(product.priceCents) || Number(line.taxRate || 0) !== Number(product.taxRate || 0))) {
           throw new Error(`El precio de ${product.name} cambió. Regresa al catálogo y agrégalo de nuevo.`);
         }
-        const stock = Number(product.stock || 0);
-        if (stock < quantity) throw new Error(`Inventario insuficiente para ${product.name}.`);
-        transaction.update(ref, { stock: Math.round((stock - quantity) * 1000) / 1000, updatedAt: serverTimestamp(), updatedBy: this.actor.uid });
+        const isPrepared = Boolean(product.isPrepared);
+        if (!isPrepared) {
+          const stock = Number(product.stock || 0);
+          if (stock < quantity) throw new Error(`Inventario insuficiente para ${product.name}.`);
+          transaction.update(ref, { stock: Math.round((stock - quantity) * 1000) / 1000, updatedAt: serverTimestamp(), updatedBy: this.actor.uid });
+        }
       });
-      const cashierName = String(this.actor.displayName || this.actor.username || 'Cajero').trim();
+      const cashierName = String(input.cashierName || input.payment?.authorizedByName || this.actor.displayName || this.actor.username || 'Cajero').trim();
       transaction.set(invoiceRef, {
         ...(hasRequestId ? { requestId } : {}),
         documentType, invoiceNumber, ncf, ncfType,
@@ -882,8 +1030,11 @@ export class DataService {
       }));
       products.forEach(({ ref, quantity, snapshot: productSnapshot }) => {
         if (!productSnapshot.exists()) return;
-        const restoredStock = Math.round((Number(productSnapshot.data().stock || 0) + quantity) * 1000) / 1000;
-        transaction.update(ref, { stock: restoredStock, updatedAt: serverTimestamp(), updatedBy: this.actor.uid });
+        const prodData = productSnapshot.data();
+        if (!prodData.isPrepared) {
+          const restoredStock = Math.round((Number(prodData.stock || 0) + quantity) * 1000) / 1000;
+          transaction.update(ref, { stock: restoredStock, updatedAt: serverTimestamp(), updatedBy: this.actor.uid });
+        }
       });
       transaction.update(invoiceRef, {
         status: 'cancelled', cancellationReason: String(reason || '').trim().slice(0, 500),

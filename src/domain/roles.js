@@ -33,8 +33,9 @@ export function allowedNavigation(user) {
   const entries = [
     ['dashboard', 'dashboard:view'], ['pos', 'orders:create'], ['tables', 'tables:view'],
     ['kds', 'kds:view'], ['invoices', 'billing:view'], ['receivables', 'receivables:*'], ['deliveries', 'deliveries:*'], ['clients', 'clients:*'],
-    ['products', 'catalog:view'], ['whatsapp', 'whatsapp:*'], ['cash', 'cash:*'], ['payroll', 'payroll:view'], ['reports', 'reports:view'],
-    ['users', 'users:manage'], ['audit', 'audit:view'], ['terminal', 'terminal:view'], ['settings', '*']
+    ['products', 'catalog:view'], ['whatsapp', 'whatsapp:*'], ['cash', 'cash:*'], ['reports', 'reports:view'],
+    ['users', 'users:manage'], ['audit', 'audit:view'], ['terminal', 'terminal:view'], ['settings', '*'],
+    ['payroll', 'payroll:view']
   ];
   return entries.filter(([, permission]) => can(user, permission)).map(([id]) => id);
 }

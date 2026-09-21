@@ -74,7 +74,7 @@ export function openTouchNumPad({
           <span style="font-size:0.75rem;font-weight:700;color:var(--brand-2);text-transform:uppercase;letter-spacing:1px;display:block;">Teclado Táctil</span>
           <h3 style="margin:0;font-size:1.15rem;color:#f8fafc;font-weight:800;">${escapeHtml(title)}</h3>
         </div>
-        <button type="button" id="numpad-close-btn" class="icon-button" style="width:34px;height:34px;border-radius:8px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:#aaa;cursor:pointer;">✕</button>
+        <button type="button" id="numpad-close-btn" class="icon-button" style="width:34px;height:34px;border-radius:8px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:#aaa;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;"><i data-lucide="x" style="width:16px;height:16px;"></i></button>
       </header>
 
       <!-- Pantalla de valor en vivo -->
@@ -285,6 +285,9 @@ export function openTouchNumPad({
   });
 
   document.body.appendChild(backdrop);
+  if (typeof lucide !== 'undefined' && lucide.createIcons) {
+    try { lucide.createIcons(); } catch (_) {}
+  }
   activePopup = backdrop;
 }
 

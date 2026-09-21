@@ -430,9 +430,8 @@ service cloud.firestore {
     // Reservations enforce uniqueness without exposing another user's identity.
     // This delivery uses personal authenticated sessions, not shared PIN lookup.
     match /pinClaims/{pin} {
-      // An authenticated browser must not be able to enumerate PIN -> employee.
-      // A shared terminal needs a separately tested authorization protocol.
-      allow get: if false;
+      // Allows an active POS terminal to verify and identify the employee entering their personal PIN
+      allow get: if active();
       allow list: if false;
       allow create, update: if active() && validDrawerPin(pin)
         && request.resource.data.keys().hasOnly(['userId'])
@@ -592,7 +591,7 @@ service cloud.firestore {
             || (resource.data.status == 'preparing' && request.resource.data.status == 'ready')
           ))
           || (hasRole('waiter') && request.resource.data.status in ['served', 'pending_payment', 'cancelled'])
-          || (hasRole('cashier') && request.resource.data.status == 'closed')
+          || (hasRole('cashier') && request.resource.data.status in ['closed', 'cancelled'])
         );
       allow delete: if false;
 
@@ -637,6 +636,17 @@ service cloud.firestore {
         && writtenNow(request.resource.data.updatedAt)
         && validDocumentState(request.resource.data)
         && invoiceUpdateHasLinkedPayment(invoiceId)
+      ) || (
+        canBill()
+        && resource.data.status != 'cancelled'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'deliveryDriverId', 'deliveryDriverName', 'deliveryNotes', 'updatedAt', 'updatedBy'
+        ])
+        && request.resource.data.deliveryDriverName is string
+        && request.resource.data.deliveryDriverName.size() > 0
+        && request.resource.data.deliveryDriverName.size() <= 160
+        && request.resource.data.updatedBy == request.auth.uid
+        && writtenNow(request.resource.data.updatedAt)
       ) || (
         (isOwner() || isManager())
         && resource.data.status != 'cancelled'

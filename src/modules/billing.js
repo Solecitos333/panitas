@@ -23,6 +23,22 @@ export function renderInvoiceModal(invoice, payments, capabilities = {}) {
   return `<div class="modal-backdrop" data-modal-close><article class="modal-card invoice-detail" role="dialog" aria-modal="true" aria-labelledby="invoice-title" data-modal-card>
     <header><div><span class="eyebrow">${documentLabel(invoice.documentType)}</span><h2 id="invoice-title">${escapeHtml(invoice.invoiceNumber)}</h2></div><button class="icon-button" data-modal-close aria-label="Cerrar"><i data-lucide="x"></i></button></header>
     <div id="printable-invoice" class="print-document"><div class="print-brand"><img src="/logo.png" alt="Los Panitas"><div><h2>Los Panitas by Nechy</h2><p>${escapeHtml(invoice.invoiceNumber)}${invoice.ncf ? ` · NCF ${escapeHtml(invoice.ncf)}` : ''}</p></div></div><div class="invoice-parties"><div><span>Cliente</span><strong>${escapeHtml(invoice.clientName)}</strong>${invoice.clientRnc ? `<small style="display:block;color:#666;">RNC/Cédula: ${escapeHtml(invoice.clientRnc)}</small>` : ''}</div><div><span>Fecha</span><strong>${formatDate(invoice.createdAt)}</strong></div></div><table><thead><tr><th>Descripción</th><th>Cant.</th><th>Precio</th><th>Total</th></tr></thead><tbody>${invoice.items.map((item) => `<tr><td>${escapeHtml(item.name)}${item.notes ? `<small style="display:block;color:#777;">Nota: ${escapeHtml(item.notes)}</small>` : ''}</td><td>${item.quantity}</td><td>${formatMoney(item.unitPriceCents)}</td><td>${formatMoney(item.unitPriceCents * item.quantity)}</td></tr>`).join('')}</tbody></table><div class="invoice-totals"><p><span>Subtotal</span><b>${formatMoney(invoice.subtotalCents)}</b></p>${discountCents > 0 ? `<p style="color:#d9534f;"><span>Descuento</span><b>-${formatMoney(discountCents)}</b></p>` : ''}<p><span>ITBIS</span><b>${formatMoney(invoice.taxCents)}</b></p>${tipCents > 0 ? `<p><span>Propina Legal (10%)</span><b>${formatMoney(tipCents)}</b></p>` : ''}<p><span>Total</span><strong>${formatMoney(invoice.totalCents)}</strong></p><p><span>Pagado</span><b>${formatMoney(invoice.paidCents)}</b></p><p><span>Balance</span><strong>${formatMoney(balance)}</strong></p></div></div>
+    ${(invoice.deliveryDriverName || invoice.paymentMethod === 'delivery_cod' || invoice.deliveryStatus === 'in_transit') ? `
+      <section class="invoice-delivery-info" style="margin:14px 0;padding:12px 16px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);border-radius:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+        <div>
+          <span style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;font-weight:700;">Despacho Delivery</span>
+          <strong style="display:flex;align-items:center;gap:6px;font-size:1.05rem;color:#f59e0b;margin-top:2px;"><i data-lucide="bike" style="width:16px;height:16px;"></i> ${escapeHtml(invoice.deliveryDriverName || 'Sin asignar')}</strong>
+          ${invoice.deliveryAddress ? `<small style="display:flex;align-items:center;gap:4px;color:#cbd5e1;font-size:0.8rem;margin-top:2px;"><i data-lucide="map-pin" style="width:13px;height:13px;"></i> ${escapeHtml(invoice.deliveryAddress)}</small>` : ''}
+          ${invoice.deliveryPhone ? `<small style="display:flex;align-items:center;gap:4px;color:var(--muted);font-size:0.78rem;"><i data-lucide="phone" style="width:13px;height:13px;"></i> ${escapeHtml(invoice.deliveryPhone)}</small>` : ''}
+          ${invoice.deliveryNotes ? `<small style="display:block;color:var(--muted);font-size:0.75rem;font-style:italic;">Nota: ${escapeHtml(invoice.deliveryNotes)}</small>` : ''}
+        </div>
+        ${(invoice.deliveryStatus !== 'settled' && invoice.status !== 'cancelled') ? `
+          <button type="button" class="button secondary compact" data-delivery-reassign="${escapeHtml(invoice.id)}" style="font-size:0.8rem;padding:6px 10px;gap:5px;">
+            <i data-lucide="arrow-left-right"></i> Cambiar repartidor
+          </button>
+        ` : ''}
+      </section>
+    ` : ''}
     <section class="payment-history"><h3>Cobros</h3>${related.length ? related.map((item) => `<div><span>${formatDate(item.createdAt, true)} · ${paymentLabel(item.method)}</span><b>${formatMoney(item.amountCents)}</b></div>`).join('') : '<p class="muted">Sin cobros registrados.</p>'}</section>
     <footer class="modal-actions"><button class="button secondary" data-invoice-print><i data-lucide="printer"></i> Imprimir</button>${balance > 0 && invoice.status !== 'cancelled' && invoice.documentType === 'invoice' && capabilities.bill ? '<button class="button primary" data-payment-open>Registrar cobro</button>' : ''}${invoice.status !== 'cancelled' && Number(invoice.paidCents || 0) === 0 && capabilities.cancelInvoice ? '<button class="button danger ghost" data-invoice-cancel>Anular</button>' : ''}</footer>
   </article></div>`;
@@ -152,6 +168,31 @@ export function renderReports(state) {
                 <b style="color:var(--brand-2);">${formatMoney(p.totalCents)}</b>
               </div>
             `).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      ${dayMovements.filter(m => m.type === 'out').length ? `
+        <div style="margin-top:14px;border-top:1px solid rgba(255,255,255,.06);padding-top:12px;">
+          <h4 style="margin:0 0 10px;font-size:0.92rem;color:#f87171;display:flex;align-items:center;gap:6px;">
+            <i data-lucide="trending-down" style="width:16px;height:16px;"></i> Detalle de Salidas y Gastos de Caja (${dayMovements.filter(m => m.type === 'out').length})
+          </h4>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));gap:8px;">
+            ${dayMovements.filter(m => m.type === 'out').map(m => {
+              const match = (m.reason || '').match(/^\[(.*?)\]\s*(.*)$/);
+              const category = match ? match[1] : 'Salida';
+              const detail = match ? match[2] : (m.reason || 'Salida');
+              return `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.15);border-radius:8px;font-size:0.85rem;">
+                  <div>
+                    <span style="display:inline-block;font-size:0.72rem;padding:1px 5px;border-radius:4px;background:rgba(239,68,68,.2);color:#f87171;font-weight:700;">${escapeHtml(category)}</span>
+                    <strong style="display:block;margin-top:2px;font-size:0.83rem;">${escapeHtml(detail)}</strong>
+                    <small style="color:var(--muted);font-size:0.72rem;">${escapeHtml(m.createdByName || 'Usuario')}</small>
+                  </div>
+                  <b style="color:#f87171;font-size:0.95rem;">-${formatMoney(m.amountCents)}</b>
+                </div>
+              `;
+            }).join('')}
           </div>
         </div>
       ` : ''}

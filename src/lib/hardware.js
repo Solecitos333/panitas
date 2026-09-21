@@ -887,6 +887,75 @@ export function buildCashReportPlainText(session, payments = [], settings = {}, 
 }
 
 /**
+ * Construye el ticket ESC/POS para el comprobante de salida o entrada de caja
+ */
+export function buildCashMovementEscPos(movement, session = {}, settings = {}) {
+  const b = new EscPosBuilder();
+  const isOut = movement.type === 'out';
+  b.init().align('center');
+  b.bold(true).size('double-height');
+  b.line(isOut ? 'COMPROBANTE DE SALIDA' : 'COMPROBANTE DE ENTRADA');
+  b.bold(false).size('normal');
+  b.line(settings.name || 'Los Panitas by Nechy');
+  b.doubleSeparator();
+
+  b.align('left');
+  b.line(`Fecha:       ${formatDate(movement.createdAt || new Date(), true)}`);
+  b.line(`Responsable: ${movement.createdByName || session.openedByName || 'Cajero'}`);
+  b.line(`Operación:   ${isOut ? 'SALIDA / GASTO DE CAJA' : 'INGRESO / FONDO DE CAJA'}`);
+  if (movement.category) {
+    b.line(`Categoría:   ${movement.category}`);
+  }
+  b.separator('-');
+
+  b.bold(true).line('JUSTIFICACIÓN / DETALLE:').bold(false);
+  b.line(movement.reason || 'Sin justificación especificada');
+
+  b.separator('=');
+  b.bold(true).size('double-height');
+  b.row(isOut ? 'TOTAL SALIDA:' : 'TOTAL ENTRADA:', formatMoney(movement.amountCents || 0));
+  b.bold(false).size('normal');
+  b.separator('=');
+
+  if (session.expectedCents !== undefined && session.expectedCents !== null) {
+    b.row('Balance en gaveta:', formatMoney(session.expectedCents));
+    b.separator('-');
+  }
+
+  b.feed(2);
+  b.align('center');
+  b.row('____________________', '____________________');
+  b.row(isOut ? 'Entregado por' : 'Ingresado por', isOut ? 'Recibido por' : 'Supervisor');
+  b.feed(1);
+  b.line(`ID: ${movement.id || 'MOV-' + Date.now()}`);
+  b.cut();
+  return b;
+}
+
+export function buildCashMovementPlainText(movement, session = {}, settings = {}) {
+  const isOut = movement.type === 'out';
+  const lines = [
+    `[TITLE]${isOut ? 'COMPROBANTE DE SALIDA · GASTO' : 'COMPROBANTE DE ENTRADA · FONDO'}`,
+    `[C]${receiptText(settings.name || 'Los Panitas by Nechy')}`,
+    '[SEP]',
+    `Fecha: ${formatDate(movement.createdAt || new Date(), true)}`,
+    `Responsable: ${receiptText(movement.createdByName || session.openedByName || 'Cajero')}`,
+    `Operación: ${isOut ? 'SALIDA / GASTO' : 'INGRESO / FONDO'}`,
+    ...(movement.category ? [`Categoría: ${receiptText(movement.category)}`] : []),
+    '[SEP]',
+    '[B]JUSTIFICACIÓN / DETALLE:',
+    receiptText(movement.reason || 'Sin motivo'),
+    '[SEP]',
+    `[B]${receiptRow(isOut ? 'TOTAL SALIDA:' : 'TOTAL ENTRADA:', formatMoney(movement.amountCents || 0))}`,
+    '[SEP]',
+    ...(session.expectedCents !== undefined && session.expectedCents !== null ? [receiptRow('Balance en gaveta:', formatMoney(session.expectedCents)), '[SEP]'] : []),
+    '[C]Entregado por / Recibido por',
+    `[C]ID: ${movement.id || 'MOV'}`
+  ];
+  return lines.join('\n');
+}
+
+/**
  * Construye el ticket ESC/POS para la liquidación de un repartidor (Delivery)
  */
 export function buildDeliverySettlementEscPos(settlement, settings = {}) {
@@ -1040,6 +1109,235 @@ export function buildPayrollReceiptPlainText(payment, settings = {}) {
     '[C]___________________________________',
     '[C]Firma Autorizada'
   ];
+  return lines.join('\n');
+}
+
+/**
+ * Construye el ticket ESC/POS para el Reporte General de Cuentas por Cobrar (Fiao)
+ */
+export function buildReceivablesReportEscPos(data, settings = {}) {
+  const b = new EscPosBuilder();
+  b.init().align('center');
+  b.bold(true).size('double-height').line(settings.name || 'LOS PANITAS').bold(false).size('normal');
+  b.bold(true).line('REPORTE DE CUENTAS POR COBRAR').bold(false);
+  b.line('CONTROL DE CONSUMOS FIADOS');
+  b.line(`Fecha: ${formatDate(data.date || new Date(), true)}`);
+  b.separator('=');
+  b.align('left');
+  b.row('Total Deuda Pendiente:', formatMoney(data.totalDebtCents || 0));
+  b.row('Clientes Deudores:', String(data.clientsCount || 0));
+  b.row('Consumos Activos:', String(data.invoicesCount || 0));
+  if (data.overdueDebtCents > 0) {
+    b.bold(true).row('En Mora (+15 días):', formatMoney(data.overdueDebtCents)).bold(false);
+  }
+  b.separator('-');
+  b.row('CLIENTE / TELEFONO', 'BALANCE');
+  for (const c of (data.clients || [])) {
+    const name = String(c.name || 'Cliente').slice(0, 18);
+    const phone = c.phone ? ` (${c.phone})` : '';
+    const days = c.maxAgeDays > 0 ? ` [${c.maxAgeDays}d]` : '';
+    b.row(`${name}${days}`, formatMoney(c.totalDebtCents || 0));
+    if (phone) b.line(`  Tel:${c.phone}`);
+  }
+  b.separator('=');
+  b.align('center');
+  b.line('--- Fin del Reporte ---');
+  b.feed(2);
+  b.line('___________________________');
+  b.line('Firma Gerencia / Caja');
+  b.feed(2);
+  b.cut();
+  return b;
+}
+
+/**
+ * Texto plano para el Reporte General de Cuentas por Cobrar en la terminal ELO
+ */
+export function buildReceivablesReportPlainText(data, settings = {}) {
+  const lines = [
+    `[TITLE]REPORTE CUENTAS POR COBRAR`,
+    `[C]${receiptText(settings.name || 'Los Panitas by Nechy')}`,
+    `[C]CONTROL DE CONSUMOS FIADOS`,
+    '[SEP]',
+    `Fecha: ${formatDate(data.date || new Date(), true)}`,
+    receiptRow('Total Deuda Pendiente:', formatMoney(data.totalDebtCents || 0)),
+    receiptRow('Clientes Deudores:', String(data.clientsCount || 0)),
+    receiptRow('Consumos Activos:', String(data.invoicesCount || 0)),
+    ...(data.overdueDebtCents > 0 ? [`[B]${receiptRow('En Mora (+15 días):', formatMoney(data.overdueDebtCents))}`] : []),
+    '[SEP]',
+    receiptRow('CLIENTE / TEL.', 'BALANCE')
+  ];
+  for (const c of (data.clients || [])) {
+    const name = String(c.name || 'Cliente').slice(0, 18);
+    const days = c.maxAgeDays > 0 ? ` [${c.maxAgeDays}d]` : '';
+    lines.push(receiptRow(`${receiptText(name)}${days}`, formatMoney(c.totalDebtCents || 0)));
+    if (c.phone) lines.push(`  Tel: ${receiptText(c.phone)}`);
+  }
+  lines.push('[SEP]');
+  lines.push('[C]--- Fin del Reporte ---');
+  lines.push('');
+  lines.push('[C]___________________________');
+  lines.push('[C]Firma Gerencia / Caja');
+  return lines.join('\n');
+}
+
+/**
+ * Construye el ticket ESC/POS para el Estado de Cuenta de un Cliente Fiado
+ */
+export function buildClientStatementEscPos(client, settings = {}) {
+  const b = new EscPosBuilder();
+  b.init().align('center');
+  b.bold(true).size('double-height').line(settings.name || 'LOS PANITAS').bold(false).size('normal');
+  b.bold(true).line('ESTADO DE CUENTA - CLIENTE').bold(false);
+  b.line(`Fecha: ${formatDate(new Date(), true)}`);
+  b.separator('=');
+  b.align('left');
+  b.bold(true).line(`CLIENTE: ${client.name || 'Cliente'}`).bold(false);
+  if (client.phone) b.line(`Teléfono: ${client.phone}`);
+  if (client.address) b.line(`Dirección: ${client.address}`);
+  if (client.creditLimitCents > 0) {
+    b.row('Límite de Crédito:', formatMoney(client.creditLimitCents));
+  }
+  b.separator('-');
+  b.row('FECHA / FACTURA', 'PENDIENTE');
+  for (const inv of (client.invoices || [])) {
+    const invNum = inv.invoiceNumber || 'FAC';
+    const dateStr = formatDate(inv.createdAt);
+    const bal = formatMoney(inv.balanceCents || (Number(inv.totalCents || 0) - Number(inv.paidCents || 0)));
+    b.row(`${dateStr} ${invNum}`, bal);
+    if (inv.items && inv.items.length) {
+      const itemsSummary = inv.items.map(i => `${i.quantity}x ${i.name}`).join(', ');
+      b.line(`  ${itemsSummary.slice(0, 42)}`);
+    }
+  }
+  b.separator('-');
+  b.align('right');
+  b.bold(true).size('double-height');
+  b.row('TOTAL A PAGAR:', formatMoney(client.totalDebtCents || 0));
+  b.bold(false).size('normal');
+  b.separator('=');
+  b.align('center');
+  b.line('Favor saldar en caja de Los Panitas.');
+  b.line('¡Gracias por su preferencia!');
+  b.feed(3);
+  b.cut();
+  return b;
+}
+
+/**
+ * Texto plano para el Estado de Cuenta de Cliente en la terminal ELO
+ */
+export function buildClientStatementPlainText(client, settings = {}) {
+  const lines = [
+    `[TITLE]ESTADO DE CUENTA`,
+    `[C]${receiptText(settings.name || 'Los Panitas by Nechy')}`,
+    '[SEP]',
+    `Fecha: ${formatDate(new Date(), true)}`,
+    `[B]CLIENTE: ${receiptText(client.name || 'Cliente')}`,
+    ...(client.phone ? [`Teléfono: ${receiptText(client.phone)}`] : []),
+    ...(client.address ? [`Dirección: ${receiptText(client.address)}`] : []),
+    ...(client.creditLimitCents > 0 ? [receiptRow('Límite de Crédito:', formatMoney(client.creditLimitCents))] : []),
+    '[SEP]',
+    receiptRow('FECHA / FACTURA', 'PENDIENTE')
+  ];
+  for (const inv of (client.invoices || [])) {
+    const invNum = inv.invoiceNumber || 'FAC';
+    const dateStr = formatDate(inv.createdAt);
+    const bal = formatMoney(inv.balanceCents || (Number(inv.totalCents || 0) - Number(inv.paidCents || 0)));
+    lines.push(receiptRow(`${dateStr} ${invNum}`, bal));
+    if (inv.items && inv.items.length) {
+      const itemsSummary = inv.items.map(i => `${i.quantity}x ${receiptText(i.name)}`).join(', ');
+      lines.push(`  ${itemsSummary.slice(0, 42)}`);
+    }
+  }
+  lines.push('[SEP]');
+  lines.push(`[B]${receiptRow('TOTAL A PAGAR:', formatMoney(client.totalDebtCents || 0))}`);
+  lines.push('[SEP]');
+  lines.push('[C]Favor saldar en caja de Los Panitas.');
+  lines.push('[C]¡Gracias por su preferencia!');
+  return lines.join('\n');
+}
+
+/**
+ * Construye el ticket ESC/POS para el Recibo Consolidado de Cobro de Fiaos
+ */
+export function buildClientSettlementEscPos(settlement, settings = {}) {
+  const b = new EscPosBuilder();
+  b.init().align('center');
+  b.bold(true).size('double-height').line(settings.name || 'LOS PANITAS').bold(false).size('normal');
+  b.bold(true).line('COMPROBANTE DE COBRO DE FIAO').bold(false);
+  b.line(`Fecha: ${formatDate(settlement.createdAt || new Date(), true)}`);
+  b.separator('=');
+  b.align('left');
+  b.bold(true).line(`CLIENTE: ${settlement.clientName || 'Cliente'}`).bold(false);
+  if (settlement.clientPhone) b.line(`Teléfono: ${settlement.clientPhone}`);
+  b.line(`Atendido por: ${settlement.cashierName || 'Caja'}`);
+  const methodLabel = ({ cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia' })[settlement.method] || settlement.method;
+  b.line(`Forma de pago: ${methodLabel}`);
+  if (settlement.reference) b.line(`Referencia: ${settlement.reference}`);
+  b.separator('-');
+  b.row('FACTURA', 'ABONO');
+  for (const inv of (settlement.invoices || [])) {
+    b.row(inv.invoiceNumber || 'FAC', formatMoney(inv.appliedCents || 0));
+  }
+  b.separator('-');
+  b.align('right');
+  b.bold(true).size('double-height');
+  b.row('TOTAL COBRADO:', formatMoney(settlement.totalPaidCents || 0));
+  b.bold(false).size('normal');
+  if (settlement.method === 'cash' && settlement.tenderedCents > 0) {
+    b.row('Efectivo recibido:', formatMoney(settlement.tenderedCents));
+    b.row('Cambio / Devuelta:', formatMoney(settlement.changeCents || 0));
+  }
+  b.separator('-');
+  if (settlement.remainingDebtCents > 0) {
+    b.bold(true).row('DEUDA RESTANTE:', formatMoney(settlement.remainingDebtCents)).bold(false);
+  } else {
+    b.align('center').bold(true).line('*** CUENTA TOTALMENTE AL DIA ***').bold(false);
+  }
+  b.separator('=');
+  b.align('center');
+  b.line('¡Gracias por su pago!');
+  b.feed(3);
+  b.cut();
+  return b;
+}
+
+/**
+ * Texto plano para el Recibo Consolidado de Cobro de Fiaos en la terminal ELO
+ */
+export function buildClientSettlementPlainText(settlement, settings = {}) {
+  const methodLabel = ({ cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia' })[settlement.method] || settlement.method;
+  const lines = [
+    `[TITLE]COMPROBANTE DE COBRO FIAO`,
+    `[C]${receiptText(settings.name || 'Los Panitas by Nechy')}`,
+    '[SEP]',
+    `Fecha: ${formatDate(settlement.createdAt || new Date(), true)}`,
+    `[B]CLIENTE: ${receiptText(settlement.clientName || 'Cliente')}`,
+    ...(settlement.clientPhone ? [`Teléfono: ${receiptText(settlement.clientPhone)}`] : []),
+    `Atendido por: ${receiptText(settlement.cashierName || 'Caja')}`,
+    `Forma de pago: ${methodLabel}`,
+    ...(settlement.reference ? [`Referencia: ${receiptText(settlement.reference)}`] : []),
+    '[SEP]',
+    receiptRow('FACTURA', 'ABONO')
+  ];
+  for (const inv of (settlement.invoices || [])) {
+    lines.push(receiptRow(inv.invoiceNumber || 'FAC', formatMoney(inv.appliedCents || 0)));
+  }
+  lines.push('[SEP]');
+  lines.push(`[B]${receiptRow('TOTAL COBRADO:', formatMoney(settlement.totalPaidCents || 0))}`);
+  if (settlement.method === 'cash' && settlement.tenderedCents > 0) {
+    lines.push(receiptRow('Efectivo recibido:', formatMoney(settlement.tenderedCents)));
+    lines.push(receiptRow('Cambio / Devuelta:', formatMoney(settlement.changeCents || 0)));
+  }
+  lines.push('[SEP]');
+  if (settlement.remainingDebtCents > 0) {
+    lines.push(`[B]${receiptRow('DEUDA RESTANTE:', formatMoney(settlement.remainingDebtCents))}`);
+  } else {
+    lines.push('[C]*** CUENTA TOTALMENTE AL DIA ***');
+  }
+  lines.push('[SEP]');
+  lines.push('[C]¡Gracias por su pago!');
   return lines.join('\n');
 }
 
@@ -1490,5 +1788,20 @@ export async function getHardwareStatus() {
  */
 export async function checkPaperStatus() {
   return sendEloCommand({ cmd: 'checkPaper' }, 1200);
+}
+
+/**
+ * Controla el modo reposo / ahorro de energía en la terminal.
+ * Si el APK nativo está disponible, ajusta el brillo de la pantalla de 15" al mínimo absoluto.
+ * @param {boolean} sleeping
+ */
+export function setTerminalSleepMode(sleeping) {
+  if (typeof window !== 'undefined' && window.EloPOS && typeof window.EloPOS.setSleepMode === 'function') {
+    try {
+      window.EloPOS.setSleepMode(Boolean(sleeping));
+    } catch (e) {
+      console.warn('No se pudo ajustar el modo reposo nativo:', e);
+    }
+  }
 }
 

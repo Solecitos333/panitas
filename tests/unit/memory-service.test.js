@@ -98,21 +98,30 @@ test('el PIN de seis dígitos pertenece al usuario que inició sesión', async (
   await service.verifyDrawerPin('482601');
 });
 
-test('el PIN autoriza exclusivamente al usuario de la sesión personal', async () => {
+test('el PIN de caja identifica al usuario correspondiente aunque esté en otra sesión activa', async () => {
   const service = new MemoryDataService(actor);
   await service.saveMyDrawerPin('482601');
   service.data.users.push({
-    id: 'jespinal-uid',
-    username: 'JESPINAL',
-    displayName: 'JESPINAL',
-    drawerPin: '194501',
-    roles: ['owner'],
+    id: 'junior-uid',
+    username: 'JUNIOR',
+    displayName: 'Junior',
+    drawerPin: '202020',
+    roles: ['cashier', 'manager'],
     active: true
   });
-  await assert.rejects(service.verifyDrawerPin('194501', 'PIN de otra cuenta'), /PIN incorrecto/);
-  const authorized = await service.verifyDrawerPin('482601', 'Apertura personal');
-  assert.equal(authorized.success, true);
-  assert.equal(authorized.user.id, actor.uid);
+  // Junior puede desbloquear y autorizar con su PIN en la sesión compartida de Nechy
+  const juniorAuth = await service.verifyDrawerPin('202020', 'Cobro realizado por Junior');
+  assert.equal(juniorAuth.success, true);
+  assert.equal(juniorAuth.user.id, 'junior-uid');
+  assert.equal(juniorAuth.user.displayName, 'Junior');
+
+  // El usuario de la sesión principal sigue pudiendo autorizar con su propio PIN
+  const mainAuth = await service.verifyDrawerPin('482601', 'Apertura personal');
+  assert.equal(mainAuth.success, true);
+  assert.equal(mainAuth.user.id, actor.uid);
+
+  // Un PIN no asignado a ningún usuario es rechazado
+  await assert.rejects(service.verifyDrawerPin('999999', 'PIN inexistente'), /PIN incorrecto/);
 });
 
 test('un doble toque con el mismo requestId no duplica factura, pago ni descuento de inventario', async () => {
@@ -199,15 +208,9 @@ test('mesa, cocina, servicio y cobro cierran una comanda sin perder factura ni i
     clientName: 'Mesa de prueba',
     items: [{ productId, name: 'Plato del día', unitPriceCents: 30000, taxRate: 0, quantity: 2 }]
   });
-  await assert.rejects(
-    () => service.chargeOrder(orderId, { amountCents: 60000, method: 'cash', cashSessionId: 'ninguna' }),
-    /todavía no está lista/
-  );
-  await service.transitionOrder(orderId, 'preparing');
-  await service.transitionOrder(orderId, 'ready');
-  await service.transitionOrder(orderId, 'served');
   const cashSessionId = await service.openCashSession({ openingCents: 0, notes: 'Mesa E2E' });
 
+  // Direct charging from POS without requiring kitchen KDS status transitions
   const invoice = await service.chargeOrder(orderId, {
     requestId: 'table-sale-000000000001',
     amountCents: 60000,
@@ -215,6 +218,12 @@ test('mesa, cocina, servicio y cobro cierran una comanda sin perder factura ni i
     tenderedCents: 60000,
     cashSessionId
   });
+
+  // Cannot charge a closed order again
+  await assert.rejects(
+    () => service.chargeOrder(orderId, { amountCents: 60000, method: 'cash', cashSessionId }),
+    /ya fue cobrada/
+  );
 
   assert.equal(service.data.orders[0].status, 'closed');
   assert.equal(service.data.tables[0].status, 'available');

@@ -236,3 +236,45 @@ test('buildCashReportEscPos y buildCashReportPlainText incluyen el bloque de mer
   assert.ok(plain.includes('MERMAS Y DESPERDICIOS DEL TURNO'));
   assert.ok(plain.includes('10 uds'));
 });
+
+test('saveProduct con id existente actualiza el producto correctamente', async () => {
+  const service = new MemoryDataService({ uid: 'owner-1', role: 'owner', active: true });
+  const id = await service.saveProduct({
+    name: 'Mangú con Los Tres Golpes',
+    sku: 'MAN-01',
+    category: 'Desayunos',
+    priceCents: 25000,
+    costCents: 10000,
+    taxRate: 0,
+    stock: 15,
+    active: true
+  });
+
+  const original = service.data.products.find(p => p.id === id);
+  assert.equal(original.name, 'Mangú con Los Tres Golpes');
+  assert.equal(original.priceCents, 25000);
+
+  // Modificar producto
+  const updatedId = await service.saveProduct({
+    id,
+    name: 'Mangú Especial con Huevo y Queso',
+    sku: 'MAN-01-ESP',
+    category: 'Desayunos',
+    priceCents: 30000,
+    costCents: 12000,
+    taxRate: 18,
+    stock: 20,
+    active: true
+  });
+
+  assert.equal(updatedId, id);
+  const updated = service.data.products.find(p => p.id === id);
+  assert.equal(updated.name, 'Mangú Especial con Huevo y Queso');
+  assert.equal(updated.sku, 'MAN-01-ESP');
+  assert.equal(updated.priceCents, 30000);
+  assert.equal(updated.costCents, 12000);
+  assert.equal(updated.taxRate, 18);
+  assert.equal(updated.stock, 20);
+  assert.equal(service.data.products.length, 1);
+});
+

@@ -74,3 +74,19 @@ test('neutraliza fórmulas al exportar CSV', () => {
   assert.equal(csvCell('=1+1'), '"\'=1+1"');
   assert.equal(csvCell('Cliente "A"'), '"Cliente ""A"""');
 });
+
+test('calcula correctamente líneas con precio de porción ajustado en tiempo real', () => {
+  const result = calculateDocument([
+    // Plato estándar a RD$ 260
+    { productId: 'chicharron', name: 'Chicharrón de Cerdo', quantity: 1, unitPriceCents: 26000, originalPriceCents: 26000, taxRate: 0, isCustomPrice: false },
+    // Porción personalizada pedida por el cliente a RD$ 100
+    { productId: 'chicharron', name: 'Chicharrón de Cerdo', quantity: 1, unitPriceCents: 10000, originalPriceCents: 26000, taxRate: 0, isCustomPrice: true, notes: 'Porción de RD$ 100' },
+    // 2 porciones de fritos ajustadas a RD$ 50 c/u
+    { productId: 'fritos', name: 'Fritos verdes', quantity: 2, unitPriceCents: 5000, originalPriceCents: 8000, taxRate: 0, isCustomPrice: true, notes: 'Media ración' }
+  ]);
+
+  // Subtotal esperado: 26000 + 10000 + (2 * 5000) = 46000 centavos (RD$ 460.00)
+  assert.equal(result.subtotalCents, 46000);
+  assert.equal(result.taxCents, 0);
+  assert.equal(result.totalCents, 46000);
+});

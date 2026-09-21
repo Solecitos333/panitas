@@ -1,5 +1,5 @@
 import { formatMoney, escapeHtml, formatDate } from '../lib/format.js';
-import { calculateDocument } from '../domain/billing.js';
+import { calculateDocument, getPendingDeliveryInvoices } from '../domain/billing.js';
 import { businessDateKey, inBusinessPeriod } from '../lib/business-time.js';
 
 const STATUS_LABELS = {
@@ -8,33 +8,226 @@ const STATUS_LABELS = {
 };
 
 export function renderDashboard(state) {
+  const invoices = Array.isArray(state?.invoices) ? state.invoices : [];
+  const orders = Array.isArray(state?.orders) ? state.orders : [];
+  const cashSessions = Array.isArray(state?.cashSessions) ? state.cashSessions : [];
+  const cashMovements = Array.isArray(state?.cashMovements) ? state.cashMovements : [];
+  const tables = Array.isArray(state?.tables) ? state.tables : [];
+  const products = Array.isArray(state?.products) ? state.products : [];
+  const user = state?.user || {};
+  const capabilities = state?.capabilities || {};
+
   const today = businessDateKey(new Date());
-  const todayInvoices = state.invoices.filter((item) => businessDateKey(item.createdAt) === today && item.status !== 'cancelled' && item.documentType === 'invoice');
+  const todayInvoices = invoices.filter((item) => businessDateKey(item.createdAt) === today && item.status !== 'cancelled' && item.documentType === 'invoice');
   const todaySales = todayInvoices.reduce((sum, item) => sum + Number(item.totalCents || 0), 0);
-  const pending = state.orders.filter((item) => !['closed', 'cancelled'].includes(item.status));
-  const openCash = state.cashSessions.find((item) => item.status === 'open' && item.openedBy === state.user.uid);
+  const todayPaidCents = todayInvoices.reduce((sum, item) => sum + (item.status === 'paid' ? Number(item.totalCents || 0) : Number(item.paidCents || 0)), 0);
+  const todayPendingCents = Math.max(0, todaySales - todayPaidCents);
+  const avgTicketCents = todayInvoices.length ? Math.round(todaySales / todayInvoices.length) : 0;
+
+  // Desglose de ingresos del día
+  let todayCashIn = 0;
+  let todayCardIn = 0;
+  let todayTransferIn = 0;
+  let todayCredit = 0;
+  todayInvoices.forEach((inv) => {
+    const total = Number(inv.totalCents || 0);
+    const paid = inv.status === 'paid' ? total : Number(inv.paidCents || 0);
+    const balance = Math.max(0, total - paid);
+    todayCredit += balance;
+    const method = inv.paymentMethod || 'cash';
+    if (method === 'cash' || method === 'delivery_cod') todayCashIn += paid;
+    else if (method === 'card') todayCardIn += paid;
+    else if (method === 'transfer') todayTransferIn += paid;
+    else todayCashIn += paid;
+  });
+
+  const pending = orders.filter((item) => !['closed', 'cancelled'].includes(item.status));
+  const ordersInPrep = pending.filter((o) => o.status === 'preparing');
+  const ordersReady = pending.filter((o) => o.status === 'ready');
+
+  const openCash = cashSessions.find((item) => item.status === 'open' && item.openedBy === user.uid);
+
+  const todayMovements = cashMovements.filter((item) => {
+    const d = item.createdAt?.toDate ? item.createdAt.toDate() : new Date(item.createdAt || 0);
+    return businessDateKey(d) === today;
+  });
+  const todayOutflows = todayMovements.filter((m) => m.type === 'out');
+  const todayCashOut = todayOutflows.reduce((sum, m) => sum + Number(m.amountCents || 0), 0);
+
+  const activeTables = tables.filter((t) => t.active !== false);
+  const occupiedTables = activeTables.filter((t) => t.currentOrderId);
+  const occupiedPct = activeTables.length ? Math.round((occupiedTables.length / activeTables.length) * 100) : 0;
+
+  const pendingDeliveries = getPendingDeliveryInvoices(invoices);
+  const driverDeliveriesMap = new Map();
+  pendingDeliveries.forEach((inv) => {
+    const key = inv.deliveryDriverId || inv.deliveryDriverName || 'unassigned';
+    const name = inv.deliveryDriverName || (key === 'unassigned' ? 'Sin chofer' : 'Mensajero');
+    const cur = driverDeliveriesMap.get(key) || { id: inv.deliveryDriverId || '', name, count: 0, totalCents: 0 };
+    cur.count += 1;
+    cur.totalCents += (Number(inv.totalCents || 0) - Number(inv.paidCents || 0));
+    driverDeliveriesMap.set(key, cur);
+  });
+  const activeDeliveriesList = Array.from(driverDeliveriesMap.values());
+  const totalDeliveryPending = pendingDeliveries.reduce((sum, inv) => sum + (Number(inv.totalCents || 0) - Number(inv.paidCents || 0)), 0);
+
+  const todayProductsBreakdown = getDailyProductsBreakdown(todayInvoices, products);
+  const dominicanDate = formatDate(new Date(), false);
+
+  const kpiSalesSub = `<span class="sub-pill success" title="Cobrado hoy"><i data-lucide="check-circle-2"></i> ${formatMoney(todayPaidCents)}</span>${todayPendingCents > 0 ? `<span class="sub-pill warning" title="Por cobrar / Fiao"><i data-lucide="clock"></i> ${formatMoney(todayPendingCents)} fiao</span>` : ''}`;
+  const kpiDocsSub = `<span class="sub-pill neutral" title="Ticket promedio"><i data-lucide="calculator"></i> Prom: ${formatMoney(avgTicketCents)}</span>`;
+  const kpiOrdersSub = `<span class="sub-pill ${ordersInPrep.length ? 'warning' : 'neutral'}"><i data-lucide="flame"></i> ${ordersInPrep.length} prep</span><span class="sub-pill ${ordersReady.length ? 'success' : 'neutral'}"><i data-lucide="bell"></i> ${ordersReady.length} listas</span>`;
+  const kpiDeliverySub = `<span class="sub-pill ${totalDeliveryPending > 0 ? 'warning' : 'neutral'}" title="Saldo en calle a liquidar"><i data-lucide="badge-dollar-sign"></i> ${formatMoney(totalDeliveryPending)}</span>`;
+  const kpiTablesSub = `<span class="sub-pill ${occupiedPct > 70 ? 'warning' : 'neutral'}">${occupiedPct}% ocupación</span>`;
+  const kpiCashSub = `<span class="sub-pill ${todayCashOut > 0 ? 'danger' : 'neutral'}" title="Salidas de hoy"><i data-lucide="trending-down"></i> -${formatMoney(todayCashOut)}</span>`;
+
   return `
-    <details class="surface-card management-install" style="padding:16px;margin-bottom:16px">
-      <summary style="cursor:pointer;font-weight:700">Mi acceso · Instalar en mi teléfono</summary>
-      <p>Este panel muestra la información permitida para tu usuario. Para cambiar tu código de caja, abre «Mi PIN y contraseña».</p>
-      <button type="button" class="button secondary" data-personal-settings>Mi PIN y contraseña</button>
-      <p><strong>iPhone:</strong> abre esta página en Safari → Compartir → Añadir a pantalla de inicio → Abrir como app.</p>
-      <p><strong>Android:</strong> puedes instalar la web desde el menú de Chrome o descargar Panitas Gestión. La APK de gestión abre este panel en el navegador seguro del teléfono y no controla la gaveta.</p>
-      <a class="button secondary" href="/downloads/LosPanitas-Gestion-Android.apk" download>Descargar APK de gestión</a>
-      <p>Necesitas conexión para sincronizar datos y guardar cambios. Nunca compartas tu contraseña ni tu PIN.</p>
-    </details>
     <div class="dashboard-desktop">
-    <section class="panel-heading"><div><span class="eyebrow">Resumen operativo</span><h2>Así marcha el restaurante</h2><p>Ventas, cocina y caja en una sola lectura.</p></div><button class="button secondary" data-refresh><i data-lucide="refresh-cw"></i> Actualizar</button></section>
-    <div class="metric-grid">
-      ${metric('Ventas de hoy', formatMoney(todaySales), 'trending-up', 'positive')}
-      ${metric('Documentos', String(todayInvoices.length), 'receipt-text')}
-      ${metric('Comandas activas', String(pending.length), 'chef-hat', pending.length ? 'warning' : 'positive')}
-      ${metric('Caja', openCash ? 'Abierta' : 'Cerrada', 'wallet-cards', openCash ? 'positive' : 'muted')}
-    </div>
-    <div class="dashboard-grid">
-      <article class="surface-card"><header><div><span class="eyebrow">Cocina</span><h3>Comandas que requieren atención</h3></div>${state.capabilities.viewKds ? '<button class="text-button" data-route="kds">Abrir KDS</button>' : ''}</header>${renderOrderMiniList(pending.slice(0, 6))}</article>
-      <article class="surface-card"><header><div><span class="eyebrow">Facturación</span><h3>Movimientos recientes</h3></div><button class="text-button" data-route="invoices">Ver todos</button></header>${renderInvoiceMiniList(state.invoices.slice(0, 6))}</article>
-    </div>
+      <section class="panel-heading dashboard-header">
+        <div class="dash-header-main">
+          <div class="dash-header-eyebrow">
+            <span class="live-dot-pulse"></span>
+            <span class="eyebrow">Resumen operativo</span>
+            <span class="dash-clock-badge"><i data-lucide="calendar"></i> ${dominicanDate}</span>
+          </div>
+          <h2>Así marcha el restaurante</h2>
+          <p>Ventas, comandas, entregas y arqueo de caja en una sola lectura ejecutiva.</p>
+        </div>
+        <div class="dash-header-actions">
+          <div class="dash-status-pill ${openCash ? 'status-open' : 'status-closed'}">
+            <i data-lucide="${openCash ? 'check-circle-2' : 'alert-triangle'}"></i>
+            <span>${openCash ? `Caja abierta · ${escapeHtml(user.displayName || user.username || 'Turno')}` : 'Caja cerrada'}</span>
+          </div>
+          <button type="button" class="button primary" data-route="pos" title="Ir al Punto de Venta">
+            <i data-lucide="plus"></i> Nueva venta
+          </button>
+          <button type="button" class="button secondary" data-refresh title="Refrescar métricas">
+            <i data-lucide="refresh-cw"></i> Actualizar
+          </button>
+        </div>
+      </section>
+
+      <div class="metric-grid dashboard-kpi-grid">
+        ${metric('Ventas de hoy', formatMoney(todaySales), 'trending-up', 'positive', kpiSalesSub)}
+        ${metric('Documentos', String(todayInvoices.length), 'receipt-text', '', kpiDocsSub)}
+        ${metric('Comandas activas', String(pending.length), 'chef-hat', pending.length ? 'warning' : 'positive', kpiOrdersSub)}
+        ${metric('Deliveries en calle', String(pendingDeliveries.length), 'bike', pendingDeliveries.length ? 'delivery' : '', kpiDeliverySub)}
+        ${metric('Mesas ocupadas', `${occupiedTables.length} / ${activeTables.length}`, 'utensils', occupiedTables.length ? 'tables' : '', kpiTablesSub)}
+        ${metric('Caja', openCash ? 'Abierta' : 'Cerrada', 'wallet-cards', openCash ? 'positive' : 'muted', kpiCashSub)}
+      </div>
+
+      <nav class="dashboard-quick-actions" aria-label="Accesos rápidos operativos">
+        <button type="button" class="dash-quick-btn primary" data-route="pos" title="Ir al Punto de Venta">
+          <i data-lucide="calculator"></i>
+          <span>Punto de Venta</span>
+        </button>
+        <button type="button" class="dash-quick-btn" data-route="kds" title="Abrir Monitor de Cocina KDS">
+          <i data-lucide="flame"></i>
+          <span>Monitor Cocina ${pending.length ? `<b class="dash-counter">${pending.length}</b>` : ''}</span>
+        </button>
+        <button type="button" class="dash-quick-btn" data-route="deliveries" title="Control de Envíos y Choferes">
+          <i data-lucide="bike"></i>
+          <span>Deliveries ${pendingDeliveries.length ? `<b class="dash-counter warning">${pendingDeliveries.length}</b>` : ''}</span>
+        </button>
+        <button type="button" class="dash-quick-btn" data-route="tables" title="Plano y Estado de Mesas">
+          <i data-lucide="layout-grid"></i>
+          <span>Mesas (${occupiedTables.length}/${activeTables.length})</span>
+        </button>
+        <button type="button" class="dash-quick-btn" data-cash-movement-open="out" title="Registrar una salida o gasto de caja">
+          <i data-lucide="trending-down"></i>
+          <span>Registrar Gasto</span>
+        </button>
+        <button type="button" class="dash-quick-btn" data-route="receivables" title="Gestionar Cuentas por Cobrar y Fiao">
+          <i data-lucide="book-open"></i>
+          <span>Cuentas por Cobrar</span>
+        </button>
+      </nav>
+
+      <div class="dashboard-grid">
+        <article class="surface-card">
+          <header>
+            <div>
+              <span class="eyebrow">Rendimiento de Ventas · ${todayProductsBreakdown.length} producto(s)</span>
+              <h3>Platos y artículos vendidos hoy</h3>
+            </div>
+            <button type="button" class="text-button" data-route="billing"><i data-lucide="arrow-up-right"></i> Ver informe</button>
+          </header>
+          ${renderDailyProductsList(todayProductsBreakdown.slice(0, 8))}
+        </article>
+
+        <article class="surface-card">
+          <header>
+            <div>
+              <span class="eyebrow">Cocina · ${pending.length} activa(s)</span>
+              <h3>Comandas que requieren atención</h3>
+            </div>
+            ${capabilities.viewKds ? '<button type="button" class="text-button" data-route="kds"><i data-lucide="flame"></i> Abrir KDS</button>' : ''}
+          </header>
+          ${renderDashboardOrderList(pending.slice(0, 6))}
+        </article>
+
+        <article class="surface-card">
+          <header>
+            <div>
+              <span class="eyebrow">Despacho · ${pendingDeliveries.length} pedido(s)</span>
+              <h3>Deliveries en ruta y cobros</h3>
+            </div>
+            <button type="button" class="text-button" data-route="deliveries"><i data-lucide="truck"></i> Ver envíos</button>
+          </header>
+          ${renderDashboardDeliveriesList(activeDeliveriesList, pendingDeliveries)}
+        </article>
+
+        <article class="surface-card">
+          <header>
+            <div>
+              <span class="eyebrow">Control de Caja · ${todayOutflows.length} registro(s)</span>
+              <h3>Salidas y gastos de hoy</h3>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <button type="button" class="text-button" data-cash-movement-open="out"><i data-lucide="minus"></i> Gasto</button>
+              <button type="button" class="text-button" data-route="cash">Ver caja</button>
+            </div>
+          </header>
+          ${renderOutflowMiniList(todayOutflows.slice(0, 6))}
+        </article>
+
+        <article class="surface-card">
+          <header>
+            <div>
+              <span class="eyebrow">Flujo del Turno</span>
+              <h3>Métodos de pago recibidos</h3>
+            </div>
+            <button type="button" class="text-button" data-route="reports"><i data-lucide="chart-no-axes-combined"></i> Reportes</button>
+          </header>
+          ${renderFinancialBreakdown(todayCashIn, todayCardIn, todayTransferIn, todayCredit, todaySales)}
+        </article>
+
+        <article class="surface-card">
+          <header>
+            <div>
+              <span class="eyebrow">Facturación · Recientes</span>
+              <h3>Movimientos recientes</h3>
+            </div>
+            <button type="button" class="text-button" data-route="invoices">Ver todos</button>
+          </header>
+          ${renderDashboardInvoiceList(invoices.slice(0, 6))}
+        </article>
+      </div>
+
+      <details class="surface-card dashboard-mobile-helper" style="padding:14px 18px;margin-top:24px;border-radius:14px;background:rgba(255,255,255,.015);border:1px solid rgba(255,255,255,.06);">
+        <summary style="cursor:pointer;font-weight:700;display:flex;align-items:center;gap:8px;color:var(--muted);font-size:0.86rem;">
+          <i data-lucide="smartphone" style="width:16px;height:16px;color:var(--brand-2);"></i>
+          <span>Acceso personal & descarga de app de gestión</span>
+        </summary>
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.06);font-size:0.84rem;color:var(--muted);line-height:1.5;">
+          <p style="margin:0 0 10px;">Este panel muestra la información permitida para tu usuario. Para cambiar tu código de caja, abre «Mi PIN y contraseña».</p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+            <button type="button" class="button secondary compact" data-personal-settings><i data-lucide="key-round"></i> Mi PIN y contraseña</button>
+            <a class="button secondary compact" href="/downloads/LosPanitas-Gestion-Android.apk" download><i data-lucide="download"></i> Descargar APK de gestión</a>
+          </div>
+          <p style="margin:0;font-size:0.75rem;"><strong>iPhone:</strong> Safari → Compartir → Añadir a pantalla de inicio. | <strong>Android:</strong> menú de Chrome → Instalar app.</p>
+        </div>
+      </details>
     </div>
     ${state.terminalMode ? '' : renderMobileManagement(state)}`;
 }
@@ -45,6 +238,7 @@ function renderMobileManagement(state) {
   const sales = state.invoices.filter((invoice) => isSaleInPeriod(invoice, period));
   const totalCents = sales.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0);
   const paidCents = (state.payments || []).filter((payment) => isDateInPeriod(payment.createdAt, period)).reduce((sum, payment) => sum + Number(payment.amountCents || 0), 0);
+  const outflowCents = (state.cashMovements || []).filter((m) => m.type === 'out' && isDateInPeriod(m.createdAt, period)).reduce((sum, m) => sum + Number(m.amountCents || 0), 0);
   const topProducts = topSellingProducts(sales).slice(0, 5);
   const products = [...(state.products || [])].filter((item) => item.active !== false).sort((a, b) => String(a.name).localeCompare(String(b.name)));
 
@@ -60,6 +254,7 @@ function renderMobileManagement(state) {
       <div class="mobile-performance-grid">
         ${mobileMetric('Facturado', formatMoney(totalCents), 'receipt-text')}
         ${mobileMetric('Cobrado', formatMoney(paidCents), 'circle-dollar-sign')}
+        ${mobileMetric('Gastos/Salidas', formatMoney(outflowCents), 'trending-down')}
         ${mobileMetric('Ventas', String(sales.length), 'shopping-cart')}
         ${mobileMetric('Ticket promedio', sales.length ? formatMoney(Math.round(totalCents / sales.length)) : formatMoney(0), 'chart-no-axes-combined')}
       </div>
@@ -124,21 +319,41 @@ function formatQuantity(value) {
 export function renderPos(state) {
   const products = Array.isArray(state.products) ? state.products : [];
   const tables = Array.isArray(state.tables) ? state.tables : [];
+  const orders = Array.isArray(state.orders) ? state.orders : [];
   const clients = Array.isArray(state.clients) ? state.clients : [];
   const cart = Array.isArray(state.cart) ? state.cart : [];
   const activeProducts = products.filter((item) => item.active !== false);
-  const availableTables = tables.filter((item) => item.active !== false && !item.currentOrderId);
+  const occupiedTables = tables.filter((item) => item.active !== false && item.currentOrderId);
+  const loadedTable = state.loadedTableId ? tables.find((t) => t.id === state.loadedTableId) : null;
+  const loadedOrder = state.loadedOrderId ? orders.find((o) => o.id === state.loadedOrderId) : null;
   const categories = ['Todos', ...new Set(activeProducts.map((p) => p.category || 'General').filter(Boolean))];
   const hardware = state.hardwareStatus || {};
   const draft = state.posDraft || {};
-  const selectedTableId = draft.tableId ?? state.preselectedTableId ?? '';
+  const selectedTableId = draft.tableId ?? state.loadedTableId ?? state.preselectedTableId ?? '';
+  const currentTable = tables.find((t) => t.id === selectedTableId);
   const selectedCategory = categories.includes(state.posCategory) ? state.posCategory : 'Todos';
   const totals = calculateDocument(cart, state.posDiscountState || {});
-  const mobileAction = selectedTableId
-    ? 'Enviar comanda'
-    : state.posPaymentMethod === 'credit'
-      ? `Registrar fiao ${formatMoney(totals.totalCents)}`
-      : `Cobrar ${formatMoney(totals.totalCents)}`;
+  const pendingDeliveries = getPendingDeliveryInvoices(state.invoices || []);
+  const driverDeliveriesMap = new Map();
+  pendingDeliveries.forEach((inv) => {
+    const key = inv.deliveryDriverId || inv.deliveryDriverName || 'unassigned';
+    const name = inv.deliveryDriverName || (key === 'unassigned' ? 'Sin chofer' : 'Mensajero');
+    const cur = driverDeliveriesMap.get(key) || { id: inv.deliveryDriverId || '', name, count: 0, totalCents: 0 };
+    cur.count += 1;
+    cur.totalCents += (Number(inv.totalCents || 0) - Number(inv.paidCents || 0));
+    driverDeliveriesMap.set(key, cur);
+  });
+  const activeDeliveriesList = Array.from(driverDeliveriesMap.values());
+  const posDestination = state.posDestination || (selectedTableId ? 'table' : 'takeout');
+  const mobileAction = loadedTable
+    ? `Cobrar ${loadedTable.name} ${formatMoney(totals.totalCents)}`
+    : posDestination === 'table'
+      ? 'Enviar comanda a mesa'
+      : posDestination === 'delivery'
+        ? `Despachar Delivery ${formatMoney(totals.totalCents)}`
+        : state.posPaymentMethod === 'credit'
+          ? `Registrar fiao ${formatMoney(totals.totalCents)}`
+          : `Cobrar ${formatMoney(totals.totalCents)}`;
   return `
     <header class="pos-topbar">
       <div class="pos-topbar-left">
@@ -146,7 +361,7 @@ export function renderPos(state) {
           <span class="pos-badge-live">VENTA RÁPIDA</span>
           <h2>Punto de Venta</h2>
         </div>
-        ${selectedTableId ? `<span class="pos-table-indicator"><i data-lucide="utensils"></i> Mesa asignada</span>` : ''}
+        ${loadedTable ? `<span class="pos-table-indicator active"><i data-lucide="utensils"></i> Atendiendo ${escapeHtml(loadedTable.name)}</span>` : selectedTableId ? `<span class="pos-table-indicator"><i data-lucide="utensils"></i> Mesa seleccionada</span>` : ''}
       </div>
       <div class="pos-topbar-right">
         <span class="hw-chip ${hardware.printerConnected ? 'online' : 'warning'}"><i data-lucide="printer"></i> ${hardware.printerConnected ? 'Impresora lista' : 'Impresora sin confirmar'}</span>
@@ -178,6 +393,77 @@ export function renderPos(state) {
         <span><strong>Aviso de papel:</strong> El rollo de la impresora térmica está por terminarse (sensor near-end). Ten listo un rollo nuevo de 80mm.</span>
       </div>
     ` : ''}
+
+    <!-- COLA DE MESAS CON PEDIDO ABIERTO -->
+    <div class="pos-tables-queue-bar" aria-label="Cola de mesas con comanda activa">
+      <div class="pos-queue-title">
+        <i data-lucide="utensils" style="width:16px;height:16px;color:var(--brand-2);"></i>
+        <span>Mesas con pedido</span>
+        ${occupiedTables.length ? `<span class="pos-queue-badge">${occupiedTables.length}</span>` : ''}
+      </div>
+      <div class="pos-queue-list">
+        ${occupiedTables.length ? occupiedTables.map((t) => {
+          const ord = orders.find((o) => o.id === t.currentOrderId);
+          const isLoaded = state.loadedOrderId === t.currentOrderId;
+          const itemCount = ord?.items ? ord.items.reduce((s, i) => s + Number(i.quantity || 0), 0) : 0;
+          const ordTotal = ord?.totalCents || (ord?.items ? calculateDocument(ord.items).totalCents : 0);
+          const hasClient = ord?.clientName && ord.clientName !== 'Consumidor final';
+          return `
+            <button type="button" class="pos-table-queue-chip ${isLoaded ? 'is-loaded' : ''}" data-pos-load-table="${t.id}" title="Tocar para cobrar o modificar ${escapeHtml(t.name)}">
+              <div class="chip-title">
+                <strong>${escapeHtml(t.name)}</strong>
+                ${hasClient ? `<span class="chip-client-name" title="Cliente: ${escapeHtml(ord.clientName)}"><i data-lucide="user" style="width:11px;height:11px;display:inline-block;vertical-align:-1px;margin-right:2px;"></i>${escapeHtml(ord.clientName)}</span>` : ''}
+                ${isLoaded ? '<span class="chip-status-tag loaded">Cargada</span>' : '<span class="chip-status-tag">En espera</span>'}
+              </div>
+              <div class="chip-meta">
+                <span>${itemCount} art.</span>
+                <b>${formatMoney(ordTotal)}</b>
+              </div>
+            </button>
+          `;
+        }).join('') : `
+          <div class="pos-queue-empty">
+            <i data-lucide="badge-check" style="width:14px;height:14px;color:#3fb950;"></i>
+            <span>Todas las mesas libres</span>
+          </div>
+        `}
+      </div>
+      <button type="button" class="button secondary compact pos-queue-pick-btn" data-pos-pick-table title="Ver salón y seleccionar mesa">
+        <i data-lucide="layout-grid"></i> Mesas
+      </button>
+    </div>
+
+    <!-- COLA DE DELIVERIES EN CURSO -->
+    <div class="pos-deliveries-queue-bar" aria-label="Cola de pedidos delivery en calle">
+      <div class="pos-queue-title">
+        <i data-lucide="bike" style="width:16px;height:16px;color:#38bdf8;"></i>
+        <span>Deliveries en calle</span>
+        ${pendingDeliveries.length ? `<span class="pos-queue-badge delivery">${pendingDeliveries.length}</span>` : ''}
+      </div>
+      <div class="pos-queue-list">
+        ${activeDeliveriesList.length ? activeDeliveriesList.map((d) => `
+          <button type="button" class="pos-delivery-queue-chip" data-pos-settle-driver="${escapeHtml(d.id || d.name)}" title="Tocar para ver o liquidar entregas de ${escapeHtml(d.name)}">
+            <div class="chip-title">
+              <i data-lucide="bike" style="width:12px;height:12px;color:#38bdf8;"></i>
+              <strong>${escapeHtml(d.name)}</strong>
+              <span class="chip-status-tag delivery">${d.count} ped.</span>
+            </div>
+            <div class="chip-meta">
+              <span>Por cobrar</span>
+              <b>${formatMoney(d.totalCents)}</b>
+            </div>
+          </button>
+        `).join('') : `
+          <div class="pos-queue-empty">
+            <i data-lucide="badge-check" style="width:14px;height:14px;color:#3fb950;"></i>
+            <span>Sin entregas pendientes en calle</span>
+          </div>
+        `}
+      </div>
+      <button type="button" class="button secondary compact pos-queue-pick-btn" data-route="deliveries" title="Ir a Gestión completa de Deliveries">
+        <i data-lucide="bike"></i> Deliveries
+      </button>
+    </div>
 
     <button class="mobile-pos-charge" type="submit" form="pos-checkout-form" ${cart.length ? '' : 'disabled'}>
       <i data-lucide="key-round"></i><span>${mobileAction}</span>
@@ -226,6 +512,78 @@ export function renderPos(state) {
           </div>
         </header>
 
+        ${loadedTable ? `
+          <div class="pos-loaded-table-banner">
+            <div class="pos-loaded-table-meta">
+              <span class="pos-loaded-table-pill"><i data-lucide="utensils"></i> ${escapeHtml(loadedTable.name)}</span>
+              <span class="pos-loaded-table-subtitle">
+                ${loadedOrder?.clientName && loadedOrder.clientName !== 'Consumidor final' ? `<i data-lucide="user" style="width:12px;height:12px;display:inline-block;vertical-align:-1px;margin-right:3px;"></i>${escapeHtml(loadedOrder.clientName)} · ` : ''}Comanda activa #${escapeHtml(loadedOrder?.orderNumber || loadedOrder?.id?.slice(0, 6) || '')}
+              </span>
+            </div>
+            <div class="pos-loaded-table-actions">
+              <button type="button" class="button secondary compact pos-release-cart-btn" data-pos-release-cart title="Dejar mesa en espera y volver a venta libre">
+                <i data-lucide="log-out"></i> Soltar
+              </button>
+              <button type="button" class="button danger compact pos-cancel-table-btn" data-pos-cancel-table="${loadedTable.id}" title="Anular comanda y liberar ${escapeHtml(loadedTable.name)}">
+                <i data-lucide="trash-2"></i> Liberar Mesa
+              </button>
+            </div>
+          </div>
+        ` : ''}
+
+        <!-- DESTINO Y CLIENTE DEL PEDIDO -->
+        <div class="pos-cart-destination-box">
+          <div class="pos-dest-tabs">
+            <button
+              type="button"
+              class="pos-dest-pill ${posDestination === 'takeout' ? 'active' : ''}"
+              data-pos-set-dest="takeout"
+              title="Pedido para llevar / mostrador"
+            >
+              <i data-lucide="shopping-bag"></i>
+              <span>Para Llevar</span>
+            </button>
+            <button
+              type="button"
+              class="pos-dest-pill ${posDestination === 'table' ? 'active' : ''}"
+              data-pos-set-dest="table"
+              title="${currentTable ? `Mesa: ${escapeHtml(currentTable.name)}. Toca para cambiar.` : 'Elegir mesa de salón'}"
+            >
+              <i data-lucide="utensils"></i>
+              <span>${currentTable ? escapeHtml(currentTable.name) : 'Salón (Mesa)'}</span>
+              <i data-lucide="chevron-down" style="width:12px;height:12px;opacity:0.7;margin-left:2px;"></i>
+            </button>
+            <button
+              type="button"
+              class="pos-dest-pill ${posDestination === 'delivery' ? 'active' : ''}"
+              data-pos-set-dest="delivery"
+              title="Pedido para enviar a domicilio"
+            >
+              <i data-lucide="bike"></i>
+              <span>Delivery</span>
+            </button>
+          </div>
+
+          <input type="hidden" name="tableId" id="pos-table-select" value="${escapeHtml(selectedTableId)}">
+          <input type="hidden" name="posDestination" id="pos-dest-select" value="${escapeHtml(posDestination)}">
+
+          <div class="pos-cart-client-field" style="position:relative;">
+            <i data-lucide="user" class="pos-cart-client-icon"></i>
+            <input
+              type="text"
+              name="clientName"
+              id="pos-client-name"
+              value="${escapeHtml(draft.clientName || (loadedOrder?.clientName && loadedOrder.clientName !== 'Consumidor final' ? loadedOrder.clientName : ''))}"
+              placeholder="${posDestination === 'table' ? 'Cliente en mesa (ej. Juan, Familia Pérez)' : posDestination === 'delivery' ? 'Nombre del cliente para entrega' : 'Nombre del cliente (opcional)'}"
+              maxlength="100"
+              autocomplete="off"
+            >
+            ${(draft.clientName || (loadedOrder?.clientName && loadedOrder.clientName !== 'Consumidor final')) ? `<button type="button" class="pos-client-clear-btn" data-pos-clear-client title="Borrar nombre">&times;</button>` : ''}
+            <div id="pos-client-autocomplete-list" class="client-autocomplete-dropdown hidden"></div>
+          </div>
+          <div id="pos-client-debt-warning" class="pos-client-debt-alert hidden"></div>
+        </div>
+
         <div class="pos-cart-scroll-area">
         <div class="cart-lines">${renderCartLines(state.cart)}</div>
 
@@ -233,21 +591,15 @@ export function renderPos(state) {
           ${renderCartTotals(state.cart, state.posDiscountState)}
         </div>
 
-        <!-- Opciones opcionales: Mesa, NCF, Descuento -->
+        <!-- Opciones opcionales: NCF, Descuento, Propina -->
         <details class="pos-advanced-toggle" id="pos-advanced-details" ${draft.advancedOpen ? 'open' : ''}>
           <summary>
             <i data-lucide="sliders-horizontal"></i>
-            <span>Mesa · NCF · Descuento</span>
+            <span>NCF · Descuento · Propina</span>
             <i data-lucide="chevron-down" class="chevron-icon"></i>
           </summary>
           <div class="pos-advanced-body">
-            <div class="form-grid two">
-              <label>Mesa de salón
-                <select name="tableId" id="pos-table-select">
-                  <option value="">Mostrador / para llevar</option>
-                  ${availableTables.map((table) => `<option value="${table.id}" ${selectedTableId === table.id ? 'selected' : ''}>${escapeHtml(table.name)}</option>`).join('')}
-                </select>
-              </label>
+            <div class="form-grid full">
               <label>Comprobante NCF
                 <select name="ncfType" id="pos-ncf-type">
                   <option value="" ${!draft.ncfType ? 'selected' : ''}>Sin NCF</option>
@@ -285,34 +637,142 @@ export function renderPos(state) {
           </div>
         </details>
 
+        <!-- DATOS DE DESPACHO DELIVERY (Si destino es Delivery) -->
+        ${posDestination === 'delivery' ? `
+          <div class="pos-cart-delivery-fields">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <span style="font-size:0.82rem;font-weight:800;color:#f59e0b;display:flex;align-items:center;gap:6px;">
+                <i data-lucide="bike" style="width:16px;height:16px;"></i> Datos de Despacho Delivery
+              </span>
+              <button type="button" class="button secondary compact" data-driver-quick-new style="font-size:0.72rem;padding:2px 7px;height:auto;line-height:1.2;gap:3px;">
+                <i data-lucide="user-plus" style="width:12px;height:12px;"></i> + Chofer
+              </button>
+            </div>
+
+            <!-- Chofer y Teléfono -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;">
+              <div>
+                <label style="font-size:0.72rem;color:var(--muted);font-weight:600;display:block;margin-bottom:2px;">Chofer asignado <strong style="color:#f59e0b;">*</strong></label>
+                <select name="deliveryDriverId" id="pos-delivery-driver-select" style="font-size:0.82rem;padding:6px 8px;border-radius:8px;background:#1e293b;color:#f8fafc;border:1px solid #334155;width:100%;">
+                  <option value="">-- Seleccionar Chofer --</option>
+                  ${(state.deliveryDrivers || []).filter(d => d.active !== false).map(d => `
+                    <option value="${escapeHtml(d.id)}" data-name="${escapeHtml(d.name)}" ${draft.deliveryDriverId === d.id ? 'selected' : ''}>${escapeHtml(d.name)}${d.vehicle ? ' (' + escapeHtml(d.vehicle) + ')' : ''}</option>
+                  `).join('')}
+                </select>
+                <input type="hidden" name="deliveryDriverName" id="pos-delivery-driver-name" value="${escapeHtml(draft.deliveryDriverName || '')}">
+              </div>
+              <div>
+                <label style="font-size:0.72rem;color:var(--muted);font-weight:600;display:block;margin-bottom:2px;">Teléfono móvil</label>
+                <input
+                  type="tel"
+                  name="deliveryPhone"
+                  id="pos-delivery-phone"
+                  value="${escapeHtml(draft.deliveryPhone || '')}"
+                  placeholder="809-xxx-xxxx"
+                  style="font-size:0.82rem;padding:6px 8px;border-radius:8px;background:#1e293b;color:#f8fafc;border:1px solid #334155;width:100%;"
+                >
+              </div>
+            </div>
+
+            <!-- Dirección de entrega -->
+            <div style="margin-bottom:6px;">
+              <label style="font-size:0.72rem;color:var(--muted);font-weight:600;display:block;margin-bottom:2px;">Dirección de entrega <strong style="color:#f59e0b;">*</strong></label>
+              <input
+                type="text"
+                name="deliveryAddress"
+                id="pos-delivery-address"
+                value="${escapeHtml(draft.deliveryAddress || '')}"
+                placeholder="Calle, número, sector, punto de referencia..."
+                style="width:100%;font-size:0.82rem;padding:6px 8px;border-radius:8px;background:#1e293b;color:#f8fafc;border:1px solid #334155;"
+              >
+            </div>
+
+            <!-- Costo de Envío / Delivery -->
+            <div style="background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;margin-bottom:6px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+                <span style="font-size:0.75rem;font-weight:700;color:#f59e0b;">Costo de Envío (RD$):</span>
+                <small style="font-size:0.7rem;color:var(--muted);">Suma al total de la cuenta</small>
+              </div>
+              <div style="display:flex;gap:5px;align-items:center;">
+                <input
+                  name="deliveryFee"
+                  id="pos-delivery-fee"
+                  type="text"
+                  data-touch-numpad="money"
+                  data-numpad-title="Costo de Envío (Delivery)"
+                  placeholder="0.00"
+                  value="${draft.deliveryFee || ''}"
+                  readonly
+                  inputmode="none"
+                  style="cursor:pointer;font-weight:800;color:var(--brand-2);font-size:0.95rem;padding:4px 8px;width:90px;border-radius:6px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.2);text-align:right;"
+                >
+                <div style="display:flex;gap:4px;flex-wrap:wrap;flex:1;">
+                  <button type="button" class="button secondary compact" data-quick-delivery-fee="0" style="font-size:0.7rem;padding:3px 6px;color:#ef4444;">$0</button>
+                  <button type="button" class="button secondary compact" data-quick-delivery-fee="50" style="font-size:0.7rem;padding:3px 6px;font-weight:700;">+$50</button>
+                  <button type="button" class="button secondary compact" data-quick-delivery-fee="75" style="font-size:0.7rem;padding:3px 6px;font-weight:700;">+$75</button>
+                  <button type="button" class="button secondary compact" data-quick-delivery-fee="100" style="font-size:0.7rem;padding:3px 6px;font-weight:700;">+$100</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Notas de entrega / cambio -->
+            <div>
+              <label style="font-size:0.72rem;color:var(--muted);font-weight:600;display:block;margin-bottom:2px;">Nota para el chofer / Cambio requerido</label>
+              <input
+                type="text"
+                name="deliveryNotes"
+                id="pos-delivery-notes"
+                value="${escapeHtml(draft.deliveryNotes || '')}"
+                placeholder="Ej: Paga con billete de 1000, entregar en portón negro..."
+                style="width:100%;font-size:0.82rem;padding:6px 8px;border-radius:8px;background:#1e293b;color:#f8fafc;border:1px solid #334155;"
+              >
+            </div>
+          </div>
+        ` : ''}
+
         <!-- PASO 2: FORMA DE PAGO -->
-          <div id="pos-payment-options">
-          <input type="hidden" name="paymentMethod" id="pos-payment-method" value="${escapeHtml(state.posPaymentMethod || 'cash')}">
+        <div id="pos-payment-options">
+          <input type="hidden" name="paymentMethod" id="pos-payment-method" value="${escapeHtml(state.posPaymentMethod || (posDestination === 'delivery' ? 'delivery_cod' : 'cash'))}">
           <div class="pos-step-label">
             <span class="pos-step-badge">2</span>
-            <span>¿Cómo paga?</span>
+            <span>${posDestination === 'delivery' ? '¿Cómo paga el cliente?' : '¿Cómo paga?'}</span>
           </div>
-          <div class="pos-pay-method-grid">
-            <button type="button" class="pos-pay-btn ${(state.posPaymentMethod || 'cash') === 'cash' ? 'active' : ''}" data-pos-method="cash">
-              <i data-lucide="banknote"></i>
-              <span>Efectivo</span>
-            </button>
-            <button type="button" class="pos-pay-btn ${state.posPaymentMethod === 'card' ? 'active' : ''}" data-pos-method="card">
-              <i data-lucide="credit-card"></i>
-              <span>Tarjeta</span>
-            </button>
-            <button type="button" class="pos-pay-btn ${state.posPaymentMethod === 'transfer' ? 'active' : ''}" data-pos-method="transfer">
-              <i data-lucide="landmark"></i>
-              <span>Transferencia</span>
-            </button>
-            <button type="button" class="pos-pay-btn fiao ${state.posPaymentMethod === 'credit' ? 'active' : ''}" data-pos-method="credit">
-              <i data-lucide="book-open"></i>
-              <span>Fiao</span>
-            </button>
-            <button type="button" class="pos-pay-btn delivery ${state.posPaymentMethod === 'delivery_cod' ? 'active' : ''}" data-pos-method="delivery_cod">
-              <i data-lucide="bike"></i>
-              <span>Delivery</span>
-            </button>
+          <div class="pos-pay-method-grid" style="grid-template-columns: repeat(4, 1fr);">
+            ${posDestination === 'delivery' ? `
+              <button type="button" class="pos-pay-btn delivery ${(state.posPaymentMethod || 'delivery_cod') === 'delivery_cod' ? 'active' : ''}" data-pos-method="delivery_cod" title="El chofer cobra al entregar">
+                <i data-lucide="hand-coins"></i>
+                <span>Contra Entrega</span>
+              </button>
+              <button type="button" class="pos-pay-btn ${state.posPaymentMethod === 'transfer' ? 'active' : ''}" data-pos-method="transfer" title="Transferencia bancaria previa">
+                <i data-lucide="landmark"></i>
+                <span>Transferencia</span>
+              </button>
+              <button type="button" class="pos-pay-btn fiao ${state.posPaymentMethod === 'credit' ? 'active' : ''}" data-pos-method="credit" title="Anotar en cuenta por cobrar (Fiao)">
+                <i data-lucide="book-open"></i>
+                <span>Fiao</span>
+              </button>
+              <button type="button" class="pos-pay-btn ${state.posPaymentMethod === 'card' ? 'active' : ''}" data-pos-method="card" title="Tarjeta / Enlace">
+                <i data-lucide="credit-card"></i>
+                <span>Tarjeta</span>
+              </button>
+            ` : `
+              <button type="button" class="pos-pay-btn ${(state.posPaymentMethod || 'cash') === 'cash' ? 'active' : ''}" data-pos-method="cash">
+                <i data-lucide="banknote"></i>
+                <span>Efectivo</span>
+              </button>
+              <button type="button" class="pos-pay-btn ${state.posPaymentMethod === 'card' ? 'active' : ''}" data-pos-method="card">
+                <i data-lucide="credit-card"></i>
+                <span>Tarjeta</span>
+              </button>
+              <button type="button" class="pos-pay-btn ${state.posPaymentMethod === 'transfer' ? 'active' : ''}" data-pos-method="transfer">
+                <i data-lucide="landmark"></i>
+                <span>Transferencia</span>
+              </button>
+              <button type="button" class="pos-pay-btn fiao ${state.posPaymentMethod === 'credit' ? 'active' : ''}" data-pos-method="credit">
+                <i data-lucide="book-open"></i>
+                <span>Fiao</span>
+              </button>
+            `}
           </div>
 
           <!-- Panel Efectivo -->
@@ -396,8 +856,9 @@ export function renderPos(state) {
               <input type="hidden" name="fiaoClientId" id="pos-fiao-client-id" value="${escapeHtml(draft.fiaoClientId || '')}">
 
               <!-- Nombre o apodo obligatorio al fiar -->
-              <label style="font-size:0.82rem;font-weight:600;">Nombre o apodo del deudor <strong style="color:#f85149;">*</strong>
-                <input name="fiaoClientName" id="pos-fiao-name" value="${escapeHtml(draft.fiaoClientName || '')}" placeholder="Ej: Pedro Mecánico, Doña Carmen..." maxlength="160">
+              <label style="font-size:0.82rem;font-weight:600;position:relative;">Nombre o apodo del deudor <strong style="color:#f85149;">*</strong>
+                <input name="fiaoClientName" id="pos-fiao-name" value="${escapeHtml(draft.fiaoClientName || '')}" placeholder="Ej: Pedro Mecánico, Doña Carmen..." maxlength="160" autocomplete="off">
+                <div id="pos-fiao-autocomplete-list" class="client-autocomplete-dropdown hidden"></div>
               </label>
 
               <!-- Teléfono / WhatsApp de contacto -->
@@ -429,52 +890,9 @@ export function renderPos(state) {
 
           <!-- Panel Delivery (Contra Entrega) -->
           <div id="pos-delivery-panel" class="pos-method-panel ${state.posPaymentMethod === 'delivery_cod' ? 'visible' : ''}">
-            <div class="pos-method-detail-card" style="border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.07);">
-              <div class="pos-method-detail-title">
-                <i data-lucide="bike" style="color:#f59e0b;"></i>
-                <strong>Despacho Delivery — Pago Contra Entrega</strong>
-              </div>
-              <p class="pos-method-detail-hint">El efectivo no entra a la gaveta hasta que el repartidor regrese y entregue el dinero recaudado.</p>
-
-              <!-- Selector de Repartidor -->
-              <div style="margin-bottom:8px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
-                  <span style="font-size:0.75rem;color:var(--muted);font-weight:600;">Asignar Repartidor / Mensajero <strong style="color:#f59e0b;">*</strong>:</span>
-                  <button type="button" class="button secondary compact" data-driver-new style="font-size:0.72rem;padding:2px 7px;height:auto;line-height:1.2;gap:3px;">
-                    <i data-lucide="user-plus" style="width:12px;height:12px;"></i> + Registrar
-                  </button>
-                </div>
-                <select name="deliveryDriverId" id="pos-delivery-driver-select" style="font-size:0.85rem;width:100%;">
-                  <option value="">-- Seleccionar Repartidor --</option>
-                  ${(state.deliveryDrivers || []).filter(d => d.active !== false).map(d => `<option value="${escapeHtml(d.id)}" data-name="${escapeHtml(d.name)}" data-phone="${escapeHtml(d.phone || '')}" ${draft.deliveryDriverId === d.id ? 'selected' : ''}>${escapeHtml(d.name)}${d.phone ? ' · ' + escapeHtml(d.phone) : ''}${d.vehicle ? ' (' + escapeHtml(d.vehicle) + ')' : ''}</option>`).join('')}
-                </select>
-                <input type="hidden" name="deliveryDriverName" id="pos-delivery-driver-name" value="${escapeHtml(draft.deliveryDriverName || '')}">
-              </div>
-
-              <!-- Nombre del cliente y teléfono -->
-              <div class="form-grid two">
-                <label style="font-size:0.82rem;font-weight:600;">Cliente receptor
-                  <input name="deliveryClientName" id="pos-delivery-client-name" value="${escapeHtml(draft.deliveryClientName || '')}" placeholder="Nombre del cliente" maxlength="160">
-                </label>
-                <label style="font-size:0.82rem;font-weight:600;">Teléfono móvil
-                  <input name="deliveryPhone" id="pos-delivery-phone" type="tel" inputmode="tel" value="${escapeHtml(draft.deliveryPhone || '')}" placeholder="809... o 829..." maxlength="30">
-                </label>
-              </div>
-
-              <!-- Dirección de entrega obligatoria -->
-              <label style="font-size:0.82rem;font-weight:600;margin-top:6px;">Dirección de entrega <strong style="color:#f59e0b;">*</strong>
-                <input name="deliveryAddress" id="pos-delivery-address" value="${escapeHtml(draft.deliveryAddress || '')}" placeholder="Calle, número, sector, punto de referencia..." maxlength="300">
-              </label>
-
-              <!-- Cambio / Devuelta requerida -->
-              <label style="font-size:0.82rem;font-weight:600;margin-top:6px;">El cliente pagará con (RD$, informativo)
-                <input name="deliveryChangeFor" id="pos-delivery-change-for" type="text" data-touch-numpad="money" data-numpad-title="Cambio para el cliente" placeholder="Ej: 1000 (Opcional)" value="${draft.deliveryChangeFor || ''}" readonly inputmode="none" style="cursor:pointer;">
-              </label>
-
-              <!-- Instrucciones para el repartidor -->
-              <label style="font-size:0.82rem;font-weight:600;margin-top:6px;">Instrucciones para el repartidor
-                <input name="deliveryNotes" id="pos-delivery-notes" value="${escapeHtml(draft.deliveryNotes || '')}" placeholder="Ej: Timbre no sirve, llamar antes de llegar..." maxlength="300">
-              </label>
+            <div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);border-radius:10px;padding:10px 14px;font-size:0.78rem;color:#f59e0b;display:flex;align-items:center;gap:8px;">
+              <i data-lucide="hand-coins" style="width:16px;height:16px;flex-shrink:0;"></i>
+              <span>El chofer cobrará al entregar el pedido. El dinero ingresará a caja cuando el chofer liquide su turno.</span>
             </div>
           </div>
           </div>
@@ -492,17 +910,28 @@ export function renderPos(state) {
             </span>
           </div>
 
-          <!-- El cobro queda fijo al fondo del formulario para que nunca tape
-               productos, métodos de pago ni campos de la venta. -->
-          <button
-            class="pos-cobrar-btn"
-            type="submit"
-            id="pos-submit-btn"
-            ${cart.length ? '' : 'disabled'}
-          >
-            <i data-lucide="key-round"></i>
-            <span id="pos-submit-label">Cobrar ${formatMoney(totals.totalCents)}</span>
-          </button>
+          <!-- Acciones del Carrito: Mandar a mesa y Cobrar -->
+          <div class="pos-actions-group">
+            <button
+              class="pos-send-table-btn"
+              type="button"
+              data-pos-send-table
+              ${cart.length ? '' : 'disabled'}
+              title="Enviar comanda a la mesa o cocina"
+            >
+              <i data-lucide="utensils"></i>
+              <span>Mandar a mesa</span>
+            </button>
+            <button
+              class="pos-cobrar-btn"
+              type="submit"
+              id="pos-submit-btn"
+              ${cart.length ? '' : 'disabled'}
+            >
+              <i data-lucide="key-round"></i>
+              <span id="pos-submit-label">${loadedTable ? `Cobrar ${escapeHtml(loadedTable.name)} ${formatMoney(totals.totalCents)}` : posDestination === 'delivery' ? `Despachar Delivery ${formatMoney(totals.totalCents)}` : `Cobrar ${formatMoney(totals.totalCents)}`}</span>
+            </button>
+          </div>
         </form>
       </aside>
     </div>`;
@@ -684,7 +1113,7 @@ export function renderOrderDrawer(order, capabilities = {}) {
   </article></div>`;
 }
 
-function metric(label, value, icon, tone = '') { return `<article class="metric-card ${tone}"><i data-lucide="${icon}"></i><div><span>${label}</span><strong>${value}</strong></div></article>`; }
+function metric(label, value, icon, tone = '', sub = '') { return `<article class="metric-card ${tone}"><i data-lucide="${icon}"></i><div><span>${label}</span><strong>${value}</strong>${sub ? `<div class="metric-sub-tags">${sub}</div>` : ''}</div></article>`; }
 function empty(icon, title, copy) { return `<div class="empty-state"><i data-lucide="${icon}"></i><strong>${title}</strong><p>${copy}</p></div>`; }
 export function getCategoryMeta(category = '') {
   const norm = String(category).toLowerCase().trim();
@@ -736,11 +1165,12 @@ export function getCategoryMeta(category = '') {
 
 function productCard(item) {
   const meta = getCategoryMeta(item.category);
+  const isPrepared = Boolean(item.isPrepared);
   const stock = Number(item.stock ?? 0);
-  const isOutOfStock = stock <= 0;
-  const isLowStock = stock > 0 && stock <= 10;
-  const stockClass = isOutOfStock ? 'stock-out' : isLowStock ? 'stock-low' : 'stock-ok';
-  const stockLabel = isOutOfStock ? 'Agotado' : isLowStock ? `Últimas ${stock}` : `Stock: ${stock}`;
+  const isOutOfStock = !isPrepared && stock <= 0;
+  const isLowStock = !isPrepared && stock > 0 && stock <= 10;
+  const stockClass = isPrepared ? 'stock-prepared' : isOutOfStock ? 'stock-out' : isLowStock ? 'stock-low' : 'stock-ok';
+  const stockLabel = isPrepared ? 'Hecho al momento' : isOutOfStock ? 'Agotado' : isLowStock ? `Últimas ${stock}` : `Stock: ${stock}`;
 
   return `<button class="product-card pos-product-tile ${stockClass}" data-product-add="${item.id}" data-category="${escapeHtml(item.category || 'General')}" data-search="${escapeHtml(`${item.name} ${item.sku || ''} ${item.category || ''}`.toLowerCase())}" style="--cat-accent:${meta.color};">
     <div class="product-tile-header">
@@ -757,38 +1187,45 @@ function productCard(item) {
       <strong class="product-tile-name">${escapeHtml(item.name)}</strong>
     </div>
     <div class="product-tile-footer">
-      <span class="product-stock-badge ${stockClass}">
+      <span class="product-stock-badge ${stockClass} clickable" data-stock-adjust="${item.id}" role="button" tabindex="0" title="Toca para variar inventario o registrar entrada (+)">
         <span class="stock-dot"></span>
-        ${stockLabel}
+        <span class="stock-badge-text">${stockLabel}</span>
+        <span class="stock-quick-plus" title="Entrada / Ajuste"><i data-lucide="plus"></i></span>
       </span>
-      ${isOutOfStock ? `
-        <span class="quick-prep-chip" data-stock-adjust="${item.id}" style="font-size:0.68rem;padding:2px 6px;border-radius:4px;background:rgba(63,185,80,.2);color:#3fb950;font-weight:800;cursor:pointer;margin-left:auto;margin-right:6px;" title="Preparación extra en cocina">
-          + Cocinado
-        </span>
-      ` : ''}
       <b class="product-tile-price">${formatMoney(item.priceCents)}</b>
     </div>
   </button>`;
 }
 
 export function cartLine(item, index) {
+  const isCustom = Boolean(item.isCustomPrice);
+  const hasNotes = Boolean(item.notes && item.notes.trim());
   return `<div class="cart-line pos-cart-line" data-cart-row="${index}">
-    <div class="cart-line-info" style="flex:1;min-width:0;">
-      <strong class="cart-line-name" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(item.name)}</strong>
-      <div class="cart-line-meta" style="display:flex;align-items:center;gap:6px;margin-top:2px;">
-        <span class="cart-unit-price">${formatMoney(item.unitPriceCents)} c/u</span>
-        ${item.notes ? `<span class="cart-line-note" style="display:inline-flex;align-items:center;gap:3px;font-size:0.7rem;color:var(--brand-2);background:rgba(245,158,11,.1);padding:1px 5px;border-radius:4px;"><i data-lucide="message-square-plus" style="width:11px;height:11px;"></i> ${escapeHtml(item.notes)}</span>` : ''}
+    <div class="cart-line-header">
+      <strong class="cart-line-name">${escapeHtml(item.name)}</strong>
+      <b class="cart-line-total">${formatMoney(item.unitPriceCents * item.quantity)}</b>
+    </div>
+    <div class="cart-line-sub">
+      <div class="cart-line-meta">
+        <button type="button" class="cart-unit-price-btn ${isCustom ? 'is-adjusted' : ''}" data-cart-set-price="${index}" title="Tocar para cambiar precio o porción (RD$)">
+          <i data-lucide="circle-dollar-sign" style="width:12px;height:12px;"></i>
+          <span>${formatMoney(item.unitPriceCents)} c/u</span>
+          ${isCustom ? '<span class="badge-custom-price">Ajustado</span>' : ''}
+        </button>
+      </div>
+      <div class="quantity-control pos-qty-control">
+        <button type="button" class="qty-btn" data-cart-qty="${index}" data-delta="-1" aria-label="Restar una unidad">−</button>
+        <span class="qty-display" data-cart-set-qty="${index}" style="cursor:pointer;" title="Tocar para editar cantidad">${item.quantity}</span>
+        <button type="button" class="qty-btn" data-cart-qty="${index}" data-delta="1" aria-label="Sumar una unidad">+</button>
       </div>
     </div>
-    <div class="quantity-control pos-qty-control">
-      <button type="button" class="qty-btn" data-cart-qty="${index}" data-delta="-1" aria-label="Restar una unidad">−</button>
-      <span class="qty-display" data-cart-set-qty="${index}" style="cursor:pointer;" title="Tocar para editar">${item.quantity}</span>
-      <button type="button" class="qty-btn" data-cart-qty="${index}" data-delta="1" aria-label="Sumar una unidad">+</button>
-      <button type="button" class="qty-note-btn" data-cart-item-note="${index}" title="Agregar nota al plato" aria-label="Agregar nota">
-        <i data-lucide="message-square-plus"></i>
+    <div class="cart-line-comment-row">
+      <button type="button" class="cart-item-comment-btn ${hasNotes ? 'has-comment' : ''}" data-cart-item-note="${index}" title="Comentario para este artículo (ej. Ricky sin cebolla)">
+        <i data-lucide="${hasNotes ? 'message-square' : 'message-square-plus'}" style="width:13px;height:13px;flex-shrink:0;"></i>
+        <span class="cart-comment-text">${hasNotes ? escapeHtml(item.notes) : '+ Agregar comentario (ej: Ricky sin cebolla...)'}</span>
+        ${hasNotes ? '<span class="cart-comment-edit-hint">Editar</span>' : ''}
       </button>
     </div>
-    <b class="cart-line-total">${formatMoney(item.unitPriceCents * item.quantity)}</b>
   </div>`;
 }
 
@@ -812,9 +1249,9 @@ export function renderCartTotals(items, discountState = { discount: 0, discountT
 
 function kdsCard(order) {
   const action = order.status === 'pending'
-    ? ['preparing', '🔥 Iniciar Preparación', 'kds-btn-prepare']
+    ? ['preparing', '<i data-lucide="flame" style="width:15px;height:15px;display:inline-block;vertical-align:-2px;margin-right:4px;"></i> Iniciar Preparación', 'kds-btn-prepare']
     : order.status === 'preparing'
-    ? ['ready', '✅ Marcar Lista para Servir', 'kds-btn-ready']
+    ? ['ready', '<i data-lucide="check-circle-2" style="width:15px;height:15px;display:inline-block;vertical-align:-2px;margin-right:4px;"></i> Marcar Lista para Servir', 'kds-btn-ready']
     : null;
 
   const date = order.createdAt ? (typeof order.createdAt.toDate === 'function' ? order.createdAt.toDate() : new Date(order.createdAt)) : null;
@@ -833,7 +1270,7 @@ function kdsCard(order) {
       </div>
       <div class="kds-status-col">
         <span class="order-status status-${order.status}">${STATUS_LABELS[order.status] || order.status}</span>
-        ${order.priority !== 'normal' ? `<span class="kds-priority-tag ${order.priority}">${order.priority === 'urgent' ? '🚨 URGENTE' : '⚡ PRIORIDAD'}</span>` : ''}
+        ${order.priority !== 'normal' ? `<span class="kds-priority-tag ${order.priority}"><i data-lucide="${order.priority === 'urgent' ? 'alert-triangle' : 'zap'}" style="width:11px;height:11px;display:inline-block;vertical-align:-1px;margin-right:3px;"></i>${order.priority === 'urgent' ? 'URGENTE' : 'PRIORIDAD'}</span>` : ''}
       </div>
     </header>
 
@@ -877,3 +1314,283 @@ function kdsCard(order) {
 }
 function renderOrderMiniList(items) { return items.length ? `<div class="mini-list">${items.map((item) => `<button data-order-open="${item.id}"><span class="dot status-${item.status}"></span><div><strong>${escapeHtml(item.tableName)}</strong><small>${STATUS_LABELS[item.status]} · ${formatDate(item.createdAt, true)}</small></div><b>${formatMoney(item.totalCents)}</b></button>`).join('')}</div>` : empty('badge-check', 'Sin pendientes', 'Todo está bajo control.'); }
 function renderInvoiceMiniList(items) { return items.length ? `<div class="mini-list">${items.map((item) => `<button data-invoice-view="${item.id}"><i data-lucide="receipt"></i><div><strong>${escapeHtml(item.invoiceNumber)}</strong><small>${escapeHtml(item.clientName)} · ${formatDate(item.createdAt)}</small></div><b>${formatMoney(item.totalCents)}</b></button>`).join('')}</div>` : empty('receipt', 'Sin documentos', 'Las ventas aparecerán aquí.'); }
+function renderOutflowMiniList(items) {
+  return items.length ? `<div class="mini-list">${items.map((item) => {
+    const match = (item.reason || '').match(/^\[(.*?)\]\s*(.*)$/);
+    const category = match ? match[1] : 'Salida';
+    const detail = match ? match[2] : (item.reason || 'Salida de efectivo');
+    return `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:10px;gap:12px;"><div style="display:flex;align-items:center;gap:10px;"><i data-lucide="trending-down" style="color:#f87171;width:18px;height:18px;flex-shrink:0;"></i><div><strong style="display:block;font-size:0.86rem;color:#f0f6fc;">${escapeHtml(detail)}</strong><small style="color:var(--muted);font-size:0.75rem;"><span style="color:#f87171;font-weight:600;">[${escapeHtml(category)}]</span> · ${escapeHtml(item.createdByName || 'Usuario')} · ${formatDate(item.createdAt, true)}</small></div></div><b style="color:#f87171;font-size:0.95rem;white-space:nowrap;">-${formatMoney(item.amountCents)}</b></div>`;
+  }).join('')}</div>` : empty('wallet-cards', 'Sin salidas hoy', 'Los gastos o pagos de caja menor aparecerán aquí.');
+}
+
+function renderDashboardOrderList(items = []) {
+  if (!items.length) {
+    return empty('badge-check', 'Sin comandas pendientes', 'La cocina está totalmente al día.');
+  }
+  return `
+    <div class="dash-orders-list">
+      ${items.map((item) => {
+        const d = typeof item.createdAt?.toDate === 'function' ? item.createdAt.toDate() : new Date(item.createdAt || Date.now());
+        const mins = Math.max(0, Math.floor((Date.now() - d.getTime()) / 60000));
+        const isDelayed = mins > 20 && !['ready', 'served'].includes(item.status);
+        const itemsBrief = Array.isArray(item.items)
+          ? item.items.slice(0, 3).map((i) => `${i.quantity}x ${escapeHtml(i.name || '')}`).join(', ') + (item.items.length > 3 ? ` +${item.items.length - 3}` : '')
+          : '';
+        const statusLabel = STATUS_LABELS[item.status] || item.status;
+        return `
+          <button type="button" class="dash-order-card status-${item.status} ${isDelayed ? 'is-delayed' : ''}" data-order-open="${item.id}" title="Tocar para ver comanda de ${escapeHtml(item.tableName || 'Mesa')}">
+            <div class="dash-order-header">
+              <div class="dash-order-title">
+                <span class="dot status-${item.status}"></span>
+                <strong>${escapeHtml(item.tableName || 'Comanda')}</strong>
+                ${item.clientName && item.clientName !== 'Consumidor final' ? `<small class="dash-order-client"><i data-lucide="user"></i> ${escapeHtml(item.clientName)}</small>` : ''}
+              </div>
+              <span class="dash-order-badge status-${item.status}">${statusLabel}</span>
+            </div>
+            ${itemsBrief ? `<div class="dash-order-items"><i data-lucide="utensils"></i> <span>${itemsBrief}</span></div>` : ''}
+            <div class="dash-order-footer">
+              <span class="dash-order-time ${isDelayed ? 'late' : ''}"><i data-lucide="${isDelayed ? 'alert-triangle' : 'clock'}"></i> hace ${mins} min</span>
+              <span class="dash-order-total">${formatMoney(item.totalCents)}</span>
+            </div>
+          </button>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function renderDashboardDeliveriesList(driverList = [], pendingDeliveries = []) {
+  if (!pendingDeliveries.length) {
+    return empty('bike', 'Sin entregas en ruta', 'Todos los pedidos a domicilio han sido entregados y liquidados.');
+  }
+  return `
+    <div class="dash-deliveries-list">
+      ${driverList.map((d) => `
+        <div class="dash-driver-card">
+          <div class="dash-driver-main">
+            <div class="dash-driver-avatar">
+              <i data-lucide="bike"></i>
+            </div>
+            <div class="dash-driver-info">
+              <strong>${escapeHtml(d.name)}</strong>
+              <small><b class="dash-counter-text">${d.count}</b> ${d.count === 1 ? 'pedido en calle' : 'pedidos en calle'}</small>
+            </div>
+          </div>
+          <div class="dash-driver-meta">
+            <span class="dash-driver-lbl">Por liquidar</span>
+            <b class="dash-driver-amt">${formatMoney(d.totalCents)}</b>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderFinancialBreakdown(cashIn = 0, cardIn = 0, transferIn = 0, creditIn = 0, totalSales = 0) {
+  const total = totalSales || (cashIn + cardIn + transferIn + creditIn) || 1;
+  const cashPct = Math.round((cashIn / total) * 100);
+  const cardPct = Math.round((cardIn / total) * 100);
+  const transPct = Math.round((transferIn / total) * 100);
+  const credPct = Math.max(0, 100 - (cashPct + cardPct + transPct));
+  return `
+    <div class="dash-financial-box">
+      <div class="dash-fin-bar" role="progressbar" aria-label="Distribución de ingresos">
+        ${cashPct > 0 ? `<div class="dash-fin-seg cash" style="width:${cashPct}%;" title="Efectivo: ${formatMoney(cashIn)} (${cashPct}%)"></div>` : ''}
+        ${cardPct > 0 ? `<div class="dash-fin-seg card" style="width:${cardPct}%;" title="Tarjeta: ${formatMoney(cardIn)} (${cardPct}%)"></div>` : ''}
+        ${transPct > 0 ? `<div class="dash-fin-seg trans" style="width:${transPct}%;" title="Transferencia: ${formatMoney(transferIn)} (${transPct}%)"></div>` : ''}
+        ${credPct > 0 ? `<div class="dash-fin-seg cred" style="width:${credPct}%;" title="Fiao: ${formatMoney(creditIn)} (${credPct}%)"></div>` : ''}
+      </div>
+      <div class="dash-fin-legend">
+        <div class="dash-fin-item cash">
+          <span class="dash-fin-dot"></span>
+          <div class="dash-fin-info">
+            <span class="dash-fin-name">Efectivo</span>
+            <strong class="dash-fin-val">${formatMoney(cashIn)}</strong>
+          </div>
+          <small class="dash-fin-pct">${cashPct}%</small>
+        </div>
+        <div class="dash-fin-item card">
+          <span class="dash-fin-dot"></span>
+          <div class="dash-fin-info">
+            <span class="dash-fin-name">Tarjeta</span>
+            <strong class="dash-fin-val">${formatMoney(cardIn)}</strong>
+          </div>
+          <small class="dash-fin-pct">${cardPct}%</small>
+        </div>
+        <div class="dash-fin-item trans">
+          <span class="dash-fin-dot"></span>
+          <div class="dash-fin-info">
+            <span class="dash-fin-name">Transferencia</span>
+            <strong class="dash-fin-val">${formatMoney(transferIn)}</strong>
+          </div>
+          <small class="dash-fin-pct">${transPct}%</small>
+        </div>
+        <div class="dash-fin-item cred">
+          <span class="dash-fin-dot"></span>
+          <div class="dash-fin-info">
+            <span class="dash-fin-name">Por cobrar (Fiao)</span>
+            <strong class="dash-fin-val">${formatMoney(creditIn)}</strong>
+          </div>
+          <small class="dash-fin-pct">${credPct}%</small>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderDashboardInvoiceList(items = []) {
+  if (!items.length) {
+    return empty('receipt', 'Sin documentos hoy', 'Las facturas y comprobantes aparecerán aquí.');
+  }
+  const METHOD_ICONS = {
+    cash: 'banknote', card: 'credit-card', transfer: 'arrow-left-right', credit: 'clock', delivery_cod: 'bike'
+  };
+  return `
+    <div class="dash-invoices-list">
+      ${items.map((item) => {
+        const method = item.paymentMethod || 'cash';
+        const isPaid = item.status === 'paid';
+        const methodIcon = METHOD_ICONS[method] || 'receipt';
+        return `
+          <button type="button" class="dash-invoice-row" data-invoice-view="${item.id}" title="Ver factura ${escapeHtml(item.invoiceNumber)}">
+            <div class="dash-inv-icon"><i data-lucide="${methodIcon}"></i></div>
+            <div class="dash-inv-info">
+              <strong>${escapeHtml(item.invoiceNumber || 'Factura')}</strong>
+              <small>${escapeHtml(item.clientName || 'Consumidor final')} · ${formatDate(item.createdAt, true)}</small>
+            </div>
+            <div class="dash-inv-meta">
+              <span class="dash-inv-tag ${isPaid ? 'paid' : 'pending'}">${isPaid ? 'Cobrada' : 'Por cobrar'}</span>
+              <b>${formatMoney(item.totalCents)}</b>
+            </div>
+          </button>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+export function getDailyProductsBreakdown(invoices = [], products = []) {
+  const prodMap = new Map((products || []).map((p) => [p.id, p]));
+  const map = new Map();
+
+  invoices.forEach((inv) => {
+    (inv.items || []).forEach((line) => {
+      const key = String(line.productId || line.name || 'item');
+      const catalogProduct = line.productId ? prodMap.get(line.productId) : null;
+      const isPrepared = catalogProduct ? Boolean(catalogProduct.isPrepared) : Boolean(line.isPrepared);
+      const category = catalogProduct?.category || line.category || 'General';
+
+      const existing = map.get(key) || {
+        id: line.productId || key,
+        name: line.name || catalogProduct?.name || 'Producto',
+        category,
+        isPrepared,
+        quantity: 0,
+        totalCents: 0
+      };
+
+      const qty = Number(line.quantity || 0);
+      existing.quantity += qty;
+      existing.totalCents += Number(line.totalCents ?? (Number(line.unitPriceCents || 0) * qty));
+      map.set(key, existing);
+    });
+  });
+
+  return [...map.values()].sort((a, b) => b.quantity - a.quantity || b.totalCents - a.totalCents);
+}
+
+function renderDailyProductsList(items = []) {
+  if (!items.length) {
+    return `<div class="empty-mini-list" style="padding:32px 16px;text-align:center;color:var(--muted);font-size:0.85rem;">
+      <i data-lucide="utensils" style="width:28px;height:28px;margin:0 auto 10px;display:block;opacity:0.4;color:var(--brand-2);"></i>
+      Sin artículos vendidos hoy. Los platos y productos facturados aparecerán aquí.
+    </div>`;
+  }
+
+  const maxQty = items.length ? Math.max(...items.map((i) => i.quantity || 1)) : 1;
+  return `<div class="daily-products-mini-list" style="display:flex;flex-direction:column;gap:10px;padding:4px 0;">
+    ${items.map((item, index) => {
+      const pct = Math.max(8, Math.min(100, Math.round(((item.quantity || 0) / maxQty) * 100)));
+      return `
+      <div class="daily-product-row" style="position:relative;overflow:hidden;padding:10px 14px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:12px;">
+        <div style="position:absolute;left:0;top:0;bottom:0;width:${pct}%;background:linear-gradient(90deg, rgba(245,158,11,0.09), rgba(245,158,11,0.01));pointer-events:none;z-index:0;"></div>
+        <div style="position:relative;z-index:1;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+          <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1;">
+            <span style="display:grid;place-items:center;width:24px;height:24px;border-radius:6px;background:rgba(255,255,255,.06);color:var(--brand-2);font-size:0.75rem;font-weight:800;flex-shrink:0;">${index + 1}</span>
+            <span style="font-size:0.68rem;padding:2px 7px;border-radius:6px;font-weight:750;${item.isPrepared ? 'background:rgba(16,185,129,.16);color:#34d399;border:1px solid rgba(16,185,129,.3);' : 'background:rgba(56,189,248,.15);color:#38bdf8;border:1px solid rgba(56,189,248,.3);'}flex-shrink:0;">
+              ${item.isPrepared ? 'Cocina' : 'Stock'}
+            </span>
+            <div style="min-width:0;">
+              <strong style="display:block;font-size:0.88rem;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(item.name)}</strong>
+              <small style="font-size:0.72rem;color:var(--muted);">${escapeHtml(item.category)}</small>
+            </div>
+          </div>
+          <div style="text-align:right;flex-shrink:0;">
+            <strong style="font-size:0.95rem;color:var(--brand-2);">${item.quantity} ${item.quantity === 1 ? 'ud' : 'uds'}</strong>
+            <small style="display:block;font-size:0.75rem;color:#cbd5e1;font-weight:600;">${formatMoney(item.totalCents)}</small>
+          </div>
+        </div>
+      </div>
+    `;
+    }).join('')}
+  </div>`;
+}
+
+export function renderTablePickerModal(tables = [], selectedTableId = '', orders = []) {
+  const activeTables = (tables || []).filter((t) => t.active !== false);
+  return `
+    <div class="modal-backdrop" data-modal-close>
+      <article class="modal-card form-modal" style="max-width:540px;" data-modal-card>
+        <header>
+          <div>
+            <span class="eyebrow">Mesas de Salón</span>
+            <h2>Seleccionar Mesa</h2>
+          </div>
+          <button type="button" class="icon-button" data-modal-close aria-label="Cerrar"><i data-lucide="x"></i></button>
+        </header>
+        <p style="font-size:0.82rem;color:var(--muted);margin:4px 0 12px;">
+          Toca una mesa para asignarla a la venta actual o para cargar una comanda pendiente a la cuenta.
+        </p>
+        <div class="table-picker-grid">
+          <button type="button" class="table-picker-cell ${!selectedTableId ? 'is-current' : ''}" data-pick-table-id="">
+            <i data-lucide="shopping-bag" style="width:26px;height:26px;color:var(--brand-2);"></i>
+            <strong>Para Llevar</strong>
+            <small>Mostrador / Venta rápida</small>
+          </button>
+          ${activeTables.map((t) => {
+            const order = (orders || []).find((o) => o.id === t.currentOrderId);
+            const isOccupied = Boolean(t.currentOrderId && order);
+            const isCurrent = (t.id === selectedTableId);
+            const total = order?.totalCents || 0;
+            const hasClient = order?.clientName && order.clientName !== 'Consumidor final';
+            if (isOccupied) {
+              return `
+                <div class="table-picker-cell is-occupied ${isCurrent ? 'is-current' : ''}">
+                  <button type="button" class="table-picker-cell-btn" data-pick-table-id="${t.id}" data-has-order="1" title="Toca para cargar la comanda de ${escapeHtml(t.name)}">
+                    <i data-lucide="utensils" style="width:24px;height:24px;color:#f59e0b;"></i>
+                    <strong>${escapeHtml(t.name)}</strong>
+                    ${hasClient ? `<span class="picker-cell-client" title="Cliente: ${escapeHtml(order.clientName)}"><i data-lucide="user" style="width:11px;height:11px;display:inline-block;vertical-align:-1px;"></i> ${escapeHtml(order.clientName)}</span>` : ''}
+                    <span class="picker-cell-badge occupied">Ocupada (${formatMoney(total)})</span>
+                  </button>
+                  <button type="button" class="table-picker-liberate-btn" data-pos-cancel-table="${t.id}" title="Anular comanda y liberar ${escapeHtml(t.name)}">
+                    <i data-lucide="trash-2" style="width:11px;height:11px;"></i> Liberar Mesa
+                  </button>
+                </div>
+              `;
+            }
+            return `
+              <button type="button" class="table-picker-cell is-free ${isCurrent ? 'is-current' : ''}" data-pick-table-id="${t.id}" data-has-order="0" title="Seleccionar ${escapeHtml(t.name)}">
+                <i data-lucide="utensils" style="width:26px;height:26px;color:#10b981;"></i>
+                <strong>${escapeHtml(t.name)}</strong>
+                <span class="picker-cell-badge free">Disponible</span>
+              </button>
+            `;
+          }).join('')}
+        </div>
+        <footer class="modal-actions" style="margin-top:14px;">
+          <button type="button" class="button secondary" data-modal-close>Cerrar</button>
+        </footer>
+      </article>
+    </div>
+  `;
+}

@@ -1,12 +1,14 @@
 {
-  "versionName": "1.4.2",
-  "versionCode": 22,
+  "versionName": "1.6.2",
+  "versionCode": 42,
   "channel": "stable",
   "minimumSupportedVersionCode": 10,
   "mandatory": false,
   "releaseNotes": [
-    "Navegación más ligera: los iconos existentes ya no se reconstruyen en cada interacción.",
-    "Formatos de fechas e importes reutilizados y teclado numérico sin manejadores duplicados.",
-    "La ELO omite el panel móvil oculto y los desenfoques; cobros, PIN, registros e impresión sin cambios."
+    "Reforma Integral del Resumen Operativo (Dashboard): Cabecera ejecutiva con estado del turno en tiempo real (Caja Abierta con nombre de usuario o Caja Cerrada), indicador pulsante en vivo y fecha dominicana.",
+    "Cuadrícula de Métricas KPI Enriquecidas: Ventas del día con desglose de cobrado vs por cobrar (fiao), facturas emitidas con ticket promedio, comandas en preparación vs listas, deliveries en tránsito con balance a liquidar, ocupación del salón y salidas de caja.",
+    "Cinta de Accesos Rápidos Operativos: Acceso directo a POS, KDS Cocina, Deliveries, Mesas, Registro de Gasto y Cuentas por Cobrar a un solo toque.",
+    "Tarjetas Operativas de Alto Impacto: Platos estrella con barras de volumen relativo y montos generados, comandas activas con semáforo y alertas de demora (>20 min), monitoreo de choferes en calle, desglose financiero por método de pago y movimientos recientes.",
+    "Diseño profesional y limpio: 100% iconos SVG Lucide y cero emojis Unicode, garantizando una experiencia ejecutiva de grado comercial."
   ]
 }

@@ -16,6 +16,7 @@ import {
   buildPayrollReceiptEscPos,
   buildPayrollReceiptPlainText
 } from '../../src/lib/hardware.js';
+import { renderPayrollLockScreen, renderPayroll } from '../../src/modules/payroll.js';
 
 test('nómina rechaza valores no enteros, no finitos y negativos', () => {
   for (const baseSalaryCents of [NaN, Infinity, -1, 1.5, 100000000001]) {
@@ -304,4 +305,54 @@ test('buildPayrollReceiptEscPos y buildPayrollReceiptPlainText generan tickets c
   assert.ok(plainText.includes('Nechy (Propietario)'));
   assert.ok(plainText.includes('Firma del Empleado (Recibí Conforme)'));
   assert.ok(plainText.includes('Firma Autorizada'));
+});
+
+test('renderPayrollLockScreen renderiza pantalla protegida con PIN y no revela cifras salariales', () => {
+  const state = {
+    payrollUnlocked: false,
+    employees: [{ id: 'e1', name: 'Junior', baseSalaryCents: 2500000 }],
+    payrollPayments: [{ id: 'p1', netAmountCents: 1250000 }]
+  };
+  const user = { displayName: 'Nechy' };
+
+  const html = renderPayrollLockScreen(state, user);
+
+  // Debe tener el formulario de PIN
+  assert.ok(html.includes('payroll-lock-screen'), 'Debe incluir clase payroll-lock-screen');
+  assert.ok(html.includes('payroll-unlock-form'), 'Debe incluir formulario payroll-unlock-form');
+  assert.ok(html.includes('payroll-unlock-input'), 'Debe incluir input de PIN');
+  assert.ok(html.includes('payroll-unlock-submit'), 'Debe incluir botón de desbloqueo');
+  assert.ok(html.includes('Nechy'), 'Debe indicar el nombre del usuario');
+  assert.ok(html.includes('data-route="dashboard"'), 'Debe incluir botón para volver a dashboard');
+
+  // No debe revelar información salarial en la pantalla bloqueada
+  assert.ok(!html.includes('25,000'), 'No debe mostrar sueldos de empleados');
+  assert.ok(!html.includes('12,500'), 'No debe mostrar pagos registrados');
+});
+
+test('renderPayroll enmascara cifras cuando payrollMasked es true y las revela cuando es false', () => {
+  const state = {
+    payrollUnlocked: true,
+    payrollMasked: true,
+    employees: [{ id: 'e1', name: 'Junior', roleTitle: 'Cajero', baseSalaryCents: 2000000, active: true }],
+    payrollPayments: [
+      {
+        id: 'p1',
+        createdAt: new Date(),
+        netAmountCents: 1000000,
+        paymentMethod: 'cash'
+      }
+    ]
+  };
+
+  // 1. Enmascarado
+  const maskedHtml = renderPayroll(state);
+  assert.ok(maskedHtml.includes('RD$ ••••••'), 'Debe mostrar montos ocultos con máscara');
+  assert.ok(maskedHtml.includes('data-payroll-mask-toggle'), 'Debe incluir botón de alternar máscara');
+  assert.ok(maskedHtml.includes('data-payroll-lock'), 'Debe incluir botón de bloqueo manual');
+
+  // 2. Desenmascarado
+  state.payrollMasked = false;
+  const unmaskedHtml = renderPayroll(state);
+  assert.ok(!unmaskedHtml.includes('RD$ ••••••'), 'No debe mostrar máscara si está desactivada');
 });
