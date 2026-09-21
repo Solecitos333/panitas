@@ -62,3 +62,12 @@ test('borrar cancela el envío automático y un modal desconectado no autoriza',
   assert.equal(pad.submissions, 0);
   pad.dispose();
 });
+
+test('checkoutPinModal incluye sesión activa, botón de cambiar PIN y no borra el error en fallo', async () => {
+  const fs = await import('node:fs');
+  const code = fs.readFileSync(new URL('../../src/ui/app.js', import.meta.url), 'utf8');
+  assert.ok(code.includes('chk-open-pin-change-btn'), 'Debe incluir botón chk-open-pin-change-btn');
+  assert.ok(code.includes('Sesión activa:'), 'Debe indicar la sesión activa en terminal');
+  assert.ok(code.includes('if (!destroyed && (completedSuccessfully || !state.modal)) renderContent()'), 'No debe re-renderizar incondicionalmente en finally si falló el PIN');
+});
+

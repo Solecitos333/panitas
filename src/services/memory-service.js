@@ -127,7 +127,9 @@ export class MemoryDataService {
       };
     }
 
-    throw new Error("PIN incorrecto.");
+    const activeAccount = this.data.users.find((entry) => entry.id === this.actor.uid);
+    const accountName = activeAccount?.displayName || activeAccount?.username || this.actor.displayName || 'esta cuenta';
+    throw new Error(`PIN incorrecto para ${accountName}.`);
   }
   async saveProduct(item) {
     const id = item.id || createOperationId("product");

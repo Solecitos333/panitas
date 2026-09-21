@@ -2371,6 +2371,15 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       state.pendingPinDestination = '';
       renderModal();
     });
+    modalRoot?.querySelector('#setup-pin-cancel-btn')?.addEventListener('click', () => {
+      if (state.pendingPinDestination === 'checkoutPin') {
+        state.modal = 'checkoutPin';
+        state.pendingPinDestination = '';
+        renderModal();
+      } else {
+        closeModal();
+      }
+    });
     modalRoot?.querySelector('#item-note-form')?.addEventListener('submit',saveItemNote);
     modalRoot?.querySelector('#clear-item-note-btn')?.addEventListener('click', () => {
       const input = modalRoot.querySelector('#item-note-input');
@@ -3079,6 +3088,15 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         });
       }
 
+      const changePinBtn = modalRoot.querySelector('#chk-open-pin-change-btn');
+      if (changePinBtn) {
+        changePinBtn.addEventListener('click', () => {
+          state.modal = 'setupCheckoutPin';
+          state.pendingPinDestination = 'checkoutPin';
+          renderModal();
+        });
+      }
+
       checkoutPinForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         if (state.saleInProgress) return;
@@ -3088,6 +3106,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           updatePinSlots();
           return;
         }
+        let completedSuccessfully = false;
         try {
           state.saleInProgress = true;
           setBusy(submitBtn, true);
@@ -3111,13 +3130,19 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           }
           const outcome = await completeDirectSale(payload, verifyRes.user, submitBtn);
           if (!outcome.ok) {
-            if (chkErrBox) chkErrBox.textContent = outcome.error?.message || 'No se pudo registrar la venta.';
+            const msg = outcome.error?.message || 'No se pudo registrar la venta.';
+            toast(msg, 'danger');
+            if (chkErrBox) chkErrBox.textContent = msg;
             if (chkPinInput) chkPinInput.value = '';
             updatePinSlots();
+          } else {
+            completedSuccessfully = true;
           }
         } catch (err) {
           beepHardware('error');
-          if (chkErrBox) chkErrBox.textContent = err.message || 'PIN incorrecto.';
+          const msg = err.message || 'PIN incorrecto.';
+          toast(msg, 'danger');
+          if (chkErrBox) chkErrBox.textContent = msg;
           if (chkPinInput) {
             chkPinInput.value = '';
             updatePinSlots();
@@ -3125,7 +3150,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         } finally {
           state.saleInProgress = false;
           setBusy(submitBtn, false);
-          if (!destroyed) renderContent();
+          if (!destroyed && (completedSuccessfully || !state.modal)) renderContent();
         }
       });
     }
@@ -4230,6 +4255,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const opensDrawer = !isDelivery && payload.method === 'cash' && state.settings?.autoOpenDrawer !== false;
     const actionLabel = isCredit ? 'Registrar Fiao' : isDelivery ? 'Despachar Delivery' : 'Cobrar Venta';
     const submitLabel = isCredit ? 'Registrar fiao' : isDelivery ? 'Despachar y generar ticket' : opensDrawer ? 'Cobrar y abrir gaveta' : 'Confirmar cobro';
+    const activeUserName = user.displayName || user.username || 'esta cuenta';
     return `
       <div class="modal-backdrop" data-modal-close>
         <article class="modal-card" style="max-width:420px;" data-modal-card>
@@ -4241,7 +4267,18 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
             <button type="button" class="icon-button" data-modal-close><i data-lucide="x"></i></button>
           </header>
           <form id="checkout-pin-form" class="stack-form" style="padding-top:8px;">
-            <p class="muted">Cuenta responsable: <strong>${escapeHtml(user.displayName || user.username)}</strong>. Usa el PIN de esta cuenta.</p>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:10px;margin-bottom:6px;">
+              <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                <i data-lucide="user-check" style="width:18px;height:18px;color:var(--brand-2);flex-shrink:0;"></i>
+                <div style="font-size:0.82rem;line-height:1.25;min-width:0;">
+                  <span style="color:var(--muted);display:block;font-size:0.72rem;">Sesión activa:</span>
+                  <strong style="color:#f8fafc;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(activeUserName)}</strong>
+                </div>
+              </div>
+              <button type="button" class="button compact secondary" id="chk-open-pin-change-btn" style="font-size:0.75rem;padding:3px 8px;height:auto;flex-shrink:0;" title="Cambiar o configurar mi PIN">
+                Cambiar PIN
+              </button>
+            </div>
             <div style="padding:10px 14px;background:rgba(239,189,105,.1);border:1px solid rgba(239,189,105,.25);border-radius:10px;display:flex;justify-content:space-between;align-items:center;">
               <span>Total a cobrar:</span>
               <strong style="font-size:1.35rem;color:var(--brand-2);">${formatMoney(totals.totalCents)}</strong>
@@ -4255,7 +4292,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
               </button>
             </div>
             <p style="margin:6px 0; font-size:.82rem; color:var(--muted);text-align:center;">
-              ${isCredit ? 'Digita tu PIN de 6 dígitos para registrar la cuenta por cobrar.' : isDelivery ? 'Digita tu PIN de 6 dígitos para autorizar el despacho. El dinero no entra a la caja hasta que el repartidor entregue lo cobrado.' : 'Digita tu PIN de 6 dígitos. Si no hay una sesión de caja, este mismo paso la inicia y registra el cobro.'}
+              ${isCredit ? `Digita el PIN de 6 dígitos de ${escapeHtml(activeUserName)} para registrar el fiao.` : isDelivery ? `Digita el PIN de 6 dígitos de ${escapeHtml(activeUserName)} para autorizar el despacho.` : `Digita el PIN de 6 dígitos de ${escapeHtml(activeUserName)} para autorizar el cobro.`}
             </p>
             <input id="checkout-pin-input" name="pin" type="password" inputmode="none" pattern="[0-9]{6}" maxlength="6" placeholder="" required readonly tabindex="-1" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;">
             <div class="pin-slots-container" id="chk-pin-slots">
@@ -4285,18 +4322,19 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 
   function setupCheckoutPinModal() {
     const forTable = state.pendingPinDestination === 'charge';
+    const isCheckoutReturn = state.pendingPinDestination === 'checkoutPin';
     return `
       <div class="modal-backdrop" data-modal-close>
         <article class="modal-card" style="max-width:420px;" data-modal-card>
           <header>
             <div>
-              <span class="eyebrow">${forTable ? 'Primer cobro de mesa' : 'Primer cobro'}</span>
-              <h2>Elige tu PIN de caja</h2>
+              <span class="eyebrow">${forTable ? 'Primer cobro de mesa' : isCheckoutReturn ? 'Seguridad y PIN' : 'Primer cobro'}</span>
+              <h2>${isCheckoutReturn ? 'Actualizar mi PIN de cobro' : 'Elige tu PIN de caja'}</h2>
             </div>
             <button type="button" class="icon-button" data-modal-close><i data-lucide="x"></i></button>
           </header>
           <form id="setup-checkout-pin-form" class="stack-form" style="padding-top:8px;">
-            <p style="margin:0 0 10px;color:var(--muted);font-size:.85rem;">Crea un PIN personal de 6 dígitos. ${forTable ? 'Después volverás al cobro de la mesa para autorizarlo.' : 'Después, cada cobro será: elegir productos → Cobrar → PIN.'}</p>
+            <p style="margin:0 0 10px;color:var(--muted);font-size:.85rem;">${isCheckoutReturn ? `Configura tu nuevo PIN personal de 6 dígitos para ${escapeHtml(user.displayName || user.username)}.` : forTable ? 'Crea un PIN personal de 6 dígitos. Después volverás al cobro de la mesa para autorizarlo.' : 'Crea un PIN personal de 6 dígitos. Después, cada cobro será: elegir productos → Cobrar → PIN.'}</p>
             <label>PIN de 6 dígitos
               <input name="pin" type="password" data-touch-numpad="integer" data-numpad-title="Crear PIN (6 dígitos)" maxlength="6" placeholder="••••••" required autofocus readonly inputmode="none" style="letter-spacing:10px;font-size:1.55rem;text-align:center;font-weight:800;cursor:pointer;">
             </label>
@@ -4304,7 +4342,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
               <input name="confirmPin" type="password" data-touch-numpad="integer" data-numpad-title="Confirmar PIN (6 dígitos)" maxlength="6" placeholder="••••••" required readonly inputmode="none" style="letter-spacing:10px;font-size:1.55rem;text-align:center;font-weight:800;cursor:pointer;">
             </label>
             <footer class="modal-actions" style="margin-top:6px;">
-              <button type="button" class="button secondary" data-modal-close>Cancelar</button>
+              <button type="button" class="button secondary" id="setup-pin-cancel-btn">Cancelar</button>
               <button class="button primary" type="submit"><i data-lucide="key-round"></i> Guardar y continuar</button>
             </footer>
           </form>

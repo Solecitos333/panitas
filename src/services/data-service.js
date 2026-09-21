@@ -161,9 +161,12 @@ export class DataService {
     const account = profileSnapshot.exists() ? profileSnapshot.data() : null;
     if (!account?.active) throw new Error('Tu usuario no está habilitado.');
     const storedPin = String(secretSnapshot.data()?.drawerPin || account.drawerPin || '');
+    if (!storedPin) {
+      throw new Error(`Esta cuenta (${account.displayName || this.actor.displayName || account.username || 'activa'}) aún no tiene un PIN configurado. Usa "Cambiar PIN" para asignarlo.`);
+    }
     if (storedPin !== cleanPin) {
       await this.audit('cash.drawer_failed', `PIN incorrecto: ${String(reason).slice(0, 120)}`);
-      throw new Error('PIN incorrecto.');
+      throw new Error(`PIN incorrecto para la cuenta de ${account.displayName || this.actor.displayName || account.username || 'esta sesión'}.`);
     }
     const authorizingUser = {
       id: this.actor.uid, uid: this.actor.uid,
