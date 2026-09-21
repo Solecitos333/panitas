@@ -320,7 +320,12 @@ export function renderPos(state) {
   const orders = Array.isArray(state.orders) ? state.orders : [];
   const clients = Array.isArray(state.clients) ? state.clients : [];
   const cart = Array.isArray(state.cart) ? state.cart : [];
-  const activeProducts = products.filter((item) => item.active !== false);
+  const activeProducts = products.filter((item) =>
+    item.active !== false &&
+    item.id !== 'prod-costo-de-envio-delivery' &&
+    item.sku !== 'SRV-DELIV' &&
+    !item.isDeliveryFee
+  );
   const occupiedTables = tables.filter((item) => item.active !== false && item.currentOrderId);
   const loadedTable = state.loadedTableId ? tables.find((t) => t.id === state.loadedTableId) : null;
   const loadedOrder = state.loadedOrderId ? orders.find((o) => o.id === state.loadedOrderId) : null;
@@ -638,20 +643,20 @@ export function renderPos(state) {
         <!-- DATOS DE DESPACHO DELIVERY (Si destino es Delivery) -->
         ${posDestination === 'delivery' ? `
           <div class="pos-cart-delivery-fields">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-              <span style="font-size:0.82rem;font-weight:800;color:#f59e0b;display:flex;align-items:center;gap:6px;">
-                <i data-lucide="bike" style="width:16px;height:16px;"></i> Datos de Despacho Delivery
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+              <span style="font-size:0.8rem;font-weight:800;color:#f59e0b;display:flex;align-items:center;gap:6px;">
+                <i data-lucide="bike" style="width:15px;height:15px;"></i> Datos de Despacho Delivery
               </span>
-              <button type="button" class="button secondary compact" data-driver-quick-new style="font-size:0.72rem;padding:2px 7px;height:auto;line-height:1.2;gap:3px;">
-                <i data-lucide="user-plus" style="width:12px;height:12px;"></i> + Chofer
+              <button type="button" class="button secondary compact" data-driver-quick-new style="font-size:0.7rem;padding:2px 7px;height:auto;line-height:1.2;gap:3px;">
+                <i data-lucide="user-plus" style="width:11px;height:11px;"></i> + Chofer
               </button>
             </div>
 
-            <!-- Chofer y Teléfono -->
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;">
+            <!-- Fila 1: Chofer y Teléfono -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:4px;">
               <div>
-                <label style="font-size:0.72rem;color:var(--muted);font-weight:600;display:block;margin-bottom:2px;">Chofer asignado <strong style="color:#f59e0b;">*</strong></label>
-                <select name="deliveryDriverId" id="pos-delivery-driver-select" style="font-size:0.82rem;padding:6px 8px;border-radius:8px;background:#1e293b;color:#f8fafc;border:1px solid #334155;width:100%;">
+                <label style="font-size:0.7rem;color:var(--muted);font-weight:600;display:block;margin-bottom:2px;">Chofer asignado <strong style="color:#f59e0b;">*</strong></label>
+                <select name="deliveryDriverId" id="pos-delivery-driver-select" style="font-size:0.8rem;padding:5px 7px;border-radius:8px;background:#1e293b;color:#f8fafc;border:1px solid #334155;width:100%;height:36px;">
                   <option value="">-- Seleccionar Chofer --</option>
                   ${(state.deliveryDrivers || []).filter(d => d.active !== false).map(d => `
                     <option value="${escapeHtml(d.id)}" data-name="${escapeHtml(d.name)}" ${draft.deliveryDriverId === d.id ? 'selected' : ''}>${escapeHtml(d.name)}${d.vehicle ? ' (' + escapeHtml(d.vehicle) + ')' : ''}</option>
@@ -660,70 +665,67 @@ export function renderPos(state) {
                 <input type="hidden" name="deliveryDriverName" id="pos-delivery-driver-name" value="${escapeHtml(draft.deliveryDriverName || '')}">
               </div>
               <div>
-                <label style="font-size:0.72rem;color:var(--muted);font-weight:600;display:block;margin-bottom:2px;">Teléfono móvil</label>
+                <label style="font-size:0.7rem;color:var(--muted);font-weight:600;display:block;margin-bottom:2px;">Teléfono móvil</label>
                 <input
                   type="tel"
                   name="deliveryPhone"
                   id="pos-delivery-phone"
                   value="${escapeHtml(draft.deliveryPhone || '')}"
                   placeholder="809-xxx-xxxx"
-                  style="font-size:0.82rem;padding:6px 8px;border-radius:8px;background:#1e293b;color:#f8fafc;border:1px solid #334155;width:100%;"
+                  style="font-size:0.8rem;padding:5px 7px;border-radius:8px;background:#1e293b;color:#f8fafc;border:1px solid #334155;width:100%;height:36px;"
                 >
               </div>
             </div>
 
-            <!-- Dirección de entrega -->
-            <div style="margin-bottom:6px;">
-              <label style="font-size:0.72rem;color:var(--muted);font-weight:600;display:block;margin-bottom:2px;">Dirección de entrega <strong style="color:#f59e0b;">*</strong></label>
+            <!-- Fila 2: Dirección de entrega -->
+            <div style="margin-bottom:4px;">
+              <label style="font-size:0.7rem;color:var(--muted);font-weight:600;display:block;margin-bottom:2px;">Dirección de entrega <strong style="color:#f59e0b;">*</strong></label>
               <input
                 type="text"
                 name="deliveryAddress"
                 id="pos-delivery-address"
                 value="${escapeHtml(draft.deliveryAddress || '')}"
                 placeholder="Calle, número, sector, punto de referencia..."
-                style="width:100%;font-size:0.82rem;padding:6px 8px;border-radius:8px;background:#1e293b;color:#f8fafc;border:1px solid #334155;"
+                style="width:100%;font-size:0.8rem;padding:5px 8px;border-radius:8px;background:#1e293b;color:#f8fafc;border:1px solid #334155;height:36px;"
               >
             </div>
 
-            <!-- Costo de Envío / Delivery -->
-            <div style="background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;margin-bottom:6px;">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
-                <span style="font-size:0.75rem;font-weight:700;color:#f59e0b;">Costo de Envío (RD$):</span>
-                <small style="font-size:0.7rem;color:var(--muted);">Suma al total de la cuenta</small>
-              </div>
-              <div style="display:flex;gap:5px;align-items:center;">
-                <input
-                  name="deliveryFee"
-                  id="pos-delivery-fee"
-                  type="text"
-                  data-touch-numpad="money"
-                  data-numpad-title="Costo de Envío (Delivery)"
-                  placeholder="0.00"
-                  value="${draft.deliveryFee || ''}"
-                  readonly
-                  inputmode="none"
-                  style="cursor:pointer;font-weight:800;color:var(--brand-2);font-size:0.95rem;padding:4px 8px;width:90px;border-radius:6px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.2);text-align:right;"
-                >
-                <div style="display:flex;gap:4px;flex-wrap:wrap;flex:1;">
-                  <button type="button" class="button secondary compact" data-quick-delivery-fee="0" style="font-size:0.7rem;padding:3px 6px;color:#ef4444;">$0</button>
-                  <button type="button" class="button secondary compact" data-quick-delivery-fee="50" style="font-size:0.7rem;padding:3px 6px;font-weight:700;">+$50</button>
-                  <button type="button" class="button secondary compact" data-quick-delivery-fee="75" style="font-size:0.7rem;padding:3px 6px;font-weight:700;">+$75</button>
-                  <button type="button" class="button secondary compact" data-quick-delivery-fee="100" style="font-size:0.7rem;padding:3px 6px;font-weight:700;">+$100</button>
+            <!-- Fila 3: Costo de Envío / Delivery y Notas -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;align-items:start;">
+              <div style="background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:4px 6px;">
+                <span style="font-size:0.7rem;font-weight:700;color:#f59e0b;display:block;margin-bottom:3px;">Costo Envío (RD$):</span>
+                <div style="display:flex;gap:4px;align-items:center;">
+                  <input
+                    name="deliveryFee"
+                    id="pos-delivery-fee"
+                    type="text"
+                    data-touch-numpad="money"
+                    data-numpad-title="Costo de Envío (Delivery)"
+                    placeholder="0.00"
+                    value="${draft.deliveryFee || ''}"
+                    readonly
+                    inputmode="none"
+                    style="cursor:pointer;font-weight:800;color:var(--brand-2);font-size:0.85rem;padding:3px 5px;width:64px;border-radius:6px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.2);text-align:right;height:28px;"
+                  >
+                  <div style="display:flex;gap:3px;flex-wrap:wrap;flex:1;">
+                    <button type="button" class="button secondary compact" data-quick-delivery-fee="0" style="font-size:0.68rem;padding:2px 4px;color:#ef4444;height:28px;line-height:1;">$0</button>
+                    <button type="button" class="button secondary compact" data-quick-delivery-fee="50" style="font-size:0.68rem;padding:2px 4px;font-weight:700;height:28px;line-height:1;">+50</button>
+                    <button type="button" class="button secondary compact" data-quick-delivery-fee="75" style="font-size:0.68rem;padding:2px 4px;font-weight:700;height:28px;line-height:1;">+75</button>
+                    <button type="button" class="button secondary compact" data-quick-delivery-fee="100" style="font-size:0.68rem;padding:2px 4px;font-weight:700;height:28px;line-height:1;">+100</button>
+                  </div>
                 </div>
               </div>
-            </div>
-
-            <!-- Notas de entrega / cambio -->
-            <div>
-              <label style="font-size:0.72rem;color:var(--muted);font-weight:600;display:block;margin-bottom:2px;">Nota para el chofer / Cambio requerido</label>
-              <input
-                type="text"
-                name="deliveryNotes"
-                id="pos-delivery-notes"
-                value="${escapeHtml(draft.deliveryNotes || '')}"
-                placeholder="Ej: Paga con billete de 1000, entregar en portón negro..."
-                style="width:100%;font-size:0.82rem;padding:6px 8px;border-radius:8px;background:#1e293b;color:#f8fafc;border:1px solid #334155;"
-              >
+              <div>
+                <label style="font-size:0.7rem;color:var(--muted);font-weight:600;display:block;margin-bottom:2px;">Nota / Cambio chofer</label>
+                <input
+                  type="text"
+                  name="deliveryNotes"
+                  id="pos-delivery-notes"
+                  value="${escapeHtml(draft.deliveryNotes || '')}"
+                  placeholder="Ej: Paga con 1000..."
+                  style="width:100%;font-size:0.8rem;padding:5px 8px;border-radius:8px;background:#1e293b;color:#f8fafc;border:1px solid #334155;height:36px;"
+                >
+              </div>
             </div>
           </div>
         ` : ''}
@@ -916,6 +918,7 @@ export function renderPos(state) {
               data-pos-send-table
               ${cart.length ? '' : 'disabled'}
               title="Enviar comanda a la mesa o cocina"
+              style="${posDestination !== 'table' ? 'display:none;' : ''}"
             >
               <i data-lucide="utensils"></i>
               <span>Mandar a mesa</span>
@@ -925,6 +928,7 @@ export function renderPos(state) {
               type="submit"
               id="pos-submit-btn"
               ${cart.length ? '' : 'disabled'}
+              style="${posDestination !== 'table' ? 'grid-column: 1 / -1; width: 100%;' : ''}"
             >
               <i data-lucide="key-round"></i>
               <span id="pos-submit-label">${loadedTable ? `Cobrar ${escapeHtml(loadedTable.name)} ${formatMoney(totals.totalCents)}` : posDestination === 'delivery' ? `Despachar Delivery ${formatMoney(totals.totalCents)}` : `Cobrar ${formatMoney(totals.totalCents)}`}</span>
@@ -1256,7 +1260,16 @@ export function cartLine(item, index) {
 }
 
 export function renderCartLines(items) {
-  return items && items.length ? items.map(cartLine).join('') : empty('shopping-basket', 'Cuenta vacía', 'Toca un producto del menú para agregarlo.');
+  if (!items || !items.length) {
+    return `<div class="pos-cart-empty">
+      <i data-lucide="shopping-basket"></i>
+      <div class="pos-cart-empty-text">
+        <strong>Cuenta vacía</strong>
+        <span>Toca cualquier producto del menú para agregarlo</span>
+      </div>
+    </div>`;
+  }
+  return items.map(cartLine).join('');
 }
 
 export function renderCartTotals(items, discountState = { discount: 0, discountType: 'amount', includeLegalTip: false }) {
