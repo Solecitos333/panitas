@@ -399,6 +399,29 @@ test('calculateClientTotalDebt acumula facturas pendientes excluyendo anuladas y
   assert.equal(calculateClientTotalDebt(walkInInvoice, stateInvoices), 15000);
 });
 
+test('deuda del ticket no mezcla clientes homónimos ni atribuye histórico sin identificación', () => {
+  const invoice = { id: 'current', clientId: 'ana-1', clientName: 'Ana Pérez', totalCents: 2000, paidCents: 500 };
+  const previous = [
+    { id: 'old-own', clientId: 'ana-1', clientName: 'Ana Pérez antiguo nombre', totalCents: 3000, paidCents: 1000 },
+    { id: 'old-other', clientId: 'ana-2', clientName: 'Ana Pérez', totalCents: 9000, paidCents: 0 },
+    { id: 'legacy', clientName: 'Ana Pérez', totalCents: 7000, paidCents: 0 }
+  ];
+  assert.equal(calculateClientTotalDebt(invoice, previous), 3500);
+  const legacy = { id: 'legacy-new', clientName: 'Ana Pérez', totalCents: 1000, paidCents: 0 };
+  assert.equal(calculateClientTotalDebt(legacy, previous, [{ id: 'ana-1', name: 'Ana Pérez' }]), 8000);
+});
+
+test('el ticket usa el saldo actualizado y no vuelve a sumar su factura actual', () => {
+  const invoice = { id: 'current', clientId: 'ana', clientName: 'Ana', totalCents: 2000, paidCents: 1500 };
+  const invoices = [
+    { ...invoice, paidCents: 0 },
+    { id: 'old', clientId: 'ana', clientName: 'Ana', totalCents: 3000, paidCents: 1000 }
+  ];
+  assert.equal(calculateClientTotalDebt(invoice, invoices), 2500);
+  assert.equal(calculateClientTotalDebt({ ...invoice, status: 'cancelled' }, invoices), 2000);
+  assert.equal(calculateClientTotalDebt({ ...invoice, documentType: 'quote' }, []), 0);
+});
+
 test('factura de fiao imprime desglose de compra, deuda anterior y total acumulado cuando hay deuda previa', () => {
   const invoiceWithPriorDebt = {
     id: 'fiao_current',
@@ -477,5 +500,4 @@ test('factura de fiao saldada muestra DEUDA PENDIENTE RESTANTE si el cliente aú
   assert.ok(escText.includes('1,200.00'));
 
 });
-
 

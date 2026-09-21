@@ -389,7 +389,7 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow get: if active();
+      allow get: if active() && (request.auth.uid == userId || isOwner());
       allow list: if isOwner();
       allow create: if isOwner()
         && request.resource.data.username is string
@@ -430,9 +430,7 @@ service cloud.firestore {
     // Reservations enforce uniqueness without exposing another user's identity.
     // This delivery uses personal authenticated sessions, not shared PIN lookup.
     match /pinClaims/{pin} {
-      // Allows an active POS terminal to verify and identify the employee entering their personal PIN
-      allow get: if active();
-      allow list: if false;
+      allow get, list: if false;
       allow create, update: if active() && validDrawerPin(pin)
         && request.resource.data.keys().hasOnly(['userId'])
         && request.resource.data.userId == request.auth.uid
@@ -639,9 +637,19 @@ service cloud.firestore {
       ) || (
         canBill()
         && resource.data.status != 'cancelled'
+        && resource.data.documentType == 'invoice'
+        && resource.data.get('deliveryStatus', '') != 'settled'
+        && (resource.data.get('deliveryDriverName', '') != ''
+          || resource.data.get('paymentMethod', '') == 'delivery_cod'
+          || resource.data.get('deliveryStatus', '') == 'in_transit')
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'deliveryDriverId', 'deliveryDriverName', 'deliveryNotes', 'updatedAt', 'updatedBy'
         ])
+        && request.resource.data.deliveryDriverId is string
+        && request.resource.data.deliveryDriverId.size() > 0
+        && exists(/databases/$(database)/documents/deliveryDrivers/$(request.resource.data.deliveryDriverId))
+        && get(/databases/$(database)/documents/deliveryDrivers/$(request.resource.data.deliveryDriverId)).data.get('active', true) != false
+        && request.resource.data.deliveryDriverName == get(/databases/$(database)/documents/deliveryDrivers/$(request.resource.data.deliveryDriverId)).data.name
         && request.resource.data.deliveryDriverName is string
         && request.resource.data.deliveryDriverName.size() > 0
         && request.resource.data.deliveryDriverName.size() <= 160

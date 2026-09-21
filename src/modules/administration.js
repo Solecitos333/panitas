@@ -193,27 +193,32 @@ export function calculateCashSessionFinancials(session, state = {}) {
   const cashOut = sessionMovements.filter((m) => m.type === 'out').reduce((sum, m) => sum + Number(m.amountCents || 0), 0);
   const expectedCash = Number(session.openingCents || 0) + cashCollected + cashIn - cashOut;
 
-  const sessionStartTime = session.openedAt ? new Date(session.openedAt).getTime() : 0;
-  const sessionEndTime = session.closedAt ? new Date(session.closedAt).getTime() : Infinity;
+  const timestampMillis = (value) => {
+    const date = typeof value?.toDate === 'function' ? value.toDate() : new Date(value);
+    return date.getTime();
+  };
+  const sessionStartTime = session.openedAt ? timestampMillis(session.openedAt) : NaN;
+  const sessionEndTime = session.closedAt ? timestampMillis(session.closedAt) : Infinity;
 
   const sessionInvoices = invoices.filter((inv) => {
-    if (inv.status === 'cancelled') return false;
-    if (inv.cashSessionId === session.id) return true;
-    if (inv.createdAt) {
-      const t = new Date(inv.createdAt).getTime();
-      return t >= sessionStartTime && t <= sessionEndTime;
-    }
-    return false;
+    if (inv.status === 'cancelled' || (inv.documentType && inv.documentType !== 'invoice')) return false;
+    // An explicit session is authoritative. An overlapping shift does not own this sale.
+    if (inv.cashSessionId) return inv.cashSessionId === session.id;
+    // Legacy invoices may lack the session reference; only attribute them to their author.
+    if (!session.openedBy || inv.createdBy !== session.openedBy || !inv.createdAt) return false;
+    const t = timestampMillis(inv.createdAt);
+    return t >= sessionStartTime && t <= sessionEndTime;
   });
 
-  const pendingDeliveries = getPendingDeliveryInvoices(sessionInvoices.length ? sessionInvoices : invoices);
+  const pendingDeliveries = getPendingDeliveryInvoices(sessionInvoices);
   const deliveryPendingCents = pendingDeliveries.reduce((sum, inv) => sum + (Number(inv.totalCents || 0) - Number(inv.paidCents || 0)), 0);
   const receivablesCents = sessionInvoices
-    .filter((inv) => inv.status === 'pending' || inv.status === 'credit' || inv.paymentMethod === 'fiao')
+    .filter((inv) => inv.status !== 'paid')
     .reduce((sum, inv) => sum + Math.max(0, Number(inv.totalCents || 0) - Number(inv.paidCents || 0)), 0);
 
   const invoicedTotalCents = sessionInvoices.reduce((sum, inv) => sum + Number(inv.totalCents || 0), 0);
-  const totalSalesCents = Math.max(invoicedTotalCents, totalCollected);
+  // Collecting a debt from an earlier shift is cash flow, not a new sale.
+  const totalSalesCents = invoicedTotalCents;
 
   const productCostMap = new Map();
   for (const prod of products) {
@@ -240,11 +245,13 @@ export function calculateCashSessionFinancials(session, state = {}) {
 
   const sessionWaste = inventoryMovements.filter((item) => {
     if (!item.isWaste && item.operation !== 'waste' && item.type !== 'waste') return false;
+    if (item.cashSessionId) return item.cashSessionId === session.id;
+    if (session.openedBy && item.createdBy !== session.openedBy) return false;
     if (item.createdAt) {
-      const t = new Date(item.createdAt).getTime();
+      const t = timestampMillis(item.createdAt);
       return t >= sessionStartTime && t <= sessionEndTime;
     }
-    return true;
+    return false;
   });
   const wasteLossCents = sessionWaste.reduce((sum, item) => sum + Number(item.wasteCostCents || item.totalCostCents || item.amountCents || 0), 0);
 
@@ -298,7 +305,7 @@ export function calculateCashSessionFinancials(session, state = {}) {
     categoriesBreakdown,
     pendingDeliveriesCount: pendingDeliveries.length,
     deliveryPendingCents,
-    receivablesCents: receivablesCents || deliveryPendingCents
+    receivablesCents
   };
 }
 
@@ -442,7 +449,7 @@ export function renderCash(state) {
                 Balance de Ganancias y Pérdidas del Turno (P&L)
               </h3>
               <p style="margin:0;color:var(--muted);font-size:0.82rem;">
-                Rentabilidad operativa real calculada a partir de ventas, costo de materia prima (COGS), mermas y salidas de caja.
+                Estimación de gestión: facturación menos costos registrados, mermas y salidas. Puede usar costos actuales del catálogo; no sustituye un estado de resultados contable ni clasifica impuestos o retiros del dueño.
               </p>
             </div>
             <div class="pnl-health-badge ${fin.netProfitCents >= 0 ? 'health-good' : 'health-danger'}">
@@ -453,7 +460,7 @@ export function renderCash(state) {
           <!-- Cuadrícula de 3 columnas: Ingresos, Costos y Margen Bruto -->
           <div class="cash-pnl-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-bottom:14px;">
             <div class="cash-pnl-stat-box">
-              <span class="pnl-stat-title"><i data-lucide="badge-dollar-sign"></i> Ventas Netas Totales</span>
+              <span class="pnl-stat-title"><i data-lucide="badge-dollar-sign"></i> Total Facturado del Turno</span>
               <strong class="pnl-stat-val" style="color:#38bdf8;">${formatMoney(fin.totalSalesCents)}</strong>
               <div class="pnl-stat-sub">
                 <span>Efectivo: ${formatMoney(fin.cashCollected)}</span> • 
@@ -462,7 +469,7 @@ export function renderCash(state) {
             </div>
 
             <div class="cash-pnl-stat-box">
-              <span class="pnl-stat-title"><i data-lucide="shopping-cart"></i> Costo de Mercancía (COGS)</span>
+              <span class="pnl-stat-title"><i data-lucide="shopping-cart"></i> Costo de Mercancía estimado (COGS)</span>
               <strong class="pnl-stat-val" style="color:#cbd5e1;">-${formatMoney(fin.cogsCents)}</strong>
               <div class="pnl-stat-sub">
                 ${fin.totalSalesCents > 0 ? `${Math.round((fin.cogsCents / fin.totalSalesCents) * 100)}% del ingreso bruto` : 'Sin ventas registradas'}
@@ -493,7 +500,7 @@ export function renderCash(state) {
 
             <div style="text-align:right;">
               <span style="font-size:0.76rem;color:var(--muted);text-transform:uppercase;font-weight:800;display:block;letter-spacing:0.5px;">
-                Resultado Neto Operativo (Ganancia o Pérdida):
+                Resultado Neto Operativo estimado:
               </span>
               <strong style="font-size:1.45rem;font-weight:900;color:${fin.netProfitCents >= 0 ? '#10b981' : '#f87171'};">
                 ${fin.netProfitCents >= 0 ? '+' : ''}${formatMoney(fin.netProfitCents)}

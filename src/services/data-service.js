@@ -75,7 +75,7 @@ export class DataService {
       this.watchAllowed('deliveries:*', 'deliveryDrivers', 'name', callbacks.deliveryDrivers, 'asc');
     }
     if (callbacks.inventoryMovements) {
-      this.watchAllowed('catalog:view', 'inventoryMovements', 'createdAt', callbacks.inventoryMovements, 'desc');
+      this.watchAllowed('inventory:*', 'inventoryMovements', 'createdAt', callbacks.inventoryMovements, 'desc');
     }
     if (callbacks.auditLogs) {
       this.watchAllowed('audit:view', 'auditLogs', 'createdAt', callbacks.auditLogs, 'desc');
@@ -153,57 +153,24 @@ export class DataService {
     const cleanPin = String(pin || '').trim();
     if (!/^\d{6}$/.test(cleanPin)) throw new Error('El PIN debe tener exactamente 6 dígitos.');
 
-    let authorizingUser = null;
-
-    // 1. Intento de resolución multi-usuario por pinClaims (Terminal compartido)
-    try {
-      const claimSnap = await getDoc(doc(this.db, 'pinClaims', cleanPin));
-      if (claimSnap.exists()) {
-        const targetUid = claimSnap.data()?.userId;
-        if (targetUid) {
-          const profileSnap = await getDoc(doc(this.db, 'users', targetUid));
-          if (profileSnap.exists()) {
-            const account = profileSnap.data();
-            if (!account.active) throw new Error(`El usuario ${account.displayName || account.username} no está habilitado.`);
-            authorizingUser = {
-              id: targetUid, uid: targetUid,
-              displayName: account.displayName || account.username || 'Usuario',
-              username: account.username || '',
-              roles: account.roles || []
-            };
-          }
-        }
-      }
-    } catch (claimErr) {
-      if (claimErr.message?.includes('no está habilitado')) throw claimErr;
-    }
-
-    // 2. Fallback de sesión personal directa
-    if (!authorizingUser) {
-      const [secretSnapshot, profileSnapshot] = await Promise.all([
-        getDoc(doc(this.db, 'userSecrets', this.actor.uid)),
-        getDoc(doc(this.db, 'users', this.actor.uid))
-      ]);
-      const account = profileSnapshot.exists() ? profileSnapshot.data() : null;
-      const storedPin = String(secretSnapshot.data()?.drawerPin || account?.drawerPin || '');
-      if (storedPin === cleanPin) {
-        if (!account?.active) throw new Error('Tu usuario no está habilitado.');
-        authorizingUser = {
-          id: this.actor.uid, uid: this.actor.uid,
-          displayName: account.displayName || this.actor.displayName,
-          username: account.username || this.actor.username || '',
-          roles: account.roles || []
-        };
-        if (secretSnapshot.data()?.pinUnique !== true) {
-          await this.saveMyDrawerPin(cleanPin).catch(() => {});
-        }
-      }
-    }
-
-    if (!authorizingUser) {
+    // Firebase authenticates the operator; a PIN must never switch that identity.
+    const [secretSnapshot, profileSnapshot] = await Promise.all([
+      getDoc(doc(this.db, 'userSecrets', this.actor.uid)),
+      getDoc(doc(this.db, 'users', this.actor.uid))
+    ]);
+    const account = profileSnapshot.exists() ? profileSnapshot.data() : null;
+    if (!account?.active) throw new Error('Tu usuario no está habilitado.');
+    const storedPin = String(secretSnapshot.data()?.drawerPin || account.drawerPin || '');
+    if (storedPin !== cleanPin) {
       await this.audit('cash.drawer_failed', `PIN incorrecto: ${String(reason).slice(0, 120)}`);
       throw new Error('PIN incorrecto.');
     }
+    const authorizingUser = {
+      id: this.actor.uid, uid: this.actor.uid,
+      displayName: account.displayName || this.actor.displayName || account.username || 'Usuario',
+      username: account.username || this.actor.username || '', roles: account.roles || []
+    };
+    if (secretSnapshot.data()?.pinUnique !== true) await this.saveMyDrawerPin(cleanPin);
 
     await this.audit('cash.pin_authorized', `${String(reason).slice(0, 240)} (Autorizado por ${authorizingUser.displayName})`);
     return {
@@ -245,7 +212,7 @@ export class DataService {
 
   async saveProduct(product) {
     const inventoryType = String(product.inventoryType || (product.isPrepared ? 'prepared' : 'resale')).trim();
-    const isPrepared = inventoryType === 'prepared' || Boolean(product.isPrepared);
+    const isPrepared = inventoryType === 'prepared';
     const minStock = Number.isFinite(Number(product.minStock)) ? Math.max(0, Number(product.minStock)) : 5;
     const payload = {
       sku: String(product.sku || '').trim().slice(0, 80),
@@ -468,17 +435,25 @@ export class DataService {
     }
     const name = String(driverName || '').trim().slice(0, 160);
     if (!name) throw new Error('Debes indicar el nombre del nuevo repartidor.');
+    const targetDriverId = String(driverId || '').trim();
+    if (!targetDriverId || targetDriverId.includes('/')) throw new Error('Selecciona un repartidor activo.');
     const invoiceRef = doc(this.db, 'invoices', invoiceId);
+    const driverRef = doc(this.db, 'deliveryDrivers', targetDriverId);
     let updatedDoc = null;
     await runTransaction(this.db, async (transaction) => {
-      const snap = await transaction.get(invoiceRef);
+      const [snap, driverSnapshot] = await Promise.all([transaction.get(invoiceRef), transaction.get(driverRef)]);
       if (!snap.exists()) throw new Error('La factura no existe.');
       const inv = snap.data();
       if (inv.status === 'cancelled') throw new Error('No se puede reasignar una factura anulada.');
+      if (inv.documentType !== 'invoice' || inv.deliveryStatus === 'settled'
+        || !(inv.deliveryDriverName || inv.paymentMethod === 'delivery_cod' || inv.deliveryStatus === 'in_transit')) {
+        throw new Error('Solo se pueden reasignar entregas pendientes.');
+      }
+      if (!driverSnapshot.exists() || driverSnapshot.data().active === false) throw new Error('El repartidor ya no está activo.');
       const oldDriver = inv.deliveryDriverName || 'Sin asignar';
       const updates = {
-        deliveryDriverId: String(driverId || '').trim().slice(0, 60),
-        deliveryDriverName: name,
+        deliveryDriverId: targetDriverId,
+        deliveryDriverName: driverSnapshot.data().name,
         updatedAt: serverTimestamp(),
         updatedBy: this.actor.uid
       };
@@ -489,7 +464,7 @@ export class DataService {
       const auditRef = doc(collection(this.db, 'auditLogs'));
       transaction.set(auditRef, {
         action: 'delivery.driver_reassigned',
-        details: `Factura ${inv.invoiceNumber || invoiceId}: reasignada de "${oldDriver}" a "${name}"`,
+        details: `Factura ${inv.invoiceNumber || invoiceId}: reasignada de "${oldDriver}" a "${updates.deliveryDriverName}"`,
         actorId: this.actor.uid,
         actorName: this.actor.displayName || this.actor.username || '',
         actorEmail: this.actor.email || '',
@@ -801,7 +776,8 @@ export class DataService {
       ? doc(this.db, 'cashSessions', input.payment.cashSessionId)
       : null;
     if (amountCents > 0 && !cashSessionRef) throw new Error('Abre una caja antes de registrar el cobro.');
-    if (amountCents > 0 && !PAYMENT_METHODS.includes(input.payment?.method)) throw new Error('Forma de pago inválida.');
+    if (amountCents > 0 && (!PAYMENT_METHODS.includes(input.payment?.method)
+      || ['credit', 'delivery_cod'].includes(input.payment?.method))) throw new Error('Forma de pago inválida.');
     const inventoryLines = new Map();
     if (documentType === 'invoice') {
       for (const line of input.items) {
@@ -870,7 +846,7 @@ export class DataService {
           transaction.update(ref, { stock: Math.round((stock - quantity) * 1000) / 1000, updatedAt: serverTimestamp(), updatedBy: this.actor.uid });
         }
       });
-      const cashierName = String(input.cashierName || input.payment?.authorizedByName || this.actor.displayName || this.actor.username || 'Cajero').trim();
+      const cashierName = String(this.actor.displayName || this.actor.username || 'Cajero').trim();
       transaction.set(invoiceRef, {
         ...(hasRequestId ? { requestId } : {}),
         documentType, invoiceNumber, ncf, ncfType,
@@ -942,19 +918,32 @@ export class DataService {
   async recordPayment(invoiceId, payment) {
     const invoiceRef = doc(this.db, 'invoices', invoiceId);
     const requestId = String(payment.requestId || '').trim();
+    if (requestId && !/^[a-zA-Z0-9_-]{16,100}$/.test(requestId)) throw new Error('Identificador de pago inválido.');
     const hasRequestId = /^[a-zA-Z0-9_-]{16,100}$/.test(requestId);
     const paymentRef = hasRequestId ? doc(this.db, 'payments', requestId) : doc(collection(this.db, 'payments'));
     const auditRef = doc(collection(this.db, 'auditLogs'));
     if (!payment.cashSessionId) throw new Error('Abre una caja antes de registrar el cobro.');
-    if (!PAYMENT_METHODS.includes(payment.method)) throw new Error('Forma de pago inválida.');
+    if (!PAYMENT_METHODS.includes(payment.method) || ['credit', 'delivery_cod'].includes(payment.method)) throw new Error('Forma de pago inválida.');
+    const amountCents = Number(payment.amountCents);
+    if (!Number.isInteger(amountCents) || amountCents <= 0) throw new Error('Monto de pago inválido.');
+    const tenderedCents = payment.method === 'cash' ? Number(payment.tenderedCents ?? amountCents) : 0;
+    const changeCents = payment.method === 'cash' ? tenderedCents - amountCents : 0;
+    const reference = String(payment.reference || '').slice(0, 120);
+    if (payment.method === 'cash' && (!Number.isInteger(tenderedCents) || tenderedCents < amountCents)) throw new Error('Efectivo recibido inválido.');
+    const matches = (previous) => previous?.requestId === requestId
+      && previous.createdBy === this.actor.uid && previous.invoiceId === invoiceId
+      && previous.amountCents === amountCents && previous.method === payment.method
+      && previous.cashSessionId === payment.cashSessionId
+      && (previous.reference || '') === reference && previous.tenderedCents === tenderedCents
+      && previous.changeCents === changeCents;
     const cashSessionRef = doc(this.db, 'cashSessions', payment.cashSessionId);
-    await runTransaction(this.db, async (transaction) => {
+    try { await runTransaction(this.db, async (transaction) => {
       const [snapshot, cashSessionSnapshot, existingPaymentSnapshot] = await Promise.all([
         transaction.get(invoiceRef), transaction.get(cashSessionRef), transaction.get(paymentRef)
       ]);
       if (existingPaymentSnapshot.exists()) {
         const existing = existingPaymentSnapshot.data();
-        if (hasRequestId && existing.requestId === requestId && existing.createdBy === this.actor.uid && existing.invoiceId === invoiceId) return;
+        if (hasRequestId && matches(existing)) return;
         throw new Error('La referencia de este pago ya está en uso.');
       }
       if (!snapshot.exists()) throw new Error('La factura no existe.');
@@ -965,14 +954,11 @@ export class DataService {
         throw new Error('No puedes registrar cobros en la caja de otro usuario.');
       }
       const invoice = snapshot.data();
+      if (invoice.documentType !== 'invoice') throw new Error('Solo las facturas admiten cobros.');
       if (['paid', 'cancelled'].includes(invoice.status)) throw new Error('La factura no admite cobros.');
-      const amountCents = Number(payment.amountCents);
       const balance = Number(invoice.totalCents) - Number(invoice.paidCents || 0);
       if (!Number.isInteger(amountCents) || amountCents <= 0 || amountCents > balance) throw new Error('Monto de pago inválido.');
       const paidCents = Number(invoice.paidCents || 0) + amountCents;
-      const tenderedCents = payment.method === 'cash' ? Number(payment.tenderedCents || amountCents) : 0;
-      const changeCents = payment.method === 'cash' ? tenderedCents - amountCents : 0;
-      if (payment.method === 'cash' && (!Number.isInteger(tenderedCents) || tenderedCents < amountCents)) throw new Error('Efectivo recibido inválido.');
       const isSettlingDelivery = (invoice.deliveryDriverName || invoice.paymentMethod === 'delivery_cod')
         && paidCents >= Number(invoice.totalCents);
       transaction.update(invoiceRef, {
@@ -987,7 +973,7 @@ export class DataService {
       transaction.set(paymentRef, {
         ...(hasRequestId ? { requestId } : {}),
         invoiceId, invoiceNumber: invoice.invoiceNumber, amountCents, method: payment.method,
-        reference: String(payment.reference || '').slice(0, 120), tenderedCents, changeCents,
+        reference, tenderedCents, changeCents,
         cashierId: this.actor.uid,
         cashierName: this.actor.displayName || this.actor.username || '',
         cashSessionId: payment.cashSessionId || '',
@@ -1005,10 +991,14 @@ export class DataService {
         });
       }
       transaction.set(auditRef, {
-        action: 'payment.created', details: `${invoice.invoiceNumber}: ${amountCents}${payment.cashierName ? ` (${payment.cashierName})` : ''}`,
+        action: 'payment.created', details: `${invoice.invoiceNumber}: ${amountCents} (${this.actor.displayName || this.actor.username || this.actor.uid})`,
         actorId: this.actor.uid, actorEmail: this.actor.email || '', createdAt: serverTimestamp()
       });
-    });
+    }); } catch (error) {
+      const confirmed = hasRequestId ? await getDocFromServer(paymentRef).catch(() => null) : null;
+      if (!confirmed?.exists() || !matches(confirmed.data())) throw error;
+    }
+    return paymentRef.id;
   }
 
   async cancelInvoice(invoiceId, reason) {

@@ -1,6 +1,7 @@
 import { escapeHtml, formatDate, formatMoney } from '../lib/format.js';
 import { getPendingDeliveryInvoices } from '../domain/billing.js';
 import { matchesFuzzy } from '../lib/fuzzy-search.js';
+import { inBusinessPeriod } from '../lib/business-time.js';
 
 export function cleanPhoneForWa(phone) {
   if (!phone) return '';
@@ -9,13 +10,11 @@ export function cleanPhoneForWa(phone) {
   return digits;
 }
 
-function isToday(d) {
-  if (!d) return false;
-  const date = d?.toDate ? d.toDate() : new Date(d || 0);
-  const now = new Date();
-  return date.getFullYear() === now.getFullYear() &&
-         date.getMonth() === now.getMonth() &&
-         date.getDate() === now.getDate();
+export function getDeliverySettlementDate(invoice, payments = []) {
+  if (invoice.deliverySettledAt) return invoice.deliverySettledAt;
+  const payment = invoice.lastPaymentId && payments.find(p => p.id === invoice.lastPaymentId && p.invoiceId === invoice.id);
+  // Initial fully paid deliveries have no later settlement event.
+  return payment?.createdAt || invoice.createdAt;
 }
 
 export function renderDeliveries(state) {
@@ -56,13 +55,16 @@ export function renderDeliveries(state) {
       inv.deliveryAddress
     );
     if (!isDelivery) return false;
+    if (inv.documentType && inv.documentType !== 'invoice') return false;
     if (inv.status === 'cancelled') return false;
     const balance = Number(inv.totalCents || 0) - Number(inv.paidCents || 0);
     if (balance > 0) return false;
-    return isToday(inv.createdAt);
+    return inBusinessPeriod(getDeliverySettlementDate(inv, state.payments), 'day');
   }).sort((a, b) => {
-    const da = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
-    const db = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
+    const dateA = getDeliverySettlementDate(a, state.payments);
+    const dateB = getDeliverySettlementDate(b, state.payments);
+    const da = dateA?.toDate ? dateA.toDate() : new Date(dateA || 0);
+    const db = dateB?.toDate ? dateB.toDate() : new Date(dateB || 0);
     return db - da;
   });
 

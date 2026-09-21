@@ -1,5 +1,33 @@
 import { matchesFuzzy } from '../lib/fuzzy-search.js';
 import { formatMoney } from './billing.js';
+import { businessDateKey } from '../lib/business-time.js';
+
+// Never merge two registered people merely because they share a display name.
+export function getClientIdentityKey(client = {}) {
+  const id = String(client.clientId || client.id || '').trim();
+  if (id) return `id:${id}`;
+  const name = String(client.clientName || client.deliveryClientName || client.name || '').trim().toLowerCase();
+  return `name:${name}`;
+}
+
+export function invoiceBelongsToClient(invoice = {}, client = {}) {
+  return getClientIdentityKey({ clientId: invoice.clientId, name: invoice.clientName || invoice.deliveryClientName }) === getClientIdentityKey(client);
+}
+
+export function getReceivableAgeDays(value, now = new Date()) {
+  const date = businessDateKey(value), today = businessDateKey(now);
+  if (!date || !today) return 0;
+  return Math.max(0, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`)) / 86400000));
+}
+
+export function isFiaoPayment(payment, invoice) {
+  if (isDeliveryInvoice(invoice) || String(payment.requestId || '').startsWith('delivery-settle')) return false;
+  return Boolean(invoice?.paymentMethod === 'credit' || invoice?.paymentMethod === 'fiao'
+    || String(invoice?.notes || '').toLowerCase().includes('fiao')
+    || String(payment.reference || '').toLowerCase().includes('fiao')
+    || String(payment.requestId || '').startsWith('fiao-')
+    || ['fiao', 'credit'].includes(payment.concept));
+}
 
 /**
  * Determina si una factura corresponde a un pedido de delivery (contra entrega o en ruta)
@@ -34,13 +62,11 @@ export function getClientMemory(state = {}) {
   const invoices = state.invoices || [];
   const clientMap = new Map();
 
-  const getCleanKey = (name) => String(name || '').trim().toLowerCase();
-
   // 1. Sembrar con los clientes registrados formalmente en la base de datos
   for (const c of clients) {
     const rawName = String(c.name || '').trim();
     if (!rawName || rawName.toLowerCase() === 'consumidor final') continue;
-    const key = getCleanKey(rawName);
+    const key = getClientIdentityKey(c);
 
     clientMap.set(key, {
       id: c.id || '',
@@ -73,7 +99,7 @@ export function getClientMemory(state = {}) {
   for (const inv of sortedInvoices) {
     const rawName = String(inv.clientName || inv.deliveryClientName || '').trim();
     if (!rawName || rawName.toLowerCase() === 'consumidor final') continue;
-    const key = getCleanKey(rawName);
+    const key = getClientIdentityKey({ clientId: inv.clientId, name: rawName });
 
     if (!clientMap.has(key)) {
       clientMap.set(key, {
@@ -243,46 +269,32 @@ export function getReceivablesMetrics(invoices = [], payments = [], clients = []
 
   const fiaoClientsSet = new Set();
   for (const inv of fiaoInvoices) {
-    fiaoClientsSet.add(String(inv.clientName || 'Cliente').trim().toLowerCase());
+    fiaoClientsSet.add(getClientIdentityKey({ clientId: inv.clientId, name: inv.clientName || 'Cliente' }));
   }
 
   const deliveryClientsSet = new Set();
   for (const inv of deliveryInvoices) {
-    deliveryClientsSet.add(String(inv.clientName || inv.deliveryClientName || 'Cliente').trim().toLowerCase());
+    deliveryClientsSet.add(getClientIdentityKey({ clientId: inv.clientId, name: inv.clientName || inv.deliveryClientName || 'Cliente' }));
   }
 
   const allClientsSet = new Set([...fiaoClientsSet, ...deliveryClientsSet]);
 
-  const today = new Date();
-  const isToday = (d) => {
-    const date = d?.toDate ? d.toDate() : new Date(d || 0);
-    return date.getFullYear() === today.getFullYear() &&
-           date.getMonth() === today.getMonth() &&
-           date.getDate() === today.getDate();
-  };
+  const today = businessDateKey();
+  const isToday = (d) => businessDateKey(d) === today;
 
   const invoiceMap = new Map();
   for (const inv of invoices) {
     invoiceMap.set(inv.id, inv);
   }
 
-  const fiaoPayments = (payments || []).filter(p => {
-    const inv = invoiceMap.get(p.invoiceId);
-    return Boolean(
-      (inv && (inv.paymentMethod === 'credit' || (inv.notes && inv.notes.toLowerCase().includes('fiao')))) ||
-      p.reference?.toLowerCase().includes('fiao') ||
-      p.requestId?.startsWith('fiao-') ||
-      (p.requestId?.startsWith('delivery-settle') === false && (p.concept === 'fiao' || p.concept === 'credit'))
-    );
-  });
+  const fiaoPayments = (payments || []).filter(p => isFiaoPayment(p, invoiceMap.get(p.invoiceId)));
 
   const fiaoPaymentsToday = fiaoPayments.filter(p => isToday(p.createdAt));
   const todayCollectedCents = fiaoPaymentsToday.reduce((sum, p) => sum + Number(p.amountCents || 0), 0);
 
   // Deuda en mora (+15 días)
   const overdueDebtCents = pendingInvoices.reduce((sum, inv) => {
-    const invDate = inv.createdAt?.toDate ? inv.createdAt.toDate() : new Date(inv.createdAt || 0);
-    const ageDays = Math.max(0, Math.floor((Date.now() - invDate.getTime()) / (1000 * 60 * 60 * 24)));
+    const ageDays = getReceivableAgeDays(inv.createdAt);
     return ageDays >= 15 ? sum + (Number(inv.totalCents || 0) - Number(inv.paidCents || 0)) : sum;
   }, 0);
 
@@ -362,4 +374,3 @@ export function buildClientWhatsAppUrl(client, settings = {}) {
   }
   return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
 }
-

@@ -19,6 +19,7 @@ export function createSleepManager({
       sleep: () => {},
       wake: () => {},
       touchActivity: () => {},
+      reset: () => {},
       isSleeping: () => false,
       getRemainingSeconds: () => 0
     };
@@ -28,7 +29,21 @@ export function createSleepManager({
   let isSleeping = false;
   let overlayEl = null;
   let checkTimer = null;
+  let wakeTimer = null;
   let listening = false;
+
+  function consumeWakeEvent(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation?.();
+    wake();
+  }
+
+  function captureSleepingKey(e) {
+    // El foco puede seguir en un formulario detrás del blackout. Capturar antes
+    // de que Enter envíe una venta o el escáner escriba sobre un campo invisible.
+    if (isSleeping) consumeWakeEvent(e);
+  }
 
   function ensureOverlay() {
     if (overlayEl && document.body.contains(overlayEl)) return overlayEl;
@@ -47,20 +62,9 @@ export function createSleepManager({
       document.body.appendChild(overlayEl);
     }
 
-    const wakeHandler = (e) => {
-      // Capturar y consumir el toque para que no accione botones debajo
-      e.preventDefault();
-      e.stopPropagation();
-      if (typeof e.stopImmediatePropagation === 'function') {
-        e.stopImmediatePropagation();
-      }
-      wake();
-    };
-
     // Registrar en fase de captura para atrapar el toque antes de que baje al DOM
     for (const evt of ['pointerdown', 'touchstart', 'mousedown', 'keydown']) {
-      overlayEl.removeEventListener(evt, wakeHandler, true);
-      overlayEl.addEventListener(evt, wakeHandler, true);
+      overlayEl.addEventListener(evt, consumeWakeEvent, true);
     }
 
     return overlayEl;
@@ -73,6 +77,8 @@ export function createSleepManager({
 
   function sleep() {
     if (isSleeping) return;
+    clearTimeout(wakeTimer);
+    wakeTimer = null;
     const overlay = ensureOverlay();
     isSleeping = true;
     overlay.style.display = 'flex';
@@ -94,7 +100,9 @@ export function createSleepManager({
     setTerminalSleepMode(false);
     if (overlayEl) {
       overlayEl.classList.remove('active');
-      setTimeout(() => {
+      clearTimeout(wakeTimer);
+      wakeTimer = setTimeout(() => {
+        wakeTimer = null;
         if (!isSleeping && overlayEl) {
           overlayEl.style.display = 'none';
         }
@@ -130,6 +138,7 @@ export function createSleepManager({
     for (const evt of activityEvents) {
       window.addEventListener(evt, touchActivity, { capture: true, passive: true });
     }
+    window.addEventListener('keydown', captureSleepingKey, true);
     if (!checkTimer) {
       checkTimer = setInterval(check, 2000);
     }
@@ -137,6 +146,8 @@ export function createSleepManager({
 
   function destroy() {
     listening = false;
+    clearTimeout(wakeTimer);
+    wakeTimer = null;
     if (checkTimer) {
       clearInterval(checkTimer);
       checkTimer = null;
@@ -145,6 +156,7 @@ export function createSleepManager({
     for (const evt of activityEvents) {
       window.removeEventListener(evt, touchActivity, { capture: true, passive: true });
     }
+    window.removeEventListener('keydown', captureSleepingKey, true);
     if (overlayEl) {
       overlayEl.remove();
       overlayEl = null;

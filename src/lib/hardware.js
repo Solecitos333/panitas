@@ -6,6 +6,7 @@
 import { formatDate, formatMoney } from './format.js';
 import { createOperationId } from './id.js';
 import { updateSafety } from './update-safety.js';
+import { invoiceBelongsToClient } from '../domain/client-memory.js';
 
 function callEloNativeAsync(method, args = [], timeoutMs = 20000) {
   if (typeof window === 'undefined' || typeof window.EloPOS?.[method] !== 'function') return Promise.resolve(null);
@@ -77,25 +78,26 @@ export function resolveReceiptQrUrl(settings = {}) {
  * Si el cliente no tiene ID y es genérico (Consumidor final), solo se computa la factura actual.
  * @param {object} invoice - Factura actual (se usan sus valores en memoria si está presente)
  * @param {Array} [invoices] - Lista de facturas del sistema (state.invoices)
- * @param {Array} [clients] - Lista de clientes registrados (state.clients)
  * @returns {number} Centavos de deuda total acumulada
  */
-export function calculateClientTotalDebt(invoice, invoices = [], clients = []) {
+export function calculateClientTotalDebt(invoice, invoices = []) {
   if (!invoice) return 0;
-  let targetId = invoice.clientId ? String(invoice.clientId).trim() : '';
+  const targetId = invoice.clientId ? String(invoice.clientId).trim() : '';
   const targetName = invoice.clientName ? String(invoice.clientName).trim().toLowerCase() : '';
   const isGenericName = !targetName ||
     targetName === 'consumidor final' ||
     targetName === 'contado' ||
     targetName === 'cliente de prueba elo';
 
-  if (!targetId && targetName && !isGenericName && Array.isArray(clients) && clients.length > 0) {
-    const regClient = clients.find(c => c && c.name && String(c.name).trim().toLowerCase() === targetName);
-    if (regClient?.id) targetId = String(regClient.id).trim();
-  }
+  // El nombre no acredita identidad: un histórico sin clientId permanece separado
+  // de los clientes registrados, incluso cuando solo hay un homónimo en el directorio.
+  const client = { id: targetId, name: targetName };
+  const currentBalance = invoice.status === 'cancelled'
+    || (invoice.documentType && invoice.documentType !== 'invoice') ? 0
+    : Math.max(0, Number(invoice.totalCents || 0) - Number(invoice.paidCents || 0));
 
   if (!targetId && isGenericName) {
-    return Math.max(0, Number(invoice.totalCents || 0) - Number(invoice.paidCents || 0));
+    return currentBalance;
   }
 
   let totalDebt = 0;
@@ -105,16 +107,10 @@ export function calculateClientTotalDebt(invoice, invoices = [], clients = []) {
     if (!inv || inv.status === 'cancelled') continue;
     if (inv.documentType && inv.documentType !== 'invoice') continue;
 
-    const invId = inv.clientId ? String(inv.clientId).trim() : '';
-    const invName = inv.clientName ? String(inv.clientName).trim().toLowerCase() : '';
-
-    const matchById = Boolean(targetId && invId && targetId === invId);
-    const matchByName = Boolean(!isGenericName && invName && targetName === invName);
-
-    if (matchById || matchByName) {
+    if (invoiceBelongsToClient(inv, client)) {
       if (inv.id && invoice.id && inv.id === invoice.id) {
         currentInvoiceCounted = true;
-        totalDebt += Math.max(0, Number(invoice.totalCents || 0) - Number(invoice.paidCents || 0));
+        totalDebt += currentBalance;
       } else {
         totalDebt += Math.max(0, Number(inv.totalCents || 0) - Number(inv.paidCents || 0));
       }
@@ -122,7 +118,7 @@ export function calculateClientTotalDebt(invoice, invoices = [], clients = []) {
   }
 
   if (!currentInvoiceCounted) {
-    totalDebt += Math.max(0, Number(invoice.totalCents || 0) - Number(invoice.paidCents || 0));
+    totalDebt += currentBalance;
   }
 
   return totalDebt;
@@ -1804,4 +1800,3 @@ export function setTerminalSleepMode(sleeping) {
     }
   }
 }
-

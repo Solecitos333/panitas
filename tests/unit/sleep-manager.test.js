@@ -14,6 +14,7 @@ test('createSleepManager en entorno Node (sin window) devuelve un stub seguro qu
   assert.equal(typeof sm.sleep, 'function');
   assert.equal(typeof sm.wake, 'function');
   assert.equal(typeof sm.isSleeping, 'function');
+  assert.equal(typeof sm.reset, 'function');
   assert.equal(sm.isSleeping(), false);
   assert.doesNotThrow(() => sm.sleep());
   assert.doesNotThrow(() => sm.wake());
@@ -37,6 +38,110 @@ test('setTerminalSleepMode interactúa correctamente con window.EloPOS si existe
   assert.equal(sleepModeArg, false);
 
   delete globalThis.window;
+});
+
+function sleepingTerminal(t, options = {}) {
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  let now = 0;
+  let nextId = 0;
+  let attached = false;
+  const intervals = new Map();
+  const timers = new Map();
+  const brightness = [];
+  const overlay = Object.assign(new EventTarget(), {
+    id: 'pos-sleep-screen', style: {},
+    classList: { add() {}, remove() {} },
+    setAttribute() {},
+    remove() { attached = false; }
+  });
+  const win = Object.assign(new EventTarget(), { EloPOS: { setSleepMode: (value) => brightness.push(value) } });
+  globalThis.window = win;
+  globalThis.document = {
+    body: { contains: () => attached, appendChild: () => { attached = true; } },
+    getElementById: () => attached ? overlay : null,
+    createElement: () => overlay
+  };
+  t.mock.method(Date, 'now', () => now);
+  t.mock.method(globalThis, 'setTimeout', (callback, delay) => {
+    timers.set(++nextId, { callback, at: now + delay });
+    return nextId;
+  });
+  t.mock.method(globalThis, 'clearTimeout', (id) => timers.delete(id));
+  t.mock.method(globalThis, 'setInterval', (callback) => {
+    intervals.set(++nextId, callback);
+    return nextId;
+  });
+  t.mock.method(globalThis, 'clearInterval', (id) => intervals.delete(id));
+  const manager = createSleepManager({ getTimeoutSeconds: () => 60, ...options });
+  manager.start();
+  t.after(() => {
+    manager.destroy();
+    if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
+    if (previousDocument === undefined) delete globalThis.document; else globalThis.document = previousDocument;
+  });
+  return {
+    manager, win, overlay, brightness, timers, intervals,
+    advance(ms) {
+      now += ms;
+      for (const [id, timer] of timers) if (timer.at <= now) { timers.delete(id); timer.callback(); }
+    },
+    check() { for (const callback of intervals.values()) callback(); }
+  };
+}
+
+test('Enter despierta desde un campo enfocado sin enviar el formulario oculto', (t) => {
+  const { manager, win, brightness } = sleepingTerminal(t);
+  let reachedForm = 0;
+  win.addEventListener('keydown', () => { reachedForm++; });
+  manager.sleep();
+  const sleepingKey = new Event('keydown', { cancelable: true });
+  win.dispatchEvent(sleepingKey);
+  assert.equal(manager.isSleeping(), false);
+  assert.equal(sleepingKey.defaultPrevented, true);
+  assert.equal(reachedForm, 0);
+  assert.deepEqual(brightness, [true, false]);
+
+  const awakeKey = new Event('keydown', { cancelable: true });
+  win.dispatchEvent(awakeKey);
+  assert.equal(awakeKey.defaultPrevented, false, 'El teclado normal vuelve a estar disponible');
+  assert.equal(reachedForm, 1);
+});
+
+test('la suspensión automática espera a que termine una operación de caja', (t) => {
+  let busy = true;
+  const terminal = sleepingTerminal(t, { isBusy: () => busy });
+  terminal.advance(60000);
+  terminal.check();
+  assert.equal(terminal.manager.isSleeping(), false);
+  busy = false;
+  terminal.advance(14000);
+  terminal.check();
+  assert.equal(terminal.manager.isSleeping(), false);
+  terminal.advance(1000);
+  terminal.check();
+  assert.equal(terminal.manager.isSleeping(), true);
+});
+
+test('despertares sucesivos cancelan el temporizador anterior y destroy elimina los listeners', (t) => {
+  const terminal = sleepingTerminal(t);
+  terminal.manager.sleep();
+  terminal.manager.wake();
+  terminal.advance(100);
+  terminal.manager.sleep();
+  terminal.manager.wake();
+  terminal.advance(250);
+  assert.equal(terminal.overlay.style.display, 'flex', 'El temporizador de un despertar anterior no puede ocultar el overlay actual');
+  terminal.advance(100);
+  assert.equal(terminal.overlay.style.display, 'none');
+  terminal.manager.sleep();
+  terminal.manager.wake();
+  terminal.manager.destroy();
+  assert.equal(terminal.timers.size, 0);
+  assert.equal(terminal.intervals.size, 0);
+  const key = new Event('keydown', { cancelable: true });
+  terminal.win.dispatchEvent(key);
+  assert.equal(key.defaultPrevented, false);
 });
 
 test('createSleepManager maneja el ciclo de vida y DOM simulado correctamente', () => {

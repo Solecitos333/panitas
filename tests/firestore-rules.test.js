@@ -404,6 +404,70 @@ test('el servicio real completa factura, pago, inventario, contador y caja atóm
   assert.equal((await getDoc(doc(db, 'userSecrets', 'cashier'))).data().drawerPin, '482601');
 });
 
+test('el pago concurrente es único y no acepta cambiar importe, caja, método o referencia al reintentar', async () => {
+  const db = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  const service = new DataService(db, { uid: 'cashier', displayName: 'Caja' });
+  const payment = { requestId: 'payment-concurrent-00001', cashSessionId: 'shift-cashier',
+    amountCents: 3000, method: 'cash', tenderedCents: 5000, reference: 'Abono inicial' };
+  const ids = await Promise.all([service.recordPayment('i1', payment), service.recordPayment('i1', payment)]);
+  assert.equal(ids[0], ids[1]);
+  assert.equal((await getDoc(doc(db, 'invoices', 'i1'))).data().paidCents, 3000);
+  assert.equal((await getDoc(doc(db, 'cashSessions', 'shift-cashier'))).data().expectedCents, 3500);
+  for (const change of [{ amountCents: 1000 }, { method: 'card' }, { tenderedCents: 6000 },
+    { reference: 'Otro concepto' }, { cashSessionId: 'shift-different' }]) {
+    await assert.rejects(service.recordPayment('i1', { ...payment, ...change }), /referencia/);
+  }
+  await service.closeCashSession('shift-cashier', { closingCents: 3500 });
+  assert.equal(await service.recordPayment('i1', payment), payment.requestId);
+  assert.equal((await getDoc(doc(db, 'invoices', 'i1'))).data().paidCents, 3000);
+});
+
+test('una cotización no admite cobros aunque tenga saldo y caja abierta', async () => {
+  const db = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), 'invoices', 'i1'), { documentType: 'quote' });
+  });
+  const service = new DataService(db, { uid: 'cashier' });
+  await assert.rejects(service.recordPayment('i1', { requestId: 'quote-payment-000001',
+    method: 'cash', amountCents: 1000, cashSessionId: 'shift-cashier' }), /Solo las facturas/);
+  assert.equal((await getDoc(doc(db, 'invoices', 'i1'))).data().paidCents, 0);
+});
+
+test('cambiar un producto preparado a vitrina reactiva el descuento de existencias', async () => {
+  const db = environment.authenticatedContext('owner', auth('owner')).firestore();
+  const service = new DataService(db, { uid: 'owner', roles: ['owner'], active: true });
+  await service.saveProduct({ id: 'p1', name: 'Empanada', priceCents: 10000,
+    inventoryType: 'preprepared', isPrepared: true, stock: 10 });
+  assert.equal((await getDoc(doc(db, 'products', 'p1'))).data().isPrepared, false);
+  await service.createDirectDocument({ requestId: 'stock-type-change-00001',
+    items: [{ productId: 'p1', name: 'Empanada', unitPriceCents: 10000, quantity: 1 }] });
+  assert.equal((await getDoc(doc(db, 'products', 'p1'))).data().stock, 9);
+});
+
+test('reasignar delivery exige factura pendiente y repartidor activo sin falsear su nombre', async () => {
+  const db = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  const service = new DataService(db, { uid: 'cashier', roles: ['cashier'], active: true });
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'deliveryDrivers', 'driver-active'), { name: 'Repartidor real', active: true });
+    await setDoc(doc(context.firestore(), 'deliveryDrivers', 'driver-disabled'), { name: 'Inactivo', active: false });
+  });
+  const assignment = { driverId: 'driver-active', driverName: 'Nombre manipulado' };
+  await assert.rejects(service.reassignDeliveryDriver('i1', assignment), /entregas pendientes/);
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), 'invoices', 'i1'), { deliveryStatus: 'in_transit', paymentMethod: 'delivery_cod' });
+  });
+  await assert.rejects(service.reassignDeliveryDriver('i1', { driverId: 'driver-disabled', driverName: 'Inactivo' }), /no está activo/);
+  await assertFails(updateDoc(doc(db, 'invoices', 'i1'), {
+    deliveryDriverId: 'driver-disabled', deliveryDriverName: 'Inactivo', updatedBy: 'cashier', updatedAt: serverTimestamp()
+  }));
+  const result = await service.reassignDeliveryDriver('i1', assignment);
+  assert.equal(result.deliveryDriverName, 'Repartidor real');
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), 'invoices', 'i1'), { deliveryStatus: 'settled' });
+  });
+  await assert.rejects(service.reassignDeliveryDriver('i1', assignment), /entregas pendientes/);
+});
+
 test('el cierre de caja usa el esperado acumulado y libera el bloqueo del usuario', async () => {
   const db = environment.authenticatedContext('cashier', auth('cashier')).firestore();
   const invalidBatch = writeBatch(db);
@@ -499,6 +563,7 @@ test('solo propietario lista usuarios; caja solo lee su propio perfil', async ()
   await assertSucceeds(getDocs(collection(ownerDb, 'users')));
   await assertFails(getDocs(collection(cashierDb, 'users')));
   await assertSucceeds(getDoc(doc(cashierDb, 'users', 'cashier')));
+  await assertFails(getDoc(doc(cashierDb, 'users', 'owner')));
 });
 
 test('un usuario genérico no puede crear ni elevar su propio perfil', async () => {

@@ -3,6 +3,7 @@ import {
   calculateDocument,
   canTransitionOrder,
   paymentStatus,
+  PAYMENT_METHODS,
 } from "../domain/billing.js";
 import { createOperationId } from "../lib/id.js";
 import { calculateWasteCostCents, getInventoryReason, validateInventoryAdjustment } from "../domain/inventory.js";
@@ -110,10 +111,9 @@ export class MemoryDataService {
     if (!/^\d{6}$/.test(cleanPin))
       throw new Error("El PIN debe tener exactamente 6 dígitos.");
 
-    // Identificación multi-usuario en caja: cualquier usuario activo con su PIN
-    // puede autorizar y facturar en el terminal compartido (ej: Junior en usuario Nechy).
+    // A PIN confirms only the authenticated operator, never another identity.
     const match = this.data.users.find(
-      (entry) => entry.drawerPin === cleanPin && entry.active !== false,
+      (entry) => entry.id === this.actor.uid && entry.drawerPin === cleanPin && entry.active !== false,
     );
     if (match) {
       return {
@@ -132,7 +132,7 @@ export class MemoryDataService {
   async saveProduct(item) {
     const id = item.id || createOperationId("product");
     const inventoryType = item.inventoryType || (item.isPrepared ? 'prepared' : 'resale');
-    const isPrepared = inventoryType === 'prepared' || Boolean(item.isPrepared);
+    const isPrepared = inventoryType === 'prepared';
     const minStock = Number.isFinite(Number(item.minStock)) ? Math.max(0, Number(item.minStock)) : 5;
     const payload = {
       ...item,
@@ -339,13 +339,19 @@ export class MemoryDataService {
     if (inv.status === 'cancelled') throw new Error('No se puede reasignar una factura anulada.');
     const name = String(driverName || '').trim();
     if (!name) throw new Error('Debes indicar el nombre del nuevo repartidor.');
+    if (inv.documentType !== 'invoice' || inv.deliveryStatus === 'settled'
+      || !(inv.deliveryDriverName || inv.paymentMethod === 'delivery_cod' || inv.deliveryStatus === 'in_transit')) {
+      throw new Error('Solo se pueden reasignar entregas pendientes.');
+    }
+    const driver = this.data.deliveryDrivers.find((item) => item.id === String(driverId || '').trim() && item.active !== false);
+    if (!driver) throw new Error('El repartidor ya no está activo.');
     const oldDriver = inv.deliveryDriverName || 'Sin asignar';
     inv.deliveryDriverId = String(driverId || '').trim();
-    inv.deliveryDriverName = name;
+    inv.deliveryDriverName = driver.name;
     if (notes !== undefined) inv.deliveryNotes = String(notes || '').trim();
     inv.updatedAt = new Date();
     inv.updatedBy = this.actor.uid;
-    this.audit('delivery.driver_reassigned', `Factura ${inv.invoiceNumber || invoiceId}: reasignada de "${oldDriver}" a "${name}"`);
+    this.audit('delivery.driver_reassigned', `Factura ${inv.invoiceNumber || invoiceId}: reasignada de "${oldDriver}" a "${driver.name}"`);
     this.emit('invoices');
     return inv;
   }
@@ -691,8 +697,21 @@ export class MemoryDataService {
     };
   }
   async recordPayment(invoiceId, payment) {
+    if (!PAYMENT_METHODS.includes(payment.method) || ['credit', 'delivery_cod'].includes(payment.method)) throw new Error('Forma de pago inválida.');
     if (!payment.cashSessionId)
       throw new Error("Abre una caja antes de registrar el cobro.");
+    const requestId = String(payment.requestId || "").trim();
+    const amountCents = Number(payment.amountCents);
+    const tenderedCents = payment.method === 'cash' ? Number(payment.tenderedCents ?? amountCents) : 0;
+    const reference = String(payment.reference || '').slice(0, 120);
+    const existing = requestId ? this.data.payments.find((item) => item.requestId === requestId) : null;
+    if (existing) {
+      if (existing.createdBy !== this.actor.uid || existing.invoiceId !== invoiceId
+        || existing.amountCents !== amountCents || existing.method !== payment.method
+        || existing.cashSessionId !== payment.cashSessionId || existing.reference !== reference
+        || existing.tenderedCents !== tenderedCents) throw new Error('La referencia de este pago ya está en uso.');
+      return existing.id;
+    }
     const session = this.data.cashSessions.find(
       (item) =>
         item.id === payment.cashSessionId &&
@@ -703,19 +722,12 @@ export class MemoryDataService {
       throw new Error("La caja seleccionada ya no está disponible o está cerrada.");
     const invoice = this.data.invoices.find((item) => item.id === invoiceId);
     if (!invoice) throw new Error("La factura no existe.");
-    const requestId = String(payment.requestId || "").trim();
-    const existing = requestId
-      ? this.data.payments.find((item) => item.requestId === requestId)
-      : null;
-    if (existing) return existing.id;
+    if (invoice.documentType !== 'invoice') throw new Error('Solo las facturas admiten cobros.');
     if (["paid", "cancelled"].includes(invoice.status))
       throw new Error("La factura no admite cobros.");
-    const amountCents = Number(payment.amountCents);
     const balanceCents = Number(invoice.totalCents) - Number(invoice.paidCents || 0);
     if (!Number.isInteger(amountCents) || amountCents <= 0 || amountCents > balanceCents)
       throw new Error("Monto de pago inválido.");
-    const tenderedCents =
-      payment.method === "cash" ? Number(payment.tenderedCents || amountCents) : 0;
     if (
       payment.method === "cash" &&
       (!Number.isInteger(tenderedCents) || tenderedCents < amountCents)
@@ -734,11 +746,13 @@ export class MemoryDataService {
       invoiceId,
       invoiceNumber: invoice.invoiceNumber,
       ...payment,
+      reference,
       amountCents,
       tenderedCents,
       changeCents: payment.method === "cash" ? tenderedCents - amountCents : 0,
       cashierId: this.actor.uid,
       cashierName: this.actor.displayName || this.actor.username || "",
+      createdBy: this.actor.uid,
       createdAt: new Date(),
     });
     if (payment.method === "cash") {

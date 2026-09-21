@@ -8,6 +8,13 @@ firebase-debug.log*
 firestore-debug.log*
 ui-debug.log*
 /terminal_*.png
+/*_test.png
+/*_crop*.png
+/elo_*.png
+/products_screen*.png
+/sidebar_crop.png
+/test_*.png
+/test_invoice_card.txt
 *.local
 *.key.json
 service-account*.json

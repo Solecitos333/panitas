@@ -1,12 +1,12 @@
 // Keep subscriptions current without rebuilding the cashier's screen for unrelated data.
 const dependencies = {
-  dashboard: ['orders', 'invoices', 'cashSessions'],
+  dashboard: ['orders', 'invoices', 'payments', 'cashSessions', 'cashMovements', 'tables', 'products'],
   pos: ['products', 'clients', 'tables', 'cashSessions'],
   kds: ['orders'], tables: ['tables', 'orders'],
-  products: ['products', 'inventoryMovements'], clients: ['clients'], users: ['users'], audit: ['auditLogs', 'cashSessions', 'cashMovements', 'payrollPayments', 'invoices'],
+  products: ['products', 'inventoryMovements'], clients: ['clients', 'invoices'], users: ['users'], audit: ['auditLogs', 'cashSessions', 'cashMovements', 'payrollPayments', 'invoices'],
   invoices: ['invoices', 'payments'], receivables: ['invoices', 'payments', 'clients', 'cashSessions'],
-  deliveries: ['invoices', 'deliveryDrivers', 'cashSessions'],
-  cash: ['cashSessions', 'cashMovements', 'payments', 'users'],
+  deliveries: ['invoices', 'payments', 'deliveryDrivers', 'cashSessions'],
+  cash: ['cashSessions', 'cashMovements', 'payments', 'users', 'invoices', 'products', 'inventoryMovements'],
   payroll: ['employees', 'payrollPayments', 'cashSessions', 'cashMovements'],
   reports: ['invoices', 'payments', 'cashMovements', 'inventoryMovements'],
   terminal: [], whatsapp: ['whatsappBot'], settings: []

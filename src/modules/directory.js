@@ -1096,14 +1096,14 @@ export function clientRow(item, settings = {}) {
     <td>
       <div style="display:flex;align-items:center;gap:5px;justify-content:flex-end;">
         ${debtCents > 0 ? `
-          <button type="button" class="button success compact" data-client-bulk-pay="${escapeHtml(item.name)}" style="padding:4px 8px;font-size:0.72rem;gap:4px;height:auto;line-height:1.2;" title="Abonar o saldar fiao de ${escapeHtml(item.name)}">
+          <button type="button" class="button success compact" data-client-bulk-pay="${escapeHtml(item.name)}" data-client-id="${escapeHtml(item.id || '')}" style="padding:4px 8px;font-size:0.72rem;gap:4px;height:auto;line-height:1.2;" title="Abonar o saldar fiao de ${escapeHtml(item.name)}">
             <i data-lucide="badge-dollar-sign" style="width:13px;height:13px;"></i> Abonar
           </button>
         ` : ''}
-        <button type="button" class="icon-button" data-client-statement="${escapeHtml(item.name)}" title="Ver Estado de Cuenta e historial de facturas">
+        <button type="button" class="icon-button" data-client-statement="${escapeHtml(item.name)}" data-client-id="${escapeHtml(item.id || '')}" title="Ver Estado de Cuenta e historial de facturas">
           <i data-lucide="file-text" style="width:15px;height:15px;"></i>
         </button>
-        <button type="button" class="icon-button" data-client-to-pos="${escapeHtml(item.name)}" title="Crear nueva comanda/factura en POS para este cliente">
+        <button type="button" class="icon-button" data-client-to-pos="${escapeHtml(item.name)}" data-client-id="${escapeHtml(item.id || '')}" title="Crear nueva comanda/factura en POS para este cliente">
           <i data-lucide="shopping-cart" style="width:15px;height:15px;"></i>
         </button>
         <button type="button" class="icon-button" data-client-edit="${escapeHtml(item.id || '')}" data-client-name="${escapeHtml(item.name)}" data-client-phone="${escapeHtml(item.phone || '')}" data-client-address="${escapeHtml(item.address || '')}" data-client-rnc="${escapeHtml(item.rnc || '')}" data-client-notes="${escapeHtml(item.notes || '')}" data-client-credit-limit="${item.creditLimitCents || 0}" title="${item.isRegisteredClient ? 'Editar datos del cliente' : 'Guardar y formalizar ficha del cliente'}">
@@ -1210,11 +1210,11 @@ export function clientMobileCard(item, settings = {}) {
 
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-left:auto;">
           ${debtCents > 0 ? `
-            <button type="button" class="button success compact" data-client-bulk-pay="${escapeHtml(item.name)}" style="padding:5px 10px;font-size:0.75rem;" title="Abonar a fiao">
+            <button type="button" class="button success compact" data-client-bulk-pay="${escapeHtml(item.name)}" data-client-id="${escapeHtml(item.id || '')}" style="padding:5px 10px;font-size:0.75rem;" title="Abonar a fiao">
               <i data-lucide="dollar-sign"></i> Abonar
             </button>
           ` : ''}
-          <button type="button" class="button secondary compact" data-client-statement="${escapeHtml(item.name)}" style="padding:5px 9px;font-size:0.75rem;" title="Ver Estado de Cuenta">
+          <button type="button" class="button secondary compact" data-client-statement="${escapeHtml(item.name)}" data-client-id="${escapeHtml(item.id || '')}" style="padding:5px 9px;font-size:0.75rem;" title="Ver Estado de Cuenta">
             <i data-lucide="file-text"></i> Cuenta
           </button>
           <button type="button" class="button secondary compact" data-client-to-pos="${escapeHtml(item.name)}" style="padding:5px 9px;font-size:0.75rem;" title="Facturar en POS">

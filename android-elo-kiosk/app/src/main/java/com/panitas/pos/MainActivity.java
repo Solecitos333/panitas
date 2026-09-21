@@ -69,7 +69,8 @@ public class MainActivity extends Activity {
         // La inspección remota queda disponible únicamente en una compilación marcada
         // explícitamente como debuggable.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            WebView.setWebContentsDebuggingEnabled(true);
+            WebView.setWebContentsDebuggingEnabled(
+                    (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0);
         }
         webView = new WebView(this);
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);

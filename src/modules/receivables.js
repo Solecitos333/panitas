@@ -1,6 +1,7 @@
 import { escapeHtml, formatDate, formatMoney } from '../lib/format.js';
 import { matchesFuzzy } from '../lib/fuzzy-search.js';
-import { isDeliveryInvoice } from '../domain/client-memory.js';
+import { isDeliveryInvoice, getClientIdentityKey, invoiceBelongsToClient, getReceivableAgeDays, isFiaoPayment } from '../domain/client-memory.js';
+import { businessDateKey } from '../lib/business-time.js';
 
 export { isDeliveryInvoice };
 
@@ -38,14 +39,12 @@ export function renderReceivables(state) {
   // 2. Agrupar por cliente con desglose de fiao vs delivery
   const clientMap = new Map();
   for (const inv of allPendingInvoices) {
-    const clientKey = String(inv.clientName || 'Cliente').trim();
+    const clientName = String(inv.clientName || inv.deliveryClientName || 'Cliente').trim();
+    const clientKey = getClientIdentityKey({ clientId: inv.clientId, name: clientName });
     if (!clientMap.has(clientKey)) {
-      const regClient = (state.clients || []).find(c =>
-        (inv.clientId && c.id === inv.clientId) ||
-        (c.name && c.name.trim().toLowerCase() === clientKey.toLowerCase())
-      );
+      const regClient = (state.clients || []).find(c => invoiceBelongsToClient(inv, c));
       clientMap.set(clientKey, {
-        name: clientKey,
+        name: regClient?.name || clientName,
         clientId: inv.clientId || regClient?.id || '',
         phone: inv.clientPhone || regClient?.phone || '',
         address: inv.deliveryAddress || inv.clientAddress || regClient?.address || '',
@@ -71,7 +70,7 @@ export function renderReceivables(state) {
 
     const balanceCents = Number(inv.totalCents || 0) - Number(inv.paidCents || 0);
     const invDate = inv.createdAt?.toDate ? inv.createdAt.toDate() : new Date(inv.createdAt || 0);
-    const ageDays = Math.max(0, Math.floor((Date.now() - invDate.getTime()) / (1000 * 60 * 60 * 24)));
+    const ageDays = getReceivableAgeDays(inv.createdAt);
     if (ageDays > entry.maxAgeDays) entry.maxAgeDays = ageDays;
     if (!entry.oldestInvoiceDate || invDate < entry.oldestInvoiceDate) entry.oldestInvoiceDate = invDate;
 
@@ -114,6 +113,16 @@ export function renderReceivables(state) {
       totalDebtCents: c.deliveryDebtCents
     }));
   }
+  // Age and ordering must describe the selected channel, not an unrelated older debt.
+  if (channelFilter !== 'all') {
+    channelScopedClients = channelScopedClients.map(c => ({
+      ...c,
+      maxAgeDays: Math.max(0, ...c.invoices.map(i => i.ageDays)),
+      oldestInvoiceDate: c.invoices[0]?.createdAt?.toDate
+        ? c.invoices[0].createdAt.toDate()
+        : new Date(c.invoices[0]?.createdAt || 0)
+    }));
+  }
 
   // Métricas para la cabecera activa
   const activeTotalPendingCents = channelFilter === 'fiao'
@@ -136,36 +145,22 @@ export function renderReceivables(state) {
 
   // 4. Métricas Financieras de Mora y Cobros
   const overdueDebtCents = activePendingInvoices.reduce((sum, inv) => {
-    const invDate = inv.createdAt?.toDate ? inv.createdAt.toDate() : new Date(inv.createdAt || 0);
-    const ageDays = Math.max(0, Math.floor((Date.now() - invDate.getTime()) / (1000 * 60 * 60 * 24)));
+    const ageDays = getReceivableAgeDays(inv.createdAt);
     return ageDays >= 15 ? sum + (Number(inv.totalCents || 0) - Number(inv.paidCents || 0)) : sum;
   }, 0);
 
   const overdueClientsCount = channelScopedClients.filter(c => c.maxAgeDays >= 15).length;
 
   // Cobros realizados hoy
-  const today = new Date();
-  const isToday = (d) => {
-    const date = d?.toDate ? d.toDate() : new Date(d || 0);
-    return date.getFullYear() === today.getFullYear() &&
-           date.getMonth() === today.getMonth() &&
-           date.getDate() === today.getDate();
-  };
+  const today = businessDateKey();
+  const isToday = (d) => businessDateKey(d) === today;
 
   const creditInvoiceMap = new Map();
   for (const inv of (state.invoices || [])) {
     creditInvoiceMap.set(inv.id, inv);
   }
 
-  const fiaoPayments = (state.payments || []).filter(p => {
-    const inv = creditInvoiceMap.get(p.invoiceId);
-    return Boolean(
-      (inv && (inv.paymentMethod === 'credit' || (inv.notes && inv.notes.toLowerCase().includes('fiao')))) ||
-      p.reference?.toLowerCase().includes('fiao') ||
-      p.requestId?.startsWith('fiao-') ||
-      p.requestId?.startsWith('delivery-settle') === false && (p.concept === 'fiao' || p.concept === 'credit')
-    );
-  }).sort((a, b) => {
+  const fiaoPayments = (state.payments || []).filter(p => isFiaoPayment(p, creditInvoiceMap.get(p.invoiceId))).sort((a, b) => {
     const da = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
     const db = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
     return db - da;
@@ -542,7 +537,7 @@ function renderDebtsTab({ clients, invoices, allCount, channelFilter, fiaoClient
       <!-- Contenido de la Vista -->
       ${viewMode === 'clients' ? `
         <div class="fiao-list" id="fiao-list-container" style="padding:14px 16px;">
-          ${clients.length ? clients.map(debtCard).join('') : `
+          ${clients.length ? clients.map(client => debtCard({ ...client, channel: channelFilter })).join('') : `
             <div class="empty-state" style="padding:48px 20px;text-align:center;">
               <i data-lucide="${isFiltering ? 'filter-x' : 'badge-check'}" style="width:48px;height:48px;color:${isFiltering ? 'var(--muted)' : '#3fb950'};margin:0 auto 12px;display:block;"></i>
               <h3>${isFiltering ? 'Sin resultados con los filtros actuales' : '¡Al día con los Fiaos!'}</h3>
@@ -805,6 +800,8 @@ function debtCard(client) {
               type="button"
               class="button secondary compact"
               data-client-statement="${escapeHtml(client.name)}"
+              data-client-id="${escapeHtml(client.clientId || '')}"
+              data-client-channel="${escapeHtml(client.channel || 'all')}"
               style="font-size:0.8rem;padding:6px 10px;gap:5px;"
               title="Ver estado de cuenta e imprimir ticket"
             >
@@ -814,6 +811,8 @@ function debtCard(client) {
               type="button"
               class="button primary compact"
               data-client-bulk-pay="${escapeHtml(client.name)}"
+              data-client-id="${escapeHtml(client.clientId || '')}"
+              data-client-channel="${escapeHtml(client.channel || 'all')}"
               style="font-size:0.8rem;padding:6px 12px;gap:5px;"
               title="Abonar a la deuda global o saldar todo con un solo PIN"
             >

@@ -98,7 +98,7 @@ test('el PIN de seis dígitos pertenece al usuario que inició sesión', async (
   await service.verifyDrawerPin('482601');
 });
 
-test('el PIN de caja identifica al usuario correspondiente aunque esté en otra sesión activa', async () => {
+test('el PIN de otra persona no autoriza operaciones en la sesión personal', async () => {
   const service = new MemoryDataService(actor);
   await service.saveMyDrawerPin('482601');
   service.data.users.push({
@@ -109,11 +109,7 @@ test('el PIN de caja identifica al usuario correspondiente aunque esté en otra 
     roles: ['cashier', 'manager'],
     active: true
   });
-  // Junior puede desbloquear y autorizar con su PIN en la sesión compartida de Nechy
-  const juniorAuth = await service.verifyDrawerPin('202020', 'Cobro realizado por Junior');
-  assert.equal(juniorAuth.success, true);
-  assert.equal(juniorAuth.user.id, 'junior-uid');
-  assert.equal(juniorAuth.user.displayName, 'Junior');
+  await assert.rejects(service.verifyDrawerPin('202020', 'Cobro realizado por Junior'), /PIN incorrecto/);
 
   // El usuario de la sesión principal sigue pudiendo autorizar con su propio PIN
   const mainAuth = await service.verifyDrawerPin('482601', 'Apertura personal');

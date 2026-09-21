@@ -1,6 +1,7 @@
 import { formatMoney, escapeHtml, formatDate } from '../lib/format.js';
 import { calculateDocument, getPendingDeliveryInvoices } from '../domain/billing.js';
 import { businessDateKey, inBusinessPeriod } from '../lib/business-time.js';
+import { can } from '../domain/roles.js';
 
 const STATUS_LABELS = {
   pending: 'Pendiente', preparing: 'Preparando', ready: 'Lista', served: 'Servida',
@@ -24,22 +25,18 @@ export function renderDashboard(state) {
   const todayPendingCents = Math.max(0, todaySales - todayPaidCents);
   const avgTicketCents = todayInvoices.length ? Math.round(todaySales / todayInvoices.length) : 0;
 
-  // Desglose de ingresos del día
-  let todayCashIn = 0;
-  let todayCardIn = 0;
-  let todayTransferIn = 0;
-  let todayCredit = 0;
-  todayInvoices.forEach((inv) => {
-    const total = Number(inv.totalCents || 0);
-    const paid = inv.status === 'paid' ? total : Number(inv.paidCents || 0);
-    const balance = Math.max(0, total - paid);
-    todayCredit += balance;
-    const method = inv.paymentMethod || 'cash';
-    if (method === 'cash' || method === 'delivery_cod') todayCashIn += paid;
-    else if (method === 'card') todayCardIn += paid;
-    else if (method === 'transfer') todayTransferIn += paid;
-    else todayCashIn += paid;
-  });
+  // Use actual collections, including debts issued on earlier days and mixed payments.
+  let todayPayments = [];
+  try {
+    todayPayments = (Array.isArray(state?.payments) ? state.payments : []).filter(p => inBusinessPeriod(p.createdAt, 'day'));
+  } catch (_) {
+    todayPayments = [];
+  }
+  const collectedByMethod = (method) => todayPayments.filter(p => p.method === method)
+    .reduce((sum, p) => sum + Number(p.amountCents || 0), 0);
+  const todayCashIn = collectedByMethod('cash');
+  const todayCardIn = collectedByMethod('card');
+  const todayTransferIn = collectedByMethod('transfer');
 
   const pending = orders.filter((item) => !['closed', 'cancelled'].includes(item.status));
   const ordersInPrep = pending.filter((o) => o.status === 'preparing');
@@ -74,7 +71,7 @@ export function renderDashboard(state) {
   const todayProductsBreakdown = getDailyProductsBreakdown(todayInvoices, products);
   const dominicanDate = formatDate(new Date(), false);
 
-  const kpiSalesSub = `<span class="sub-pill success" title="Cobrado hoy"><i data-lucide="check-circle-2"></i> ${formatMoney(todayPaidCents)}</span>${todayPendingCents > 0 ? `<span class="sub-pill warning" title="Por cobrar / Fiao"><i data-lucide="clock"></i> ${formatMoney(todayPendingCents)} fiao</span>` : ''}`;
+  const kpiSalesSub = `<span class="sub-pill success" title="Cobrado de las ventas emitidas hoy"><i data-lucide="check-circle-2"></i> ${formatMoney(todayPaidCents)}</span>${todayPendingCents > 0 ? `<span class="sub-pill warning" title="Saldo pendiente de las ventas emitidas hoy"><i data-lucide="clock"></i> ${formatMoney(todayPendingCents)} pendiente</span>` : ''}`;
   const kpiDocsSub = `<span class="sub-pill neutral" title="Ticket promedio"><i data-lucide="calculator"></i> Prom: ${formatMoney(avgTicketCents)}</span>`;
   const kpiOrdersSub = `<span class="sub-pill ${ordersInPrep.length ? 'warning' : 'neutral'}"><i data-lucide="flame"></i> ${ordersInPrep.length} prep</span><span class="sub-pill ${ordersReady.length ? 'success' : 'neutral'}"><i data-lucide="bell"></i> ${ordersReady.length} listas</span>`;
   const kpiDeliverySub = `<span class="sub-pill ${totalDeliveryPending > 0 ? 'warning' : 'neutral'}" title="Saldo en calle a liquidar"><i data-lucide="badge-dollar-sign"></i> ${formatMoney(totalDeliveryPending)}</span>`;
@@ -121,10 +118,10 @@ export function renderDashboard(state) {
           <i data-lucide="calculator"></i>
           <span>Punto de Venta</span>
         </button>
-        <button type="button" class="dash-quick-btn" data-route="kds" title="Abrir Monitor de Cocina KDS">
+        ${capabilities.viewKds ? `<button type="button" class="dash-quick-btn" data-route="kds" title="Abrir Monitor de Cocina KDS">
           <i data-lucide="flame"></i>
           <span>Monitor Cocina ${pending.length ? `<b class="dash-counter">${pending.length}</b>` : ''}</span>
-        </button>
+        </button>` : ''}
         <button type="button" class="dash-quick-btn" data-route="deliveries" title="Control de Envíos y Choferes">
           <i data-lucide="bike"></i>
           <span>Deliveries ${pendingDeliveries.length ? `<b class="dash-counter warning">${pendingDeliveries.length}</b>` : ''}</span>
@@ -150,7 +147,7 @@ export function renderDashboard(state) {
               <span class="eyebrow">Rendimiento de Ventas · ${todayProductsBreakdown.length} producto(s)</span>
               <h3>Platos y artículos vendidos hoy</h3>
             </div>
-            <button type="button" class="text-button" data-route="billing"><i data-lucide="arrow-up-right"></i> Ver informe</button>
+            <button type="button" class="text-button" data-route="invoices"><i data-lucide="arrow-up-right"></i> Ver facturas</button>
           </header>
           ${renderDailyProductsList(todayProductsBreakdown.slice(0, 8))}
         </article>
@@ -194,12 +191,12 @@ export function renderDashboard(state) {
         <article class="surface-card">
           <header>
             <div>
-              <span class="eyebrow">Flujo del Turno</span>
+              <span class="eyebrow">Cobros registrados hoy</span>
               <h3>Métodos de pago recibidos</h3>
             </div>
-            <button type="button" class="text-button" data-route="reports"><i data-lucide="chart-no-axes-combined"></i> Reportes</button>
+            ${can(user, 'reports:view') ? '<button type="button" class="text-button" data-route="reports"><i data-lucide="chart-no-axes-combined"></i> Reportes</button>' : ''}
           </header>
-          ${renderFinancialBreakdown(todayCashIn, todayCardIn, todayTransferIn, todayCredit, todaySales)}
+          ${renderFinancialBreakdown(todayCashIn, todayCardIn, todayTransferIn)}
         </article>
 
         <article class="surface-card">
@@ -1386,19 +1383,17 @@ function renderDashboardDeliveriesList(driverList = [], pendingDeliveries = []) 
   `;
 }
 
-function renderFinancialBreakdown(cashIn = 0, cardIn = 0, transferIn = 0, creditIn = 0, totalSales = 0) {
-  const total = totalSales || (cashIn + cardIn + transferIn + creditIn) || 1;
+function renderFinancialBreakdown(cashIn = 0, cardIn = 0, transferIn = 0) {
+  const total = (cashIn + cardIn + transferIn) || 1;
   const cashPct = Math.round((cashIn / total) * 100);
   const cardPct = Math.round((cardIn / total) * 100);
   const transPct = Math.round((transferIn / total) * 100);
-  const credPct = Math.max(0, 100 - (cashPct + cardPct + transPct));
   return `
     <div class="dash-financial-box">
       <div class="dash-fin-bar" role="progressbar" aria-label="Distribución de ingresos">
         ${cashPct > 0 ? `<div class="dash-fin-seg cash" style="width:${cashPct}%;" title="Efectivo: ${formatMoney(cashIn)} (${cashPct}%)"></div>` : ''}
         ${cardPct > 0 ? `<div class="dash-fin-seg card" style="width:${cardPct}%;" title="Tarjeta: ${formatMoney(cardIn)} (${cardPct}%)"></div>` : ''}
         ${transPct > 0 ? `<div class="dash-fin-seg trans" style="width:${transPct}%;" title="Transferencia: ${formatMoney(transferIn)} (${transPct}%)"></div>` : ''}
-        ${credPct > 0 ? `<div class="dash-fin-seg cred" style="width:${credPct}%;" title="Fiao: ${formatMoney(creditIn)} (${credPct}%)"></div>` : ''}
       </div>
       <div class="dash-fin-legend">
         <div class="dash-fin-item cash">
@@ -1424,14 +1419,6 @@ function renderFinancialBreakdown(cashIn = 0, cardIn = 0, transferIn = 0, credit
             <strong class="dash-fin-val">${formatMoney(transferIn)}</strong>
           </div>
           <small class="dash-fin-pct">${transPct}%</small>
-        </div>
-        <div class="dash-fin-item cred">
-          <span class="dash-fin-dot"></span>
-          <div class="dash-fin-info">
-            <span class="dash-fin-name">Por cobrar (Fiao)</span>
-            <strong class="dash-fin-val">${formatMoney(creditIn)}</strong>
-          </div>
-          <small class="dash-fin-pct">${credPct}%</small>
         </div>
       </div>
     </div>

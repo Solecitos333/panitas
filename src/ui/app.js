@@ -10,7 +10,7 @@ import {
 } from 'lucide';
 import { can, allowedNavigation, primaryRole } from '../domain/roles.js';
 import { calculateDocument, toCents, getPendingDeliveryInvoices } from '../domain/billing.js';
-import { getClientMemory, searchClientMemory, isDeliveryInvoice } from '../domain/client-memory.js';
+import { getClientMemory, searchClientMemory, isDeliveryInvoice, invoiceBelongsToClient } from '../domain/client-memory.js';
 import { renderCartLines, renderCartTotals, renderDashboard, renderKds, renderOrderDrawer, renderPos, renderTables, renderTablePickerModal } from '../modules/operations.js';
 import { exportReport, renderInvoiceModal, renderInvoices, renderReports } from '../modules/billing.js';
 import { renderReceivables, renderFiaoPayModal, renderClientBulkPayModal, renderClientStatementModal } from '../modules/receivables.js';
@@ -43,11 +43,13 @@ import { bindPinPad, renderPinPadHtml } from '../lib/pin-pad.js';
 import { updateForms, updateSafety } from '../lib/update-safety.js';
 import { setupTouchNumericInputs } from '../lib/touch-numpad.js';
 import { createScopedIcons } from '../lib/scoped-icons.js';
+import { preparePaymentAttempt, executePaymentAttempt } from '../lib/payment-attempt.js';
 import { createSleepManager } from '../lib/sleep-manager.js';
 import { matchesFuzzy, fuzzyScore } from '../lib/fuzzy-search.js';
 
 const NAV = [
   ['dashboard','layout-dashboard','Resumen'], ['pos','shopping-cart','Punto de venta'],
+  ['kds','chef-hat','Cocina KDS'],
   ['invoices','receipt-text','Facturación'], ['receivables','book-open','Fiao / Por Cobrar'],
   ['deliveries','bike','Deliveries'], ['clients','users','Clientes'],
   ['products','package','Productos'], ['whatsapp','smartphone','Bot WhatsApp'], ['cash','wallet-cards','Caja'],
@@ -881,8 +883,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 
         const pendingInvoices = (state.invoices || []).filter(inv =>
           inv.documentType === 'invoice' && inv.status !== 'paid' && inv.status !== 'cancelled' &&
-          ((inv.clientId && inv.clientId === selectedClient.id) ||
-           (inv.clientName && inv.clientName.trim().toLowerCase() === selectedClient.name.trim().toLowerCase()))
+          invoiceBelongsToClient(inv, selectedClient)
         );
         const debtCents = pendingInvoices.reduce((sum, inv) => sum + (Number(inv.totalCents || 0) - Number(inv.paidCents || 0)), 0);
 
@@ -909,7 +910,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         if (debtInfo) debtInfo.style.display = 'none';
         return;
       }
-      const matchingClient = (state.clients || []).find(c => c.name && c.name.trim().toLowerCase() === typedName);
+      const matches = (state.clients || []).filter(c => c.name && c.name.trim().toLowerCase() === typedName);
+      const matchingClient = matches.length === 1 ? matches[0] : null;
+      const clientIdInput = root.querySelector('#pos-fiao-client-id');
+      if (clientIdInput) clientIdInput.value = matchingClient?.id || '';
       if (matchingClient) {
         const phoneInput = root.querySelector('#pos-fiao-phone');
         if (phoneInput && !phoneInput.value && matchingClient.phone) phoneInput.value = matchingClient.phone;
@@ -918,7 +922,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       }
       const pendingInvoices = (state.invoices || []).filter(inv =>
         inv.documentType === 'invoice' && inv.status !== 'paid' && inv.status !== 'cancelled' &&
-        (inv.clientName && inv.clientName.trim().toLowerCase() === typedName)
+        invoiceBelongsToClient(inv, matchingClient || { name: typedName })
       );
       const debtCents = pendingInvoices.reduce((sum, inv) => sum + (Number(inv.totalCents || 0) - Number(inv.paidCents || 0)), 0);
       if (debtInfo && debtText) {
@@ -1100,11 +1104,12 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelectorAll('[data-client-bulk-pay]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const clientName = btn.dataset.clientBulkPay;
+        const clientIdentity = { id: btn.dataset.clientId || '', name: clientName };
         const pendingInvoices = (state.invoices || []).filter(
           (inv) => inv.documentType === 'invoice' &&
             inv.status !== 'paid' &&
             inv.status !== 'cancelled' &&
-            String(inv.clientName || inv.deliveryClientName || '').trim().toLowerCase() === String(clientName || '').trim().toLowerCase() &&
+            invoiceBelongsToClient(inv, clientIdentity) &&
             (Number(inv.totalCents || 0) - Number(inv.paidCents || 0)) > 0
         ).map(inv => ({
           ...inv,
@@ -1117,9 +1122,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         });
 
         const totalDebtCents = pendingInvoices.reduce((sum, i) => sum + i.balanceCents, 0);
-        const regClient = (state.clients || []).find(c => c.name && c.name.trim().toLowerCase() === clientName.toLowerCase());
+        const regClient = (state.clients || []).find(c => clientIdentity.id && c.id === clientIdentity.id);
 
         state.selectedClientBulkPay = {
+          id: clientIdentity.id,
           name: clientName,
           phone: pendingInvoices[0]?.clientPhone || pendingInvoices[0]?.deliveryPhone || regClient?.phone || '',
           address: pendingInvoices[0]?.deliveryAddress || pendingInvoices[0]?.clientAddress || regClient?.address || '',
@@ -1135,11 +1141,12 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelectorAll('[data-client-statement]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const clientName = btn.dataset.clientStatement;
+        const clientIdentity = { id: btn.dataset.clientId || '', name: clientName };
         const pendingInvoices = (state.invoices || []).filter(
           (inv) => inv.documentType === 'invoice' &&
             inv.status !== 'paid' &&
             inv.status !== 'cancelled' &&
-            String(inv.clientName || inv.deliveryClientName || '').trim().toLowerCase() === String(clientName || '').trim().toLowerCase() &&
+            invoiceBelongsToClient(inv, clientIdentity) &&
             (Number(inv.totalCents || 0) - Number(inv.paidCents || 0)) > 0
         ).map(inv => ({
           ...inv,
@@ -1152,9 +1159,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         });
 
         const totalDebtCents = pendingInvoices.reduce((sum, i) => sum + i.balanceCents, 0);
-        const regClient = (state.clients || []).find(c => c.name && c.name.trim().toLowerCase() === clientName.toLowerCase());
+        const regClient = (state.clients || []).find(c => clientIdentity.id && c.id === clientIdentity.id);
 
         state.selectedClientStatement = {
+          id: clientIdentity.id,
           name: clientName,
           phone: pendingInvoices[0]?.clientPhone || pendingInvoices[0]?.deliveryPhone || regClient?.phone || '',
           address: pendingInvoices[0]?.deliveryAddress || pendingInvoices[0]?.clientAddress || regClient?.address || '',
@@ -2917,6 +2925,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         isBusy: () => state.saleInProgress
       });
 
+      let fiaoAttempt = null;
       fiaoPayForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         if (state.saleInProgress) return toast('Ya se está registrando este cobro.', 'warning');
@@ -2959,17 +2968,14 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
               optimistic: true
             };
           }
-          const outcome = await perform(() => service.recordPayment(invoiceId, {
-            requestId: createOperationId('fiao-payment'),
-            amountCents,
-            method,
-            reference,
-            tenderedCents,
-            cashSessionId: state.activeCash.id,
-            cashierId: verifyRes.user.id,
-            cashierName: verifyRes.user.displayName
-          }), 'Cobro de fiao registrado con éxito.');
-          if (!outcome.ok) return;
+          const inv = state.selectedFiaoInvoice;
+          fiaoAttempt = preparePaymentAttempt(fiaoAttempt, {
+            entries: [{ invoiceId, balanceCents: Number(inv.totalCents) - Number(inv.paidCents || 0) }],
+            amountCents, tenderedCents, prefix: 'fiao-payment',
+            payment: { method, reference, cashSessionId: state.activeCash.id }
+          });
+          await executePaymentAttempt(fiaoAttempt, (id, payment) => service.recordPayment(id, payment));
+          toast('Cobro de fiao registrado con éxito.', 'success');
           beepHardware('ok');
           closeModal();
           setTimeout(() => {
@@ -2987,7 +2993,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         } finally {
           state.saleInProgress = false;
           setBusy(button, false);
-          if (!destroyed) renderContent();
+          if (!destroyed && !state.modal) renderContent();
         }
       });
     }
@@ -3076,6 +3082,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         isBusy: () => state.saleInProgress
       });
 
+      let bulkAttempt = null;
       clientBulkPayForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         if (state.saleInProgress) return toast('Ya se está procesando un cobro.', 'warning');
@@ -3124,37 +3131,18 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
             };
           }
 
-          let remainingToApplyCents = totalAmountCents;
-          const appliedInvoices = [];
-
-          for (const cb of selectedCbs) {
-            if (remainingToApplyCents <= 0) break;
-            const invoiceId = cb.value;
-            const invNumber = cb.dataset.invoiceNumber;
-            const balanceCents = Number(cb.dataset.balanceCents || 0);
-            if (balanceCents <= 0) continue;
-
-            const applyCents = Math.min(remainingToApplyCents, balanceCents);
-            remainingToApplyCents -= applyCents;
-
-            await service.recordPayment(invoiceId, {
-              requestId: createOperationId('fiao-payment'),
-              amountCents: applyCents,
-              method,
-              reference: reference || `Abono fiao ${clientName}`,
-              tenderedCents: method === 'cash' ? applyCents : 0,
-              cashSessionId: state.activeCash.id,
-              cashierId: verifyRes.user.id,
-              cashierName: verifyRes.user.displayName
-            });
-
-            appliedInvoices.push({
-              invoiceId,
-              invoiceNumber: invNumber,
-              appliedCents: applyCents,
-              newBalanceCents: balanceCents - applyCents
-            });
-          }
+          bulkAttempt = preparePaymentAttempt(bulkAttempt, {
+            entries: selectedCbs.map(cb => ({ invoiceId: cb.value, invoiceNumber: cb.dataset.invoiceNumber, balanceCents: Number(cb.dataset.balanceCents || 0) })),
+            amountCents: totalAmountCents, tenderedCents, prefix: 'fiao-payment',
+            payment: { method, reference: reference || `Abono fiao ${clientName}`, cashSessionId: state.activeCash.id }
+          });
+          const confirmedLines = await executePaymentAttempt(bulkAttempt, (id, payment) => service.recordPayment(id, payment));
+          const appliedInvoices = confirmedLines.map(line => ({
+            invoiceId: line.invoiceId, invoiceNumber: line.invoiceNumber,
+            appliedCents: line.appliedCents, newBalanceCents: line.balanceCents - line.appliedCents
+          }));
+          // The selected statement is a pre-collection snapshot, independent of listener timing.
+          const clientTotalPending = Math.max(0, Number(state.selectedClientBulkPay.totalDebtCents) - totalAmountCents);
 
           beepHardware('ok');
           closeModal();
@@ -3165,11 +3153,6 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
               void kickDrawer({ silentFailure: true });
             }
             if (shouldPrint && state.settings?.autoPrintInvoice !== false) {
-              const clientTotalPending = (state.invoices || []).filter(
-                i => i.documentType === 'invoice' && i.status !== 'paid' && i.status !== 'cancelled' &&
-                String(i.clientName || '').trim().toLowerCase() === String(clientName || '').trim().toLowerCase()
-              ).reduce((sum, i) => sum + Math.max(0, Number(i.totalCents || 0) - Number(i.paidCents || 0)), 0);
-
               const settlementData = {
                 createdAt: new Date(),
                 clientName,
@@ -3201,7 +3184,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         } finally {
           state.saleInProgress = false;
           setBusy(button, false);
-          if (!destroyed) renderContent();
+          if (!destroyed && !state.modal) renderContent();
         }
       });
     }
@@ -3237,6 +3220,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         isBusy: () => state.saleInProgress
       });
 
+      let deliveryAttempt = null;
       deliverySettleForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         if (state.saleInProgress) return toast('Ya se está procesando una liquidación.', 'warning');
@@ -3278,35 +3262,20 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
             };
           }
 
-          const settledInvoices = [];
-          let grandTotalCents = 0;
-
-          for (const cb of selectedCbs) {
-            const invoiceId = cb.value;
-            const balanceCents = Number(cb.dataset.balanceCents || 0);
-            if (balanceCents <= 0) continue;
-
-            grandTotalCents += balanceCents;
-            const inv = (state.invoices || []).find(i => i.id === invoiceId);
-
-            await service.recordPayment(invoiceId, {
-              requestId: createOperationId('delivery-settle'),
-              amountCents: balanceCents,
-              method,
-              reference,
-              tenderedCents: balanceCents,
-              cashSessionId: state.activeCash.id,
-              cashierId: verifyRes.user.id,
-              cashierName: verifyRes.user.displayName
-            });
-
-            settledInvoices.push({
-              invoiceNumber: inv?.invoiceNumber || 'FACTURA',
-              clientName: inv?.clientName || 'Cliente',
-              paidAmountCents: balanceCents,
-              totalCents: inv?.totalCents || balanceCents
-            });
-          }
+          const entries = selectedCbs.map(cb => {
+            const inv = (state.invoices || []).find(i => i.id === cb.value);
+            return { invoiceId: cb.value, balanceCents: Number(cb.dataset.balanceCents || 0), invoiceNumber: inv?.invoiceNumber || 'FACTURA', clientName: inv?.clientName || 'Cliente', totalCents: inv?.totalCents };
+          });
+          const grandTotalCents = entries.reduce((sum, entry) => sum + entry.balanceCents, 0);
+          deliveryAttempt = preparePaymentAttempt(deliveryAttempt, {
+            entries, amountCents: grandTotalCents, tenderedCents: grandTotalCents, prefix: 'delivery-settle',
+            payment: { method, reference, cashSessionId: state.activeCash.id }
+          });
+          const confirmedLines = await executePaymentAttempt(deliveryAttempt, (id, payment) => service.recordPayment(id, payment));
+          const settledInvoices = confirmedLines.map(line => ({
+            invoiceNumber: line.invoiceNumber, clientName: line.clientName,
+            paidAmountCents: line.appliedCents, totalCents: line.totalCents || line.balanceCents
+          }));
 
           const settlementData = {
             driverName,
@@ -3321,7 +3290,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 
           beepHardware('ok');
           closeModal();
-          toast(`Liquidación completada. Se ingresaron ${formatMoney(grandTotalCents)} a caja.`, 'success');
+          toast(`Liquidación completada: ${formatMoney(grandTotalCents)} por ${method === 'cash' ? 'efectivo' : method === 'card' ? 'tarjeta' : 'transferencia'}.`, 'success');
 
           setTimeout(() => {
             if (method === 'cash' && state.settings?.autoOpenDrawer !== false) void kickDrawer({ silentFailure: true });
@@ -3338,14 +3307,15 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         } finally {
           state.saleInProgress = false;
           setBusy(button, false);
-          if (!destroyed) renderContent();
+          if (!destroyed && !state.modal) renderContent();
         }
       });
     }
   }
 
   function route(id){
-    if (id === 'tables' || id === 'kds') id = 'pos';
+    if (state.saleInProgress || state.checkoutOpening) return toast('Espera a que termine la operación actual.', 'warning');
+    if (id === 'tables') id = 'pos';
     if(!allowedNavigation(user).includes(id))return;
     if(state.route === id && !state.modal) {
       root.querySelector('.sidebar')?.classList.remove('open');
@@ -6326,7 +6296,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 function initialRoute(user) {
   const allowed = allowedNavigation(user).filter((id) => NAV.some((item) => item[0] === id));
   const hash = (typeof location !== 'undefined' && location.hash) ? location.hash.slice(1) : '';
-  const target = (hash === 'tables' || hash === 'kds') ? 'pos' : hash;
+  const target = hash === 'tables' ? 'pos' : hash;
   return allowed.includes(target) ? target : (allowed[0] || 'pos');
 }
 function roleLabel(role){return({owner:'Propietario',manager:'Gerencia',cashier:'Caja',waiter:'Camarero',kitchen:'Cocina'})[role]||'Usuario';}

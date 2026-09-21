@@ -4,19 +4,19 @@
     "packageName":  "com.panitas.pos",
     "versionCode":  42,
     "versionName":  "1.6.2",
-    "publishedAt":  "2026-09-21T00:30:07Z",
+    "publishedAt":  "2026-09-21T06:58:13Z",
     "minimumSupportedVersionCode":  10,
     "mandatory":  false,
     "artifact":  {
                      "url":  "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.6.2-code42.zip",
                      "filename":  "LosPanitas-Elo-POS-v1.6.2-code42.zip",
-                     "size":  1680546,
-                     "sha256":  "3DCB5C1300E5B72BC2C318E590B9279D6FCC471CF47DD217745A0B8E1ADC1C03"
+                     "size":  1681740,
+                     "sha256":  "6F689301BCD848D7B77D63F6F5CD48D2B2086C66FB28650BA40B1433A322B72B"
                  },
     "apk":  {
                 "entry":  "LosPanitas-Elo-POS.apk",
                 "size":  1685142,
-                "sha256":  "EA17A734A59B1FDFA8B0B30DAD0412CD98D559CC3D3C99032CEEB6CE8EE47F67",
+                "sha256":  "DB5F9A9FD124529FC8D3AFA8B7ACAE3A889D9A7B4635E862E1AE4C0AAD0F81D3",
                 "signingCertificateSha256":  "42DE27571244F0A23E533BF1C97D5D8587F4F12C3C34EA3209EDFBC67B8B3395"
             },
     "releaseNotes":  [
