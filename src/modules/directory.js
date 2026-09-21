@@ -3,6 +3,7 @@ import { INVENTORY_REASONS, getInventoryReason, calculateWasteCostCents } from '
 import { businessDateKey } from '../lib/business-time.js';
 import { matchesFuzzy } from '../lib/fuzzy-search.js';
 import { getClientMemory, cleanPhoneForWa, formatRelativeDate, buildClientWhatsAppUrl } from '../domain/client-memory.js';
+import { getProductVariants, hasProductVariants, hasProductSides, getProductSides } from '../domain/catalog.js';
 
 export function getProductInventoryType(p) {
   if (!p) return 'prepared';
@@ -655,6 +656,11 @@ export function renderProductForm(product = {}) {
   const margin = priceCents > 0 ? Math.round(((priceCents - costCents) / priceCents) * 100) : null;
   const profitCents = priceCents > 0 ? (priceCents - costCents) : null;
 
+  const variants = getProductVariants(product);
+  const hasVariants = Boolean(product.hasVariants);
+  const hasSides = Boolean(product.hasSides);
+  const sidePriceCents = Number(product.sidePriceCents || 0);
+
   const categories = ['Piqueos', 'Chimis', 'Yaroas', 'Pechurinas', 'Bebidas', 'Vitrina', 'Postres', 'Guarniciones', 'General'];
 
   return modal('product-form', product.id ? 'Editar producto e inventario' : 'Nuevo producto en inventario', `
@@ -831,6 +837,77 @@ export function renderProductForm(product = {}) {
         <i data-lucide="alert-triangle" style="width:18px;height:18px;flex-shrink:0;"></i>
         <span><strong>¡Atención: Venta a Pérdida!</strong> El precio de venta es menor o igual al costo unitario.</span>
       </div>
+    <!-- Variantes (Tamaños, Porciones o Gramaje) -->
+    <div style="background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:16px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
+        <span style="font-size:0.82rem;font-weight:800;color:var(--brand-2);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;gap:6px;">
+          <i data-lucide="layers" style="width:16px;height:16px;"></i> Tamaños, Porciones y Opciones
+        </span>
+        <span style="font-size:0.72rem;color:var(--muted);">Para vasos (7/12/16 oz), porciones (P/M/G) o carnes</span>
+      </div>
+
+      <label class="check-field" style="margin-bottom:10px;font-weight:700;">
+        <input type="checkbox" name="hasVariants" id="product-has-variants-checkbox" ${hasVariants ? 'checked' : ''}>
+        ¿Este producto tiene diferentes tamaños o porciones con precios variables?
+      </label>
+
+      <div id="product-variants-container" style="display:${hasVariants ? 'block' : 'none'};padding-top:8px;">
+        <div style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+          <span style="font-size:0.74rem;color:#cbd5e1;display:flex;align-items:center;gap:4px;">
+            <i data-lucide="sparkles" style="width:13px;height:13px;color:var(--brand-2);"></i> Plantillas rápidas de 1 toque:
+          </span>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button type="button" class="variant-preset-btn" data-variant-preset="cups" title="Cargar vasos 7 oz, 12 oz, 16 oz">
+              <i data-lucide="cup-soda" style="width:12px;height:12px;"></i> Vasos (7/12/16 oz)
+            </button>
+            <button type="button" class="variant-preset-btn" data-variant-preset="portions" title="Cargar Pequeño, Mediano, Grande">
+              <i data-lucide="utensils" style="width:12px;height:12px;"></i> Porciones (P / M / G)
+            </button>
+            <button type="button" class="variant-preset-btn" data-variant-preset="meats" title="Cargar 137g, 182g, 1/2 lb">
+              <i data-lucide="beef" style="width:12px;height:12px;"></i> Gramaje (Carnes)
+            </button>
+          </div>
+        </div>
+
+        <div id="product-variants-rows" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;">
+          ${variants.map((v, i) => `
+            <div class="product-variant-row" data-variant-row="${i}" style="display:grid;grid-template-columns:1fr 110px 110px 36px;gap:8px;align-items:center;background:rgba(255,255,255,.03);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.06);">
+              <label style="margin:0;">
+                <span style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:2px;">Tamaño / Porción</span>
+                <input type="text" name="variantName[]" value="${escapeHtml(v.name || '')}" placeholder="Ej. 12 oz, Grande..." required style="padding:6px 8px;font-size:0.85rem;">
+                <input type="hidden" name="variantId[]" value="${escapeHtml(v.id || `var-${i + 1}`)}">
+              </label>
+              <label style="margin:0;">
+                <span style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:2px;">Precio (RD$)</span>
+                <input type="text" name="variantPrice[]" data-touch-numpad="money" data-numpad-title="Precio Variante" value="${v.priceCents != null ? (v.priceCents / 100).toFixed(2) : ''}" placeholder="0.00" required readonly inputmode="none" style="padding:6px 8px;font-size:0.85rem;cursor:pointer;font-weight:700;color:var(--brand-2);">
+              </label>
+              <label style="margin:0;">
+                <span style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:2px;">Costo (RD$)</span>
+                <input type="text" name="variantCost[]" data-touch-numpad="money" data-numpad-title="Costo Variante" value="${v.costCents != null ? (v.costCents / 100).toFixed(2) : '0.00'}" placeholder="0.00" readonly inputmode="none" style="padding:6px 8px;font-size:0.85rem;cursor:pointer;">
+              </label>
+              <button type="button" class="icon-button danger" data-remove-variant-row title="Eliminar tamaño" style="margin-top:14px;width:32px;height:32px;"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
+            </div>
+          `).join('')}
+        </div>
+
+        <button type="button" class="button secondary compact" id="btn-add-variant-row" style="font-size:0.8rem;gap:4px;">
+          <i data-lucide="plus"></i> Agregar otro tamaño o porción
+        </button>
+      </div>
+
+      <!-- Acompañamiento / Guarnición -->
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.08);">
+        <label class="check-field" style="margin-bottom:8px;font-weight:700;">
+          <input type="checkbox" name="hasSides" id="product-has-sides-checkbox" ${hasSides ? 'checked' : ''}>
+          ¿Admite selección de acompañamiento o guarnición (Tostones, Papas, Moro, etc.)?
+        </label>
+        <div id="product-sides-container" style="display:${hasSides ? 'block' : 'none'};margin-top:8px;">
+          <label style="max-width:260px;">Costo adicional por guarnición (RD$)
+            <input name="sidePrice" id="product-side-price-input" type="text" data-touch-numpad="money" data-numpad-title="Costo Guarnición" value="${sidePriceCents > 0 ? (sidePriceCents / 100).toFixed(2) : '0.00'}" placeholder="0.00" readonly inputmode="none" style="cursor:pointer;font-weight:700;color:var(--brand-2);">
+            <small style="display:block;font-size:0.72rem;color:var(--muted);margin-top:2px;">Coloca 0.00 si el acompañamiento ya está incluido en el precio base.</small>
+          </label>
+        </div>
+      </div>
     </div>
 
     <label class="check-field" style="margin-top:6px;">
@@ -876,6 +953,14 @@ export function renderClientForm(client = {}) {
 export function productCard(item, editable) {
   const stockStatus = getProductStockStatus(item);
   const margin = item.priceCents && item.costCents ? Math.round(((item.priceCents - item.costCents) / item.priceCents) * 100) : null;
+  const variants = getProductVariants(item);
+  const hasVariants = hasProductVariants(item);
+  const hasSides = hasProductSides(item);
+  let priceDisplay = formatMoney(item.priceCents);
+  if (hasVariants) {
+    const minPrice = Math.min(...variants.map(v => v.priceCents));
+    priceDisplay = `Desde ${formatMoney(minPrice)}`;
+  }
   const searchStr = `${item.name} ${item.sku || ''} ${item.category || ''} ${stockStatus.type}`.toLowerCase();
 
   return `
@@ -891,6 +976,8 @@ export function productCard(item, editable) {
             <span style="font-size:0.72rem;padding:2px 8px;border-radius:6px;background:rgba(239,189,105,.15);color:var(--brand-2);font-weight:700;text-transform:uppercase;">
               ${escapeHtml(item.category || 'General')}
             </span>
+            ${hasVariants ? `<span class="badge-inventory-prepared" style="color:var(--brand-2);border-color:rgba(239,189,105,.3);"><i data-lucide="layers" style="width:11px;height:11px;"></i> ${variants.length} tamaños</span>` : ''}
+            ${hasSides ? `<span class="badge-inventory-prepared" style="color:#38bdf8;border-color:rgba(56,189,248,.3);"><i data-lucide="utensils" style="width:11px;height:11px;"></i> Guarnición</span>` : ''}
             ${stockStatus.badgeHtml}
           </div>
           <span class="document-status ${item.active === false ? 'status-cancelled' : 'status-paid'}" style="flex-shrink:0;">
@@ -911,7 +998,7 @@ export function productCard(item, editable) {
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:10px 12px;background:rgba(0,0,0,.3);border-radius:10px;border:1px solid rgba(255,255,255,.05);margin-bottom:12px;">
           <div>
             <span style="display:block;font-size:0.68rem;color:var(--muted);text-transform:uppercase;">Precio</span>
-            <strong style="font-size:1.05rem;color:var(--brand-2);font-weight:800;">${formatMoney(item.priceCents)}</strong>
+            <strong style="font-size:1.05rem;color:var(--brand-2);font-weight:800;">${priceDisplay}</strong>
           </div>
           <div>
             <span style="display:block;font-size:0.68rem;color:var(--muted);text-transform:uppercase;">Costo</span>

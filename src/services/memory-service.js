@@ -134,13 +134,30 @@ export class MemoryDataService {
     const inventoryType = item.inventoryType || (item.isPrepared ? 'prepared' : 'resale');
     const isPrepared = inventoryType === 'prepared';
     const minStock = Number.isFinite(Number(item.minStock)) ? Math.max(0, Number(item.minStock)) : 5;
+    const variants = Array.isArray(item.variants)
+      ? item.variants.map((v, i) => ({
+          id: String(v.id || `var-${i + 1}`).trim(),
+          name: String(v.name || '').trim(),
+          priceCents: Math.max(0, Math.round(Number(v.priceCents || 0))),
+          costCents: Math.max(0, Math.round(Number(v.costCents || 0))),
+          sku: String(v.sku || '').trim()
+        })).filter((v) => v.name)
+      : [];
+    const hasVariants = Boolean(item.hasVariants && variants.length > 0);
+    const hasSides = Boolean(item.hasSides);
+    const sidePriceCents = Math.max(0, Math.round(Number(item.sidePriceCents || 0)));
     const payload = {
       ...item,
       id,
       inventoryType,
       isPrepared,
       minStock,
-      createdAt: new Date()
+      hasVariants,
+      variants,
+      hasSides,
+      sidePriceCents,
+      createdAt: item.createdAt || new Date(),
+      updatedAt: new Date()
     };
     this.data.products = [
       ...this.data.products.filter((entry) => entry.id !== id),

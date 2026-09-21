@@ -214,6 +214,18 @@ export class DataService {
     const inventoryType = String(product.inventoryType || (product.isPrepared ? 'prepared' : 'resale')).trim();
     const isPrepared = inventoryType === 'prepared';
     const minStock = Number.isFinite(Number(product.minStock)) ? Math.max(0, Number(product.minStock)) : 5;
+    const variants = Array.isArray(product.variants)
+      ? product.variants.map((v, i) => ({
+          id: String(v.id || `var-${i + 1}`).trim(),
+          name: String(v.name || '').trim(),
+          priceCents: Math.max(0, Math.round(Number(v.priceCents || 0))),
+          costCents: Math.max(0, Math.round(Number(v.costCents || 0))),
+          sku: String(v.sku || '').trim()
+        })).filter((v) => v.name)
+      : [];
+    const hasVariants = Boolean(product.hasVariants && variants.length > 0);
+    const hasSides = Boolean(product.hasSides);
+    const sidePriceCents = Math.max(0, Math.round(Number(product.sidePriceCents || 0)));
     const payload = {
       sku: String(product.sku || '').trim().slice(0, 80),
       name: String(product.name || '').trim().slice(0, 160),
@@ -226,6 +238,10 @@ export class DataService {
       isPrepared,
       inventoryType,
       minStock,
+      hasVariants,
+      variants,
+      hasSides,
+      sidePriceCents,
       updatedAt: serverTimestamp(),
       updatedBy: this.actor.uid
     };

@@ -2,6 +2,7 @@ import { formatMoney, escapeHtml, formatDate } from '../lib/format.js';
 import { calculateDocument, getPendingDeliveryInvoices } from '../domain/billing.js';
 import { businessDateKey, inBusinessPeriod } from '../lib/business-time.js';
 import { can } from '../domain/roles.js';
+import { getProductVariants, hasProductVariants, hasProductSides, getProductSides, calculateVariantLinePrice, formatLineName } from '../domain/catalog.js';
 
 const STATUS_LABELS = {
   pending: 'Pendiente', preparing: 'Preparando', ready: 'Lista', served: 'Servida',
@@ -1169,13 +1170,24 @@ function productCard(item) {
   const stockClass = isPrepared ? 'stock-prepared' : isOutOfStock ? 'stock-out' : isLowStock ? 'stock-low' : 'stock-ok';
   const stockLabel = isPrepared ? 'Hecho al momento' : isOutOfStock ? 'Agotado' : isLowStock ? `Últimas ${stock}` : `Stock: ${stock}`;
 
+  const variants = getProductVariants(item);
+  const hasVariants = variants.length > 0;
+  const hasSides = hasProductSides(item);
+  let priceDisplay = formatMoney(item.priceCents);
+  if (hasVariants) {
+    const minPrice = Math.min(...variants.map(v => v.priceCents));
+    priceDisplay = `Desde ${formatMoney(minPrice)}`;
+  }
+
   return `<button class="product-card pos-product-tile ${stockClass}" data-product-add="${item.id}" data-category="${escapeHtml(item.category || 'General')}" data-search="${escapeHtml(`${item.name} ${item.sku || ''} ${item.category || ''}`.toLowerCase())}" style="--cat-accent:${meta.color};">
     <div class="product-tile-header">
       <span class="product-category-badge" style="color:${meta.color};background:${meta.bg};border-color:${meta.border};">
         <i data-lucide="${meta.icon}" style="width:12px;height:12px;"></i>
         ${escapeHtml(item.category || 'General')}
       </span>
-      ${item.sku ? `<span class="product-sku"><i data-lucide="barcode" style="width:10px;height:10px;display:inline-block;vertical-align:-1px;"></i> ${escapeHtml(item.sku)}</span>` : ''}
+      ${hasVariants ? `<span class="product-options-badge" style="font-size:0.68rem;padding:2px 6px;border-radius:4px;background:rgba(215,154,60,.18);color:var(--brand-2);font-weight:700;display:inline-flex;align-items:center;gap:3px;"><i data-lucide="layers" style="width:10px;height:10px;"></i> ${variants.length} tamaños</span>` : ''}
+      ${hasSides && !hasVariants ? `<span class="product-options-badge" style="font-size:0.68rem;padding:2px 6px;border-radius:4px;background:rgba(56,189,248,.18);color:#38bdf8;font-weight:700;display:inline-flex;align-items:center;gap:3px;"><i data-lucide="utensils" style="width:10px;height:10px;"></i> Guarnición</span>` : ''}
+      ${item.sku && !hasVariants ? `<span class="product-sku"><i data-lucide="barcode" style="width:10px;height:10px;display:inline-block;vertical-align:-1px;"></i> ${escapeHtml(item.sku)}</span>` : ''}
     </div>
     <div class="product-tile-body">
       <div class="product-tile-icon" style="color:${meta.color};background:${meta.bg};">
@@ -1189,7 +1201,7 @@ function productCard(item) {
         <span class="stock-badge-text">${stockLabel}</span>
         <span class="stock-quick-plus" title="Entrada / Ajuste"><i data-lucide="plus"></i></span>
       </span>
-      <b class="product-tile-price">${formatMoney(item.priceCents)}</b>
+      <b class="product-tile-price">${priceDisplay}</b>
     </div>
   </button>`;
 }
@@ -1197,18 +1209,35 @@ function productCard(item) {
 export function cartLine(item, index) {
   const isCustom = Boolean(item.isCustomPrice);
   const hasNotes = Boolean(item.notes && item.notes.trim());
+  const hasVariant = Boolean(item.variantName);
+  const hasSide = Boolean(item.side);
+  const hasOptions = hasVariant || hasSide || Boolean(item.hasVariants || item.hasSides);
+
   return `<div class="cart-line pos-cart-line" data-cart-row="${index}">
     <div class="cart-line-header">
-      <strong class="cart-line-name">${escapeHtml(item.name)}</strong>
+      <div style="flex:1;min-width:0;">
+        <strong class="cart-line-name" ${hasOptions ? `data-cart-edit-options="${index}" style="cursor:pointer;" title="Tocar para cambiar tamaño o guarnición"` : ''}>${escapeHtml(item.name)}</strong>
+        ${hasSide ? `
+          <div class="cart-line-side-badge" style="display:inline-flex;align-items:center;gap:3px;font-size:0.74rem;color:var(--brand-2);background:rgba(245,158,11,.12);padding:1px 6px;border-radius:4px;margin-top:2px;">
+            <i data-lucide="utensils" style="width:11px;height:11px;"></i>
+            <span>Guarnición: <strong>${escapeHtml(item.side)}</strong></span>
+          </div>
+        ` : ''}
+      </div>
       <b class="cart-line-total">${formatMoney(item.unitPriceCents * item.quantity)}</b>
     </div>
     <div class="cart-line-sub">
-      <div class="cart-line-meta">
-        <button type="button" class="cart-unit-price-btn ${isCustom ? 'is-adjusted' : ''}" data-cart-set-price="${index}" title="Tocar para cambiar precio o porción (RD$)">
+      <div class="cart-line-meta" style="display:flex;gap:6px;align-items:center;">
+        <button type="button" class="cart-unit-price-btn ${isCustom ? 'is-adjusted' : ''}" data-cart-set-price="${index}" title="Tocar para cambiar precio manual (RD$)">
           <i data-lucide="circle-dollar-sign" style="width:12px;height:12px;"></i>
           <span>${formatMoney(item.unitPriceCents)} c/u</span>
           ${isCustom ? '<span class="badge-custom-price">Ajustado</span>' : ''}
         </button>
+        ${hasOptions ? `
+          <button type="button" class="cart-edit-options-btn" data-cart-edit-options="${index}" style="display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;padding:3px 8px;border-radius:6px;background:rgba(255,255,255,.05);border:1px solid var(--line);color:#cbd5e1;cursor:pointer;" title="Cambiar tamaño o guarnición">
+            <i data-lucide="sliders-horizontal" style="width:11px;height:11px;color:var(--brand-2);"></i> Opciones
+          </button>
+        ` : ''}
       </div>
       <div class="quantity-control pos-qty-control">
         <button type="button" class="qty-btn" data-cart-qty="${index}" data-delta="-1" aria-label="Restar una unidad">−</button>
@@ -1282,6 +1311,7 @@ function kdsCard(order) {
           <span class="kds-item-qty">${item.quantity}×</span>
           <div class="kds-item-details">
             <strong class="kds-item-name">${escapeHtml(item.name)}</strong>
+            ${item.side ? `<div class="kds-item-side" style="display:flex;align-items:center;gap:4px;color:var(--brand-2);font-size:0.78rem;font-weight:700;margin-top:2px;"><i data-lucide="utensils" style="width:12px;height:12px;"></i> Guarnición: ${escapeHtml(item.side)}</div>` : ''}
             ${item.notes ? `<div class="kds-item-note"><i data-lucide="message-square-warning" style="width:12px;height:12px;"></i> ${escapeHtml(item.notes)}</div>` : ''}
           </div>
         </li>
@@ -1578,6 +1608,132 @@ export function renderTablePickerModal(tables = [], selectedTableId = '', orders
           <button type="button" class="button secondary" data-modal-close>Cerrar</button>
         </footer>
       </article>
+    </div>
+  `;
+}
+
+export function renderProductOptionPickerModal(product, existingCartItem = null, cartIndex = null) {
+  if (!product) return '';
+  const meta = getCategoryMeta(product.category);
+  const variants = getProductVariants(product);
+  const hasVariants = variants.length > 0;
+  const hasSides = hasProductSides(product);
+  const availableSides = getProductSides(product);
+  const sidePriceCents = Number(product.sidePriceCents || 0);
+
+  const currentVariantId = existingCartItem?.variantId || (hasVariants ? variants[0]?.id : null);
+  const currentSide = existingCartItem?.side || '';
+  const currentHasSide = Boolean(existingCartItem ? existingCartItem.side : false);
+  const currentNotes = existingCartItem?.notes || '';
+  const isEditing = cartIndex != null && existingCartItem != null;
+
+  const currentVariant = variants.find((v) => v.id === currentVariantId) || variants[0];
+  const basePriceCents = currentVariant ? currentVariant.priceCents : Number(product.priceCents || 0);
+  const initialTotalCents = basePriceCents + (currentHasSide ? sidePriceCents : 0);
+
+  return `
+    <div class="modal-backdrop" data-modal-close>
+      <form id="product-options-form" class="modal-card form-modal" style="max-width:540px;" data-modal-card>
+        <input type="hidden" name="productId" value="${escapeHtml(product.id || '')}">
+        <input type="hidden" name="cartIndex" value="${cartIndex != null ? cartIndex : ''}">
+        <input type="hidden" name="basePriceCents" id="picker-base-price" value="${basePriceCents}">
+        <input type="hidden" name="sidePriceCents" id="picker-side-price" value="${sidePriceCents}">
+        <input type="hidden" name="selectedVariantId" id="picker-variant-id" value="${escapeHtml(currentVariantId || '')}">
+        <input type="hidden" name="selectedVariantName" id="picker-variant-name" value="${escapeHtml(currentVariant?.name || '')}">
+        <input type="hidden" name="selectedSide" id="picker-selected-side" value="${escapeHtml(currentSide || '')}">
+        <input type="hidden" name="hasSide" id="picker-has-side" value="${currentHasSide ? 'yes' : 'no'}">
+
+        <header style="border-bottom:1px solid var(--line);padding-bottom:12px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div style="width:38px;height:38px;border-radius:10px;display:grid;place-items:center;color:${meta.color};background:${meta.bg};border:1px solid ${meta.border};flex-shrink:0;">
+              <i data-lucide="${meta.icon}" style="width:20px;height:20px;"></i>
+            </div>
+            <div style="min-width:0;">
+              <span class="eyebrow" style="color:var(--brand-2);">${escapeHtml(product.category || 'General')} · ${isEditing ? 'Modificar en Carrito' : 'Elegir Opciones'}</span>
+              <h2 style="font-size:1.25rem;margin:2px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#fff;">${escapeHtml(product.name)}</h2>
+            </div>
+          </div>
+          <button type="button" class="icon-button" data-modal-close aria-label="Cerrar"><i data-lucide="x"></i></button>
+        </header>
+
+        <div class="stack-form" style="padding-top:12px;gap:16px;">
+
+          <!-- SELECCIÓN DE TAMAÑO / PORCIÓN -->
+          ${hasVariants ? `
+            <div class="picker-section">
+              <label style="font-size:0.82rem;font-weight:800;color:var(--brand-2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                <i data-lucide="layers" style="width:14px;height:14px;"></i> Selecciona el Tamaño o Porción:
+              </label>
+              <div class="variant-chips-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:8px;">
+                ${variants.map((v) => {
+                  const isSelected = v.id === currentVariantId;
+                  return `
+                    <button type="button" class="variant-chip ${isSelected ? 'active' : ''}" data-picker-variant="${escapeHtml(v.id)}" data-variant-price="${v.priceCents}" data-variant-name="${escapeHtml(v.name)}" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:12px 8px;border-radius:10px;border:2px solid ${isSelected ? 'var(--brand-2)' : 'var(--line)'};background:${isSelected ? 'rgba(215,154,60,.18)' : 'rgba(255,255,255,.04)'};color:${isSelected ? 'var(--brand-2)' : '#e6edf3'};cursor:pointer;transition:all 0.15s ease;">
+                      <strong style="font-size:1rem;display:block;margin-bottom:3px;">${escapeHtml(v.name)}</strong>
+                      <b style="font-size:0.92rem;color:${isSelected ? 'var(--brand-2)' : '#cbd5e1'};">${formatMoney(v.priceCents)}</b>
+                    </button>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+          ` : ''}
+
+          <!-- SELECCIÓN DE ACOMPAÑAMIENTO / GUARNICIÓN -->
+          ${hasSides ? `
+            <div class="picker-section" style="border-top:1px solid rgba(255,255,255,.06);padding-top:12px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                <label style="font-size:0.82rem;font-weight:800;color:var(--brand-2);text-transform:uppercase;letter-spacing:0.5px;margin:0;display:flex;align-items:center;gap:6px;">
+                  <i data-lucide="utensils" style="width:14px;height:14px;"></i> Acompañamiento / Guarnición:
+                </label>
+                ${sidePriceCents > 0 ? `<span style="font-size:0.75rem;padding:2px 8px;border-radius:6px;background:rgba(215,154,60,.12);color:var(--brand-2);font-weight:700;">+${formatMoney(sidePriceCents)}</span>` : '<span style="font-size:0.75rem;color:#10b981;font-weight:700;">Incluida</span>'}
+              </div>
+
+              <!-- Switch Solo vs Acompañado -->
+              <div class="side-mode-selector" style="display:grid;grid-template-columns:repeat(2, 1fr);gap:8px;margin-bottom:10px;">
+                <button type="button" class="side-mode-btn ${!currentHasSide ? 'active' : ''}" data-picker-side-mode="none" style="padding:10px 12px;border-radius:8px;border:1px solid ${!currentHasSide ? 'var(--brand-2)' : 'var(--line)'};background:${!currentHasSide ? 'rgba(215,154,60,.18)' : 'rgba(255,255,255,.03)'};color:${!currentHasSide ? 'var(--brand-2)' : '#94a3b8'};font-weight:700;font-size:0.88rem;cursor:pointer;">
+                  Solo (Sin Acompañamiento)
+                </button>
+                <button type="button" class="side-mode-btn ${currentHasSide ? 'active' : ''}" data-picker-side-mode="side" style="padding:10px 12px;border-radius:8px;border:1px solid ${currentHasSide ? 'var(--brand-2)' : 'var(--line)'};background:${currentHasSide ? 'rgba(215,154,60,.18)' : 'rgba(255,255,255,.03)'};color:${currentHasSide ? 'var(--brand-2)' : '#94a3b8'};font-weight:700;font-size:0.88rem;cursor:pointer;">
+                  Acompañado ${sidePriceCents > 0 ? `(+${formatMoney(sidePriceCents)})` : ''}
+                </button>
+              </div>
+
+              <!-- Lista de Guarniciones -->
+              <div id="picker-sides-container" style="display:${currentHasSide ? 'grid' : 'none'};grid-template-columns:repeat(auto-fit, minmax(110px, 1fr));gap:6px;max-height:160px;overflow-y:auto;padding:6px;border:1px solid rgba(255,255,255,.08);border-radius:8px;background:rgba(0,0,0,.25);">
+                ${availableSides.map((sideName) => {
+                  const isSideActive = currentSide === sideName;
+                  return `
+                    <button type="button" class="picker-side-chip ${isSideActive ? 'active' : ''}" data-picker-side="${escapeHtml(sideName)}" style="padding:8px 6px;border-radius:6px;border:1px solid ${isSideActive ? 'var(--brand-2)' : 'rgba(255,255,255,.1)'};background:${isSideActive ? 'rgba(215,154,60,.28)' : 'rgba(255,255,255,.03)'};color:${isSideActive ? '#fff' : '#cbd5e1'};font-size:0.82rem;font-weight:700;cursor:pointer;text-align:center;">
+                      ${escapeHtml(sideName)}
+                    </button>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+          ` : ''}
+
+          <!-- NOTAS / COMENTARIOS EXTRA -->
+          <div class="picker-section" style="border-top:1px solid rgba(255,255,255,.06);padding-top:10px;">
+            <label style="font-size:0.8rem;color:var(--muted);display:block;margin-bottom:4px;">
+              Comentario especial o instrucciones para cocina:
+              <input type="text" name="notes" id="picker-notes-input" maxlength="200" value="${escapeHtml(currentNotes)}" placeholder="Ej: Sin cebolla, poco hielo, bien cocido..." style="margin-top:4px;width:100%;font-size:0.85rem;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.04);border:1px solid var(--line);color:#fff;">
+            </label>
+          </div>
+
+          <!-- RESUMEN DE TOTAL Y ACCIÓN -->
+          <div style="background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:4px;">
+            <div>
+              <span style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;font-weight:700;display:block;">Precio del artículo:</span>
+              <strong id="picker-total-display" style="font-size:1.45rem;color:var(--brand-2);">${formatMoney(initialTotalCents)}</strong>
+            </div>
+            <button type="submit" class="button primary" style="padding:10px 20px;font-size:0.95rem;font-weight:800;">
+              <i data-lucide="${isEditing ? 'check' : 'plus'}"></i>
+              <span>${isEditing ? 'Actualizar Artículo' : 'Agregar al Carrito'}</span>
+            </button>
+          </div>
+
+        </div>
+      </form>
     </div>
   `;
 }

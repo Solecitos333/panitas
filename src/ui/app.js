@@ -1,6 +1,6 @@
 import {
-  Activity, AlertTriangle, ArrowDownLeft, ArrowLeft, ArrowLeftRight, ArrowUpRight, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, Bike, BookOpen, Cake, Calculator, Calendar,
-  CalendarX, ChartNoAxesCombined, Check, CheckCircle2, CheckSquare, ChefHat, ChevronDown, ChevronUp, CircleDollarSign, ClipboardCheck, ClipboardPen, Clock, Clock3, ClockAlert, Coffee, Coins, Cpu, CreditCard, Download, Eye, EyeOff,
+  Activity, AlertTriangle, ArrowDownLeft, ArrowLeft, ArrowLeftRight, ArrowUpRight, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beef, Beer, Bell, Bike, BookOpen, Cake, Calculator, Calendar,
+  CalendarX, ChartNoAxesCombined, Check, CheckCircle2, CheckSquare, ChefHat, ChevronDown, ChevronUp, CircleDollarSign, ClipboardCheck, ClipboardPen, Clock, Clock3, ClockAlert, Coffee, Coins, Cpu, CreditCard, CupSoda, Download, Eye, EyeOff,
   FileCheck2, FileSpreadsheet, FileText, FileX2, FilterX, Flame, Globe, History, KeyRound, Landmark, Layers, LayoutDashboard, Lock, LogOut, Menu,
   MessageSquare, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Moon, Package, PackageMinus, PackageOpen, PackagePlus, PanelLeftClose, PanelLeftOpen,
   Pencil, Percent, Phone, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, RotateCcw, Salad, Sandwich, Save, ScanBarcode,
@@ -11,7 +11,8 @@ import {
 import { can, allowedNavigation, primaryRole } from '../domain/roles.js';
 import { calculateDocument, toCents, getPendingDeliveryInvoices } from '../domain/billing.js';
 import { getClientMemory, searchClientMemory, isDeliveryInvoice, invoiceBelongsToClient } from '../domain/client-memory.js';
-import { renderCartLines, renderCartTotals, renderDashboard, renderKds, renderOrderDrawer, renderPos, renderTables, renderTablePickerModal } from '../modules/operations.js';
+import { renderCartLines, renderCartTotals, renderDashboard, renderKds, renderOrderDrawer, renderPos, renderTables, renderTablePickerModal, renderProductOptionPickerModal } from '../modules/operations.js';
+import { hasProductVariants, hasProductSides, calculateVariantLinePrice, formatLineName, VARIANT_TEMPLATES } from '../domain/catalog.js';
 import { exportReport, renderInvoiceModal, renderInvoices, renderReports } from '../modules/billing.js';
 import { renderReceivables, renderFiaoPayModal, renderClientBulkPayModal, renderClientStatementModal } from '../modules/receivables.js';
 import { renderDeliveries, renderDriverFormModal, renderDeliverySettleModal, renderReassignDeliveryModal } from '../modules/deliveries.js';
@@ -59,8 +60,8 @@ const NAV = [
 ];
 
 const icons = {
-  Activity, AlertTriangle, ArrowDownLeft, ArrowLeft, ArrowLeftRight, ArrowUpRight, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beer, Bell, Bike, BookOpen, Cake, Calculator, Calendar, ChartNoAxesCombined, Check, CheckCircle2, CheckSquare, ChefHat,
-  ChevronDown, ChevronUp, CircleDollarSign, ClipboardCheck, ClipboardPen, Clock, Clock3, ClockAlert, Coffee, Coins, Cpu, CreditCard, Download, Eye, EyeOff, FileCheck2, FileSpreadsheet, FileText, FileX2, FilterX, Flame, Globe, History, KeyRound, Landmark,
+  Activity, AlertTriangle, ArrowDownLeft, ArrowLeft, ArrowLeftRight, ArrowUpRight, BadgeCheck, BadgeDollarSign, Banknote, Barcode, Beef, Beer, Bell, Bike, BookOpen, Cake, Calculator, Calendar, ChartNoAxesCombined, Check, CheckCircle2, CheckSquare, ChefHat,
+  ChevronDown, ChevronUp, CircleDollarSign, ClipboardCheck, ClipboardPen, Clock, Clock3, ClockAlert, Coffee, Coins, Cpu, CreditCard, CupSoda, Download, Eye, EyeOff, FileCheck2, FileSpreadsheet, FileText, FileX2, FilterX, Flame, Globe, History, KeyRound, Landmark,
   Layers, LayoutDashboard, Lock, LogOut, Menu, MessageSquare, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Moon, Package, PackageMinus, PackageOpen, PackagePlus, PanelLeftClose, PanelLeftOpen,
   Pencil, Percent, Phone, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, RotateCcw, Salad, Sandwich, Save, ScanBarcode, Search, Send, Settings, Sheet,
   ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, Sliders, SlidersHorizontal, Smartphone, Sparkles, Star, Timer, Trash2, TrendingDown, TrendingUp, Truck, Unlock, Usb, UserCheck, UserPlus, Users, UserX,
@@ -385,6 +386,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       const inv = (state.invoices || []).find((i) => i.id === state.reassigningInvoiceId) || (state.lastSaleResult?.id === state.reassigningInvoiceId ? state.lastSaleResult : null);
       modalRoot.innerHTML = renderReassignDeliveryModal(inv, state.deliveryDrivers);
     }
+    else if (state.modal === 'productOptions') {
+      modalRoot.innerHTML = renderProductOptionPickerModal(state.optionPickerProduct, state.optionPickerItem, state.optionPickerCartIndex);
+    }
     else modalRoot.innerHTML = '';
     iconsRefresh(modalRoot); bindModal(); syncNativeUpdateState(); setupTouchNumericInputs(modalRoot);
   }
@@ -487,6 +491,12 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     }));
     root.querySelectorAll('[data-mobile-inventory-form]').forEach((form) => form.addEventListener('submit', saveMobileInventory));
     root.querySelectorAll('[data-cart-qty]').forEach((button)=>button.addEventListener('click',()=>changeQuantity(Number(button.dataset.cartQty),Number(button.dataset.delta))));
+    root.querySelectorAll('[data-cart-edit-options]').forEach((button) =>
+      button.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openCartItemOptions(Number(button.dataset.cartEditOptions));
+      })
+    );
     root.querySelector('[data-cart-clear]')?.addEventListener('click',()=>{
       state.cart=[];
       resetPosDraft();
@@ -2059,8 +2069,265 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       productForm.querySelector('#product-form-price')?.addEventListener('input', updateMarginPreview);
       productForm.querySelector('#product-form-cost')?.addEventListener('input', updateMarginPreview);
 
+      // Variantes y Acompañamientos en el formulario de producto
+      const hasVariantsCheckbox = productForm.querySelector('#product-has-variants-checkbox');
+      const variantsContainer = productForm.querySelector('#product-variants-container');
+      hasVariantsCheckbox?.addEventListener('change', () => {
+        if (variantsContainer) {
+          variantsContainer.style.display = hasVariantsCheckbox.checked ? 'block' : 'none';
+        }
+      });
+
+      const bindRemoveVariantButtons = (container) => {
+        container?.querySelectorAll('[data-remove-variant-row]').forEach((btn) => {
+          btn.onclick = () => btn.closest('.product-variant-row')?.remove();
+        });
+      };
+      const rowsContainer = productForm.querySelector('#product-variants-rows');
+      bindRemoveVariantButtons(rowsContainer);
+
+      productForm.querySelectorAll('[data-variant-preset]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const templateKey = btn.dataset.variantPreset;
+          const template = VARIANT_TEMPLATES[templateKey];
+          if (!template || !rowsContainer) return;
+          const baseCost = productForm.querySelector('#product-form-cost')?.value || '0.00';
+          const basePrice = productForm.querySelector('#product-form-price')?.value || '0.00';
+
+          rowsContainer.innerHTML = template.variants.map((v, i) => `
+            <div class="product-variant-row" data-variant-row="${i}" style="display:grid;grid-template-columns:1fr 110px 110px 36px;gap:8px;align-items:center;background:rgba(255,255,255,.03);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.06);">
+              <label style="margin:0;">
+                <span style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:2px;">Tamaño / Porción</span>
+                <input type="text" name="variantName[]" value="${escapeHtml(v.name)}" placeholder="Ej. 12 oz..." required style="padding:6px 8px;font-size:0.85rem;">
+                <input type="hidden" name="variantId[]" value="${escapeHtml(v.id)}">
+              </label>
+              <label style="margin:0;">
+                <span style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:2px;">Precio (RD$)</span>
+                <input type="text" name="variantPrice[]" data-touch-numpad="money" data-numpad-title="Precio Variante" value="${basePrice}" placeholder="0.00" required readonly inputmode="none" style="padding:6px 8px;font-size:0.85rem;cursor:pointer;font-weight:700;color:var(--brand-2);">
+              </label>
+              <label style="margin:0;">
+                <span style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:2px;">Costo (RD$)</span>
+                <input type="text" name="variantCost[]" data-touch-numpad="money" data-numpad-title="Costo Variante" value="${baseCost}" placeholder="0.00" readonly inputmode="none" style="padding:6px 8px;font-size:0.85rem;cursor:pointer;">
+              </label>
+              <button type="button" class="icon-button danger" data-remove-variant-row title="Eliminar tamaño" style="margin-top:14px;width:32px;height:32px;"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
+            </div>
+          `).join('');
+
+          iconsRefresh(rowsContainer);
+          setupTouchNumericInputs(rowsContainer);
+          bindRemoveVariantButtons(rowsContainer);
+          toast(`Plantilla "${template.label}" cargada.`, 'info');
+        });
+      });
+
+      productForm.querySelector('#btn-add-variant-row')?.addEventListener('click', () => {
+        if (!rowsContainer) return;
+        const count = rowsContainer.querySelectorAll('.product-variant-row').length;
+        const baseCost = productForm.querySelector('#product-form-cost')?.value || '0.00';
+        const basePrice = productForm.querySelector('#product-form-price')?.value || '0.00';
+        const rowEl = document.createElement('div');
+        rowEl.className = 'product-variant-row';
+        rowEl.dataset.variantRow = String(count);
+        rowEl.style.cssText = 'display:grid;grid-template-columns:1fr 110px 110px 36px;gap:8px;align-items:center;background:rgba(255,255,255,.03);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.06);';
+        rowEl.innerHTML = `
+          <label style="margin:0;">
+            <span style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:2px;">Tamaño / Porción</span>
+            <input type="text" name="variantName[]" value="" placeholder="Ej. Mediano..." required style="padding:6px 8px;font-size:0.85rem;">
+            <input type="hidden" name="variantId[]" value="var-${Date.now()}-${count + 1}">
+          </label>
+          <label style="margin:0;">
+            <span style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:2px;">Precio (RD$)</span>
+            <input type="text" name="variantPrice[]" data-touch-numpad="money" data-numpad-title="Precio Variante" value="${basePrice}" placeholder="0.00" required readonly inputmode="none" style="padding:6px 8px;font-size:0.85rem;cursor:pointer;font-weight:700;color:var(--brand-2);">
+          </label>
+          <label style="margin:0;">
+            <span style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:2px;">Costo (RD$)</span>
+            <input type="text" name="variantCost[]" data-touch-numpad="money" data-numpad-title="Costo Variante" value="${baseCost}" placeholder="0.00" readonly inputmode="none" style="padding:6px 8px;font-size:0.85rem;cursor:pointer;">
+          </label>
+          <button type="button" class="icon-button danger" data-remove-variant-row title="Eliminar tamaño" style="margin-top:14px;width:32px;height:32px;"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
+        `;
+        rowsContainer.appendChild(rowEl);
+        iconsRefresh(rowEl);
+        setupTouchNumericInputs(rowEl);
+        bindRemoveVariantButtons(rowsContainer);
+        const nameInput = rowEl.querySelector('input[name="variantName[]"]');
+        if (nameInput) nameInput.focus();
+      });
+
+      const hasSidesCheckbox = productForm.querySelector('#product-has-sides-checkbox');
+      const sidesContainer = productForm.querySelector('#product-sides-container');
+      hasSidesCheckbox?.addEventListener('change', () => {
+        if (sidesContainer) {
+          sidesContainer.style.display = hasSidesCheckbox.checked ? 'block' : 'none';
+        }
+      });
+
       // Calcular y poblar al renderizar el modal
       updateMarginPreview();
+    }
+
+    // Modal Táctil de Opciones de Producto (Variantes y Guarnición)
+    const optionsForm = modalRoot?.querySelector('#product-options-form');
+    if (optionsForm) {
+      const basePriceInput = optionsForm.querySelector('#picker-base-price');
+      const sidePriceInput = optionsForm.querySelector('#picker-side-price');
+      const variantIdInput = optionsForm.querySelector('#picker-variant-id');
+      const variantNameInput = optionsForm.querySelector('#picker-variant-name');
+      const sideInput = optionsForm.querySelector('#picker-selected-side');
+      const hasSideInput = optionsForm.querySelector('#picker-has-side');
+      const totalDisplay = optionsForm.querySelector('#picker-total-display');
+      const sidesContainer = optionsForm.querySelector('#picker-sides-container');
+
+      const updatePickerTotal = () => {
+        const base = Number(basePriceInput?.value || 0);
+        const sideP = hasSideInput?.value === 'yes' ? Number(sidePriceInput?.value || 0) : 0;
+        const total = base + sideP;
+        if (totalDisplay) totalDisplay.textContent = formatMoney(total);
+      };
+
+      optionsForm.querySelectorAll('[data-picker-variant]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          optionsForm.querySelectorAll('[data-picker-variant]').forEach((b) => {
+            b.classList.remove('active');
+            b.style.borderColor = 'var(--line)';
+            b.style.background = 'rgba(255,255,255,.04)';
+            b.style.color = '#e6edf3';
+          });
+          btn.classList.add('active');
+          btn.style.borderColor = 'var(--brand-2)';
+          btn.style.background = 'rgba(215,154,60,.18)';
+          btn.style.color = 'var(--brand-2)';
+
+          if (variantIdInput) variantIdInput.value = btn.dataset.pickerVariant;
+          if (variantNameInput) variantNameInput.value = btn.dataset.variantName;
+          if (basePriceInput) basePriceInput.value = btn.dataset.variantPrice;
+          updatePickerTotal();
+        });
+      });
+
+      optionsForm.querySelectorAll('[data-picker-side-mode]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const mode = btn.dataset.pickerSideMode;
+          optionsForm.querySelectorAll('[data-picker-side-mode]').forEach((b) => {
+            b.classList.remove('active');
+            b.style.borderColor = 'var(--line)';
+            b.style.background = 'rgba(255,255,255,.03)';
+            b.style.color = '#94a3b8';
+          });
+          btn.classList.add('active');
+          btn.style.borderColor = 'var(--brand-2)';
+          btn.style.background = 'rgba(215,154,60,.18)';
+          btn.style.color = 'var(--brand-2)';
+
+          if (mode === 'side') {
+            if (hasSideInput) hasSideInput.value = 'yes';
+            if (sidesContainer) sidesContainer.style.display = 'grid';
+            const activeSide = optionsForm.querySelector('.picker-side-chip.active');
+            if (!activeSide) {
+              const first = optionsForm.querySelector('.picker-side-chip');
+              if (first) {
+                first.classList.add('active');
+                first.style.borderColor = 'var(--brand-2)';
+                first.style.background = 'rgba(215,154,60,.28)';
+                first.style.color = '#fff';
+                if (sideInput) sideInput.value = first.dataset.pickerSide;
+              }
+            }
+          } else {
+            if (hasSideInput) hasSideInput.value = 'no';
+            if (sidesContainer) sidesContainer.style.display = 'none';
+          }
+          updatePickerTotal();
+        });
+      });
+
+      optionsForm.querySelectorAll('[data-picker-side]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          optionsForm.querySelectorAll('[data-picker-side]').forEach((b) => {
+            b.classList.remove('active');
+            b.style.borderColor = 'rgba(255,255,255,.1)';
+            b.style.background = 'rgba(255,255,255,.03)';
+            b.style.color = '#cbd5e1';
+          });
+          btn.classList.add('active');
+          btn.style.borderColor = 'var(--brand-2)';
+          btn.style.background = 'rgba(215,154,60,.28)';
+          btn.style.color = '#fff';
+          if (sideInput) sideInput.value = btn.dataset.pickerSide;
+        });
+      });
+
+      optionsForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        capturePosDraft();
+        const f = new FormData(optionsForm);
+        const productId = f.get('productId');
+        const cartIndexRaw = f.get('cartIndex');
+        const isEditing = cartIndexRaw !== '' && cartIndexRaw != null;
+        const cartIndex = isEditing ? parseInt(cartIndexRaw, 10) : null;
+
+        const product = state.products.find((p) => p.id === productId);
+        if (!product) return closeModal();
+
+        const vId = String(f.get('selectedVariantId') || '').trim();
+        const vName = String(f.get('selectedVariantName') || '').trim();
+        const hasSide = f.get('hasSide') === 'yes';
+        const selectedSide = hasSide ? String(f.get('selectedSide') || '').trim() : '';
+        const notes = String(f.get('notes') || '').trim();
+        const basePriceCents = Number(f.get('basePriceCents') || product.priceCents || 0);
+        const sidePriceCents = hasSide ? Number(f.get('sidePriceCents') || product.sidePriceCents || 0) : 0;
+        const unitPriceCents = basePriceCents + sidePriceCents;
+
+        const formattedName = formatLineName(product.name, vName);
+
+        if (isEditing && state.cart[cartIndex]) {
+          const existing = state.cart[cartIndex];
+          state.cart[cartIndex] = {
+            ...existing,
+            name: formattedName,
+            variantId: vId || undefined,
+            variantName: vName || undefined,
+            side: selectedSide || undefined,
+            sidePriceCents: sidePriceCents || undefined,
+            unitPriceCents,
+            originalPriceCents: unitPriceCents,
+            isCustomPrice: false,
+            notes
+          };
+          toast(`Artículo actualizado en la orden.`, 'success');
+        } else {
+          const existingLine = state.cart.find((l) =>
+            l.productId === product.id &&
+            l.variantId === (vId || undefined) &&
+            l.side === (selectedSide || undefined) &&
+            (l.notes || '') === notes &&
+            !l.isCustomPrice
+          );
+          if (existingLine) {
+            existingLine.quantity += 1;
+            toast(`Se sumó +1 a ${formattedName}.`, 'success');
+          } else {
+            state.cart.push({
+              productId: product.id,
+              name: formattedName,
+              variantId: vId || undefined,
+              variantName: vName || undefined,
+              side: selectedSide || undefined,
+              sidePriceCents: sidePriceCents || undefined,
+              quantity: 1,
+              unitPriceCents,
+              originalPriceCents: unitPriceCents,
+              taxRate: product.taxRate || 0,
+              notes
+            });
+            toast(`Agregado a la orden.`, 'success');
+          }
+        }
+
+        closeModal();
+        renderPosCartOnly();
+        const totals = calculateDocument(state.cart);
+        setVFDMessage(formattedName.slice(0, 20), `TOT: ${formatMoney(totals.totalCents)}`);
+      });
     }
     bindStockAdjustModal(modalRoot);
     bindEndDayWasteModal(modalRoot);
@@ -3374,6 +3641,12 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       linesEl.querySelectorAll('[data-cart-set-price]').forEach((btn) =>
         btn.addEventListener('click', () => openItemPriceModal(Number(btn.dataset.cartSetPrice)))
       );
+      linesEl.querySelectorAll('[data-cart-edit-options]').forEach((btn) =>
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openCartItemOptions(Number(btn.dataset.cartEditOptions));
+        })
+      );
     }
 
     const totalsEl = cartPanel.querySelector('.cart-totals-block');
@@ -3421,6 +3694,18 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     updateSafety.setBlocker('application', !destroyed && updateIsBusy());
   }
 
+  function openCartItemOptions(index) {
+    const item = state.cart[index];
+    if (!item) return;
+    const product = state.products.find((p) => p.id === item.productId);
+    if (!product) return;
+    state.optionPickerProduct = product;
+    state.optionPickerCartIndex = index;
+    state.optionPickerItem = item;
+    state.modal = 'productOptions';
+    renderModal();
+  }
+
   function addProduct(id){
     capturePosDraft();
     const product=state.products.find((item)=>item.id===id);
@@ -3434,7 +3719,19 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       renderModal();
       return;
     }
-    const line=state.cart.find((item)=>item.productId===id && !item.isCustomPrice);
+
+    // Si el producto tiene tamaños/porciones o guarnición, abrir modal táctil rápido de opciones
+    if (hasProductVariants(product) || hasProductSides(product)) {
+      state.optionPickerProduct = product;
+      state.optionPickerCartIndex = null;
+      state.optionPickerItem = null;
+      state.modal = 'productOptions';
+      renderModal();
+      return;
+    }
+
+    // Producto simple sin variantes ni guarnición: agregar en 1 solo toque inmediato
+    const line=state.cart.find((item)=>item.productId===id && !item.isCustomPrice && !item.variantId && !item.side);
     if(line) {
       if (!isPrepared && line.quantity >= Math.min(stock, 999)) return toast(`No hay más existencia disponible de ${product.name}.`, 'warning');
       line.quantity+=1;
@@ -4199,6 +4496,42 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const minStock = Number(f.get('minStock') || 5);
     const isPrepared = inventoryType === 'prepared' || f.get('isPrepared') === 'on';
 
+    const hasVariants = f.get('hasVariants') === 'on';
+    const variantNames = f.getAll('variantName[]');
+    const variantPrices = f.getAll('variantPrice[]');
+    const variantCosts = f.getAll('variantCost[]');
+    const variantIds = f.getAll('variantId[]');
+
+    const variants = [];
+    if (hasVariants && variantNames.length > 0) {
+      for (let i = 0; i < variantNames.length; i++) {
+        const vName = String(variantNames[i] || '').trim();
+        if (!vName) continue;
+        let vPriceCents = priceCents;
+        try {
+          vPriceCents = toCents(variantPrices[i] || '0');
+        } catch (_) {}
+        let vCostCents = 0;
+        try {
+          vCostCents = toCents(variantCosts[i] || '0');
+        } catch (_) {}
+        variants.push({
+          id: String(variantIds[i] || `var-${i + 1}`).trim(),
+          name: vName,
+          priceCents: vPriceCents,
+          costCents: vCostCents
+        });
+      }
+    }
+
+    const hasSides = f.get('hasSides') === 'on';
+    let sidePriceCents = 0;
+    if (hasSides) {
+      try {
+        sidePriceCents = toCents(f.get('sidePrice') || '0');
+      } catch (_) {}
+    }
+
     await perform(() => service.saveProduct({
       id: productId,
       name,
@@ -4211,6 +4544,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       inventoryType,
       minStock,
       isPrepared,
+      hasVariants: hasVariants && variants.length > 0,
+      variants,
+      hasSides,
+      sidePriceCents,
       active: f.get('active') === 'on'
     }), productId ? 'Producto actualizado correctamente.' : 'Producto creado correctamente.', closeModal);
   }

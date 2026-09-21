@@ -352,6 +352,9 @@ export function buildInvoiceEscPos(invoice, settings = {}, payments = [], change
     const price = formatMoney(item.unitPriceCents);
     const lineTotal = formatMoney(item.unitPriceCents * item.quantity);
     b.itemRow(qty, item.name, price, lineTotal);
+    if (item.side) {
+      b.line(`   * GUARNICION: ${item.side}`);
+    }
     if (item.notes) {
       b.line(`   * ${item.notes}`);
     }
@@ -517,6 +520,7 @@ export function buildInvoicePlainText(invoice, settings = {}, payments = [], cha
     const lineTotal = formatMoney(Math.round(qty * Number(item.unitPriceCents || 0)));
     lines.push(receiptRow(`${qty} x ${receiptText(item.name)}`, lineTotal));
     if (qty !== 1) lines.push(receiptRow('Precio unitario:', formatMoney(item.unitPriceCents)));
+    if (item.side) lines.push(`   * Guarnicion: ${receiptText(item.side)}`);
     if (item.notes) lines.push(`Nota: ${receiptText(item.notes)}`);
   }
 
@@ -599,6 +603,11 @@ export function buildKitchenEscPos(order, settings = {}) {
   b.bold(true).size('double-height');
   for (const item of order.items || []) {
     b.line(`${item.quantity} x ${item.name}`);
+    if (item.side) {
+      b.size('normal').bold(true);
+      b.line(`   * GUARNICION: ${item.side}`);
+      b.size('double-height').bold(true);
+    }
     if (item.notes) {
       b.size('normal').bold(false);
       b.line(`   >> NOTA: ${item.notes}`);
@@ -635,6 +644,7 @@ export function buildKitchenPlainText(order, settings = {}) {
   lines.push('[SEP]');
   for (const item of order.items || []) {
     lines.push(`[B]${receiptText(item.quantity)} x ${receiptText(item.name)}`);
+    if (item.side) lines.push(`* GUARNICION: ${receiptText(item.side)}`);
     if (item.notes) lines.push(`NOTA: ${receiptText(item.notes)}`);
   }
   if (order.notes) lines.push('[SEP]', '[B]OBSERVACIONES:', receiptText(order.notes));
@@ -678,6 +688,9 @@ export function buildPrebillEscPos(orderOrInvoice, settings = {}) {
     const price = formatMoney(item.unitPriceCents);
     const lineTotal = formatMoney(item.unitPriceCents * item.quantity);
     b.itemRow(qty, item.name, price, lineTotal);
+    if (item.side) {
+      b.line(`   * GUARNICION: ${item.side}`);
+    }
     if (item.notes) {
       b.line(`   * ${item.notes}`);
     }
@@ -734,6 +747,7 @@ export function buildPrebillPlainText(orderOrInvoice, settings = {}) {
     const description = `${qty} x ${receiptText(item.name)}`;
     lines.push(receiptRow(description, formatMoney(Math.round(Number(item.unitPriceCents || 0) * qty))));
     if (qty !== 1) lines.push(receiptRow('Precio unitario:', formatMoney(item.unitPriceCents)));
+    if (item.side) lines.push(`   * Guarnicion: ${receiptText(item.side)}`);
     if (item.notes) lines.push(`Nota: ${receiptText(item.notes)}`);
   }
   lines.push('[SEP]', receiptRow('Subtotal:', formatMoney(subtotalCents)));

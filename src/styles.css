@@ -4724,5 +4724,157 @@ input[data-touch-numpad] {
 .dash-inv-tag.paid { background: rgba(16, 185, 129, 0.15); color: #34d399; }
 .dash-inv-tag.pending { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
 
+/* ==========================================================================
+   Variantes de Producto (Tamaños / Porciones) y Acompañamientos
+   ========================================================================== */
+
+.variant-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 10px;
+  border-radius: 12px;
+  border: 2px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: #e6edf3;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+  touch-action: manipulation;
+  text-align: center;
+}
+
+.variant-chip:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.variant-chip.active {
+  border-color: var(--brand-2);
+  background: rgba(245, 158, 11, 0.18);
+  color: var(--brand-2);
+  box-shadow: 0 0 14px rgba(245, 158, 11, 0.18);
+}
+
+.side-mode-btn {
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: #94a3b8;
+  font-weight: 700;
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+  touch-action: manipulation;
+  text-align: center;
+}
+
+.side-mode-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #cbd5e1;
+}
+
+.side-mode-btn.active {
+  border-color: var(--brand-2);
+  background: rgba(245, 158, 11, 0.18);
+  color: var(--brand-2);
+  font-weight: 800;
+}
+
+.picker-side-chip {
+  padding: 8px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: #cbd5e1;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: center;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+.picker-side-chip:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.picker-side-chip.active {
+  border-color: var(--brand-2);
+  background: rgba(245, 158, 11, 0.28);
+  color: #fff;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.2);
+}
+
+.variant-preset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.08);
+  color: var(--brand-2);
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.variant-preset-btn:hover {
+  background: rgba(245, 158, 11, 0.18);
+  border-color: var(--brand-2);
+}
+
+.product-options-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.68rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.cart-line-side-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.74rem;
+  color: var(--brand-2);
+  background: rgba(245, 158, 11, 0.12);
+  padding: 2px 7px;
+  border-radius: 5px;
+  margin-top: 3px;
+  font-weight: 600;
+}
+
+.cart-edit-options-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  color: #cbd5e1;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cart-edit-options-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
 
 
