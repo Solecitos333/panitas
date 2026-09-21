@@ -1182,8 +1182,11 @@ function productCard(item) {
     const minPrice = Math.min(...variants.map(v => v.priceCents));
     priceDisplay = `Desde ${formatMoney(minPrice)}`;
   }
+  const searchPrices = [Math.round(item.priceCents / 100), ...variants.map(v => Math.round(v.priceCents / 100))].join(' ');
+  const searchVariants = variants.map(v => v.name).join(' ');
+  const searchTerms = `${item.name} ${item.sku || ''} ${item.category || ''} ${searchPrices} ${searchVariants}`.toLowerCase();
 
-  return `<button class="product-card pos-product-tile ${stockClass}" data-product-add="${item.id}" data-category="${escapeHtml(item.category || 'General')}" data-search="${escapeHtml(`${item.name} ${item.sku || ''} ${item.category || ''}`.toLowerCase())}" style="--cat-accent:${meta.color};">
+  return `<button class="product-card pos-product-tile ${stockClass}" data-product-add="${item.id}" data-category="${escapeHtml(item.category || 'General')}" data-search="${escapeHtml(searchTerms)}" style="--cat-accent:${meta.color};">
     <div class="product-tile-header">
       <span class="product-category-badge" style="color:${meta.color};background:${meta.bg};border-color:${meta.border};">
         <i data-lucide="${meta.icon}" style="width:12px;height:12px;"></i>

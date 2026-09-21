@@ -389,7 +389,7 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow get: if active() && (request.auth.uid == userId || isOwner());
+      allow get: if active();
       allow list: if isOwner();
       allow create: if isOwner()
         && request.resource.data.username is string
@@ -427,10 +427,10 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Reservations enforce uniqueness without exposing another user's identity.
-    // This delivery uses personal authenticated sessions, not shared PIN lookup.
+    // Reservations enforce uniqueness and allow terminal fast-operator identification.
     match /pinClaims/{pin} {
-      allow get, list: if false;
+      allow get: if active();
+      allow list: if false;
       allow create, update: if active() && validDrawerPin(pin)
         && request.resource.data.keys().hasOnly(['userId'])
         && request.resource.data.userId == request.auth.uid

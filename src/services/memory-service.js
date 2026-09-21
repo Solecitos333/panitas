@@ -111,9 +111,9 @@ export class MemoryDataService {
     if (!/^\d{6}$/.test(cleanPin))
       throw new Error("El PIN debe tener exactamente 6 dígitos.");
 
-    // A PIN confirms only the authenticated operator, never another identity.
+    // El PIN identifica al operador activo en la terminal compartida.
     const match = this.data.users.find(
-      (entry) => entry.id === this.actor.uid && entry.drawerPin === cleanPin && entry.active !== false,
+      (entry) => entry.drawerPin === cleanPin && entry.active !== false,
     );
     if (match) {
       return {
@@ -127,9 +127,7 @@ export class MemoryDataService {
       };
     }
 
-    const activeAccount = this.data.users.find((entry) => entry.id === this.actor.uid);
-    const accountName = activeAccount?.displayName || activeAccount?.username || this.actor.displayName || 'esta cuenta';
-    throw new Error(`PIN incorrecto para ${accountName}.`);
+    throw new Error('PIN no reconocido o no asignado a ningún usuario habilitado.');
   }
   async saveProduct(item) {
     const id = item.id || createOperationId("product");
@@ -673,6 +671,8 @@ export class MemoryDataService {
       deliveryNotes: input.deliveryNotes || "",
       deliveryChangeForCents: Number(input.deliveryChangeForCents || 0),
       deliveryStatus: (input.deliveryDriverName || method === "delivery_cod") ? (input.deliveryStatus || "in_transit") : "",
+      cashierId: input.cashierId || this.actor.uid,
+      cashierName: String(input.cashierName || input.payment?.cashierName || this.actor.displayName || this.actor.username || 'Cajero').trim(),
       createdAt: new Date(),
       createdBy: this.actor.uid,
     };
@@ -688,6 +688,8 @@ export class MemoryDataService {
         reference: input.payment.reference || "",
         tenderedCents,
         changeCents,
+        cashierId: input.payment?.cashierId || input.cashierId || this.actor.uid,
+        cashierName: String(input.payment?.cashierName || invoice.cashierName).trim(),
         cashSessionId: input.payment.cashSessionId,
         createdAt: new Date(),
       });
@@ -892,7 +894,7 @@ export class MemoryDataService {
       reason,
       createdAt: new Date(),
       createdBy: this.actor.uid,
-      createdByName: this.actor.displayName,
+      createdByName: input.createdByName || this.actor.displayName,
     });
     session.expectedCents = expectedCents;
     session.lastCashActivityId = id;

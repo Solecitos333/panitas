@@ -153,27 +153,40 @@ export class DataService {
     const cleanPin = String(pin || '').trim();
     if (!/^\d{6}$/.test(cleanPin)) throw new Error('El PIN debe tener exactamente 6 dígitos.');
 
-    // Firebase authenticates the operator; a PIN must never switch that identity.
-    const [secretSnapshot, profileSnapshot] = await Promise.all([
-      getDoc(doc(this.db, 'userSecrets', this.actor.uid)),
-      getDoc(doc(this.db, 'users', this.actor.uid))
-    ]);
+    // El PIN identifica al operador activo en la terminal compartida.
+    let targetUid = null;
+    const claimSnapshot = await getDoc(doc(this.db, 'pinClaims', cleanPin)).catch(() => null);
+    if (claimSnapshot?.exists()) {
+      targetUid = claimSnapshot.data()?.userId || null;
+    }
+
+    if (!targetUid) {
+      const secretSnapshot = await getDoc(doc(this.db, 'userSecrets', this.actor.uid)).catch(() => null);
+      if (secretSnapshot?.exists() && secretSnapshot.data()?.drawerPin === cleanPin) {
+        targetUid = this.actor.uid;
+      }
+    }
+
+    if (!targetUid) {
+      await this.audit('cash.drawer_failed', `PIN no reconocido: ${String(reason).slice(0, 120)}`);
+      throw new Error('PIN no reconocido o no asignado a ningún usuario habilitado.');
+    }
+
+    const profileSnapshot = await getDoc(doc(this.db, 'users', targetUid));
     const account = profileSnapshot.exists() ? profileSnapshot.data() : null;
-    if (!account?.active) throw new Error('Tu usuario no está habilitado.');
-    const storedPin = String(secretSnapshot.data()?.drawerPin || account.drawerPin || '');
-    if (!storedPin) {
-      throw new Error(`Esta cuenta (${account.displayName || this.actor.displayName || account.username || 'activa'}) aún no tiene un PIN configurado. Usa "Cambiar PIN" para asignarlo.`);
-    }
-    if (storedPin !== cleanPin) {
-      await this.audit('cash.drawer_failed', `PIN incorrecto: ${String(reason).slice(0, 120)}`);
-      throw new Error(`PIN incorrecto para la cuenta de ${account.displayName || this.actor.displayName || account.username || 'esta sesión'}.`);
-    }
+    if (!account?.active) throw new Error('El usuario asociado a este PIN no está habilitado.');
+
     const authorizingUser = {
-      id: this.actor.uid, uid: this.actor.uid,
-      displayName: account.displayName || this.actor.displayName || account.username || 'Usuario',
-      username: account.username || this.actor.username || '', roles: account.roles || []
+      id: targetUid,
+      uid: targetUid,
+      displayName: account.displayName || account.username || 'Usuario',
+      username: account.username || '',
+      roles: account.roles || []
     };
-    if (secretSnapshot.data()?.pinUnique !== true) await this.saveMyDrawerPin(cleanPin);
+
+    if (targetUid === this.actor.uid && !claimSnapshot?.exists()) {
+      await this.saveMyDrawerPin(cleanPin).catch(() => {});
+    }
 
     await this.audit('cash.pin_authorized', `${String(reason).slice(0, 240)} (Autorizado por ${authorizingUser.displayName})`);
     return {
@@ -855,8 +868,9 @@ export class DataService {
         if (!snapshot.exists()) throw new Error('Uno de los productos ya no existe.');
         const product = snapshot.data();
         if (!orderRef && product.active === false) throw new Error(`${product.name} ya no está disponible para venta.`);
-        if (!orderRef && (Number(line.unitPriceCents) !== Number(product.priceCents) || Number(line.taxRate || 0) !== Number(product.taxRate || 0))) {
-          throw new Error(`El precio de ${product.name} cambió. Regresa al catálogo y agrégalo de nuevo.`);
+        const lineUnitPrice = Number(line.unitPriceCents);
+        if (!Number.isFinite(lineUnitPrice) || lineUnitPrice < 0) {
+          throw new Error(`El precio para ${product.name} no es válido.`);
         }
         const isPrepared = Boolean(product.isPrepared);
         if (!isPrepared) {
@@ -865,7 +879,7 @@ export class DataService {
           transaction.update(ref, { stock: Math.round((stock - quantity) * 1000) / 1000, updatedAt: serverTimestamp(), updatedBy: this.actor.uid });
         }
       });
-      const cashierName = String(this.actor.displayName || this.actor.username || 'Cajero').trim();
+      const cashierName = String(input.cashierName || input.payment?.cashierName || this.actor.displayName || this.actor.username || 'Cajero').trim();
       transaction.set(invoiceRef, {
         ...(hasRequestId ? { requestId } : {}),
         documentType, invoiceNumber, ncf, ncfType,
@@ -994,7 +1008,7 @@ export class DataService {
         invoiceId, invoiceNumber: invoice.invoiceNumber, amountCents, method: payment.method,
         reference, tenderedCents, changeCents,
         cashierId: this.actor.uid,
-        cashierName: this.actor.displayName || this.actor.username || '',
+        cashierName: String(payment.cashierName || this.actor.displayName || this.actor.username || 'Cajero').trim(),
         cashSessionId: payment.cashSessionId || '',
         createdAt: serverTimestamp(), createdBy: this.actor.uid
       });
@@ -1009,8 +1023,9 @@ export class DataService {
           updatedBy: this.actor.uid
         });
       }
+      const paymentCashierName = String(payment.cashierName || this.actor.displayName || this.actor.username || 'Cajero').trim();
       transaction.set(auditRef, {
-        action: 'payment.created', details: `${invoice.invoiceNumber}: ${amountCents} (${this.actor.displayName || this.actor.username || this.actor.uid})`,
+        action: 'payment.created', details: `${invoice.invoiceNumber}: ${amountCents} (${paymentCashierName})`,
         actorId: this.actor.uid, actorEmail: this.actor.email || '', createdAt: serverTimestamp()
       });
     }); } catch (error) {
@@ -1169,6 +1184,7 @@ export class DataService {
       if (sessionSnapshot.data().openedBy !== this.actor.uid) {
         throw new Error('No puedes registrar movimientos en la caja de otro usuario.');
       }
+      const createdByName = String(input.createdByName || this.actor.displayName || this.actor.username || this.actor.email || 'Cajero').trim();
       transaction.set(movementRef, {
         cashSessionId: input.cashSessionId,
         type,
@@ -1176,7 +1192,7 @@ export class DataService {
         reason,
         createdAt: serverTimestamp(),
         createdBy: this.actor.uid,
-        createdByName: this.actor.displayName || this.actor.username || this.actor.email || ''
+        createdByName
       });
       const previousExpected = Number(sessionSnapshot.data().expectedCents
         ?? sessionSnapshot.data().openingCents ?? 0);
@@ -1193,9 +1209,9 @@ export class DataService {
       });
       transaction.set(auditRef, {
         action: type === 'in' ? 'cash.movement_in' : 'cash.movement_out',
-        details: `${input.cashSessionId}: ${amountCents} - ${reason}`,
+        details: `${input.cashSessionId}: ${amountCents} - ${reason} (Por: ${createdByName})`,
         actorId: this.actor.uid,
-        actorName: this.actor.displayName || this.actor.username || '',
+        actorName: createdByName,
         actorEmail: this.actor.email || '',
         createdAt: serverTimestamp()
       });

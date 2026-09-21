@@ -90,7 +90,7 @@ test('el PIN de seis dígitos pertenece al usuario que inició sesión', async (
   assert.equal(await service.hasMyDrawerPin(), true);
   const authorized = await service.verifyDrawerPin('482601');
   assert.equal(authorized.user.id, actor.uid);
-  await assert.rejects(() => service.verifyDrawerPin('482701'), /PIN incorrecto/);
+  await assert.rejects(() => service.verifyDrawerPin('482701'), /no reconocido/);
   await assert.rejects(() => service.saveMyDrawerPin('12345'), /exactamente 6/);
   await assert.rejects(() => service.saveMyDrawerPin('48x26'), /exactamente 6/);
   service.data.users.push({ id: 'another', drawerPin: '749201' });
@@ -98,7 +98,7 @@ test('el PIN de seis dígitos pertenece al usuario que inició sesión', async (
   await service.verifyDrawerPin('482601');
 });
 
-test('el PIN de otra persona no autoriza operaciones en la sesión personal', async () => {
+test('el PIN de cualquier empleado activo autoriza operaciones identificando al usuario', async () => {
   const service = new MemoryDataService(actor);
   await service.saveMyDrawerPin('482601');
   service.data.users.push({
@@ -109,15 +109,50 @@ test('el PIN de otra persona no autoriza operaciones en la sesión personal', as
     roles: ['cashier', 'manager'],
     active: true
   });
-  await assert.rejects(service.verifyDrawerPin('202020', 'Cobro realizado por Junior'), /PIN incorrecto/);
+  // Junior autoriza con su PIN desde la terminal activa
+  const juniorAuth = await service.verifyDrawerPin('202020', 'Cobro realizado por Junior');
+  assert.equal(juniorAuth.success, true);
+  assert.equal(juniorAuth.user.id, 'junior-uid');
+  assert.equal(juniorAuth.user.displayName, 'Junior');
 
   // El usuario de la sesión principal sigue pudiendo autorizar con su propio PIN
   const mainAuth = await service.verifyDrawerPin('482601', 'Apertura personal');
   assert.equal(mainAuth.success, true);
   assert.equal(mainAuth.user.id, actor.uid);
 
-  // Un PIN no asignado a ningún usuario es rechazado
-  await assert.rejects(service.verifyDrawerPin('999999', 'PIN inexistente'), /PIN incorrecto/);
+  // Un PIN no asignado a ningún usuario habilitado es rechazado
+  await assert.rejects(service.verifyDrawerPin('999999', 'PIN inexistente'), /no reconocido/);
+});
+
+test('venta y movimiento de caja respetan el nombre del cajero autorizado por PIN', async () => {
+  const service = new MemoryDataService(actor);
+  const cashSessionId = await service.openCashSession({ openingCents: 10000 });
+  const movementId = await service.createCashMovement({
+    cashSessionId,
+    type: 'out',
+    amountCents: 1000,
+    reason: 'Compra de hielo',
+    createdByName: 'Junior'
+  });
+  const movement = service.data.cashMovements.find(m => m.id === movementId);
+  assert.equal(movement.createdByName, 'Junior');
+
+  const invoiceRes = await service.createDirectDocument({
+    documentType: 'invoice',
+    items: [{ name: 'Jugo', unitPriceCents: 15000, taxRate: 0, quantity: 1 }],
+    cashierName: 'Nechy Peña',
+    payment: {
+      method: 'cash',
+      amountCents: 15000,
+      tenderedCents: 20000,
+      cashSessionId,
+      cashierName: 'Nechy Peña'
+    }
+  });
+  const invoice = service.data.invoices.find(inv => inv.id === invoiceRes.id);
+  assert.equal(invoice.cashierName, 'Nechy Peña');
+  const payment = service.data.payments.find(p => p.invoiceId === invoiceRes.id);
+  assert.equal(payment.cashierName, 'Nechy Peña');
 });
 
 test('un doble toque con el mismo requestId no duplica factura, pago ni descuento de inventario', async () => {
@@ -227,4 +262,28 @@ test('mesa, cocina, servicio y cobro cierran una comanda sin perder factura ni i
   assert.equal(service.data.invoices.find((item) => item.id === invoice.id)?.status, 'paid');
   assert.equal(service.data.payments.length, 1);
   assert.equal(service.data.products[0].stock, 4);
+});
+
+test('permite facturar un producto con precio modificado en el carrito o porciones', async () => {
+  const service = new MemoryDataService(actor);
+  const productId = await service.saveProduct({ name: 'Jugo Natural', priceCents: 6000, costCents: 0, taxRate: 0, isPrepared: true, active: true });
+  const cashSessionId = await service.openCashSession({ openingCents: 0, notes: 'Turno precio personalizado' });
+
+  // Venta con precio modificado manualmente a RD$80 (8000 centavos)
+  const invoice = await service.createDirectDocument({
+    documentType: 'invoice',
+    items: [{ productId, name: 'Jugo Natural', unitPriceCents: 8000, isCustomPrice: true, taxRate: 0, quantity: 1 }],
+    payment: {
+      amountCents: 8000,
+      method: 'cash',
+      tenderedCents: 8000,
+      cashSessionId
+    }
+  });
+
+  assert.ok(invoice.id);
+  const savedInvoice = service.data.invoices.find((i) => i.id === invoice.id);
+  assert.equal(savedInvoice.totalCents, 8000);
+  assert.equal(savedInvoice.paidCents, 8000);
+  assert.equal(savedInvoice.items[0].unitPriceCents, 8000);
 });

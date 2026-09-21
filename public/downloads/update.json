@@ -2,28 +2,27 @@
     "schemaVersion":  1,
     "channel":  "stable",
     "packageName":  "com.panitas.pos",
-    "versionCode":  42,
-    "versionName":  "1.6.2",
-    "publishedAt":  "2026-09-21T06:58:13Z",
+    "versionCode":  43,
+    "versionName":  "1.6.3",
+    "publishedAt":  "2026-09-21T17:17:07Z",
     "minimumSupportedVersionCode":  10,
     "mandatory":  false,
     "artifact":  {
-                     "url":  "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.6.2-code42.zip",
-                     "filename":  "LosPanitas-Elo-POS-v1.6.2-code42.zip",
-                     "size":  1681740,
-                     "sha256":  "6F689301BCD848D7B77D63F6F5CD48D2B2086C66FB28650BA40B1433A322B72B"
+                     "url":  "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.6.3-code43.zip",
+                     "filename":  "LosPanitas-Elo-POS-v1.6.3-code43.zip",
+                     "size":  1689569,
+                     "sha256":  "E44B0DFA84F9795E5F17377E102970274B6DEE91FBBA62C832BA78FE6DA1E6CE"
                  },
     "apk":  {
                 "entry":  "LosPanitas-Elo-POS.apk",
-                "size":  1685142,
-                "sha256":  "DB5F9A9FD124529FC8D3AFA8B7ACAE3A889D9A7B4635E862E1AE4C0AAD0F81D3",
+                "size":  1693334,
+                "sha256":  "E36D27A0AB65F93C3187D2C2E04F274DF374FE9617F04488563F41B0B8A5B987",
                 "signingCertificateSha256":  "42DE27571244F0A23E533BF1C97D5D8587F4F12C3C34EA3209EDFBC67B8B3395"
             },
     "releaseNotes":  [
-                         "Reforma Integral del Resumen Operativo (Dashboard): Cabecera ejecutiva con estado del turno en tiempo real (Caja Abierta con nombre de usuario o Caja Cerrada), indicador pulsante en vivo y fecha dominicana.",
-                         "Cuadrícula de Métricas KPI Enriquecidas: Ventas del día con desglose de cobrado vs por cobrar (fiao), facturas emitidas con ticket promedio, comandas en preparación vs listas, deliveries en tránsito con balance a liquidar, ocupación del salón y salidas de caja.",
-                         "Cinta de Accesos Rápidos Operativos: Acceso directo a POS, KDS Cocina, Deliveries, Mesas, Registro de Gasto y Cuentas por Cobrar a un solo toque.",
-                         "Tarjetas Operativas de Alto Impacto: Platos estrella con barras de volumen relativo y montos generados, comandas activas con semáforo y alertas de demora (\u003e20 min), monitoreo de choferes en calle, desglose financiero por método de pago y movimientos recientes.",
-                         "Diseño profesional y limpio: 100% iconos SVG Lucide y cero emojis Unicode, garantizando una experiencia ejecutiva de grado comercial."
+                         "Corrección de cobro con precio modificado: Se eliminó la restricción que impedía cobrar productos con porciones o precios personalizados en el carrito desde la terminal POS.",
+                         "Detección multiusuario por PIN: Al cobrar o registrar movimientos de caja con el PIN de 6 dígitos, el sistema identifica automáticamente al operador (Nechy o Junior) y registra su nombre en el ticket, comprobante y auditoría.",
+                         "Catálogo y Búsqueda en POS: Se reactivaron y sincronizaron los jugos de RD$80 y RD$60 en el catálogo activo, y se optimizó la búsqueda rápida del POS para permitir filtrar directamente por precio (\u002780\u0027, \u002760\u0027).",
+                         "Seguridad y limpieza: Se removió la cuenta de prueba administrativa para salvaguardar la integridad de las operaciones del negocio."
                      ]
 }

@@ -61,13 +61,15 @@ test('dos usuarios concurrentes no pueden reservar el mismo PIN y nadie puede le
   await assertFails(setDoc(doc(ownerDb, 'userSecrets', 'cashier'), { drawerPin: '749201', pinUnique: true, updatedBy: 'owner', updatedAt: serverTimestamp() }));
 });
 
-test('la sesión personal nunca acepta el PIN de otra cuenta', async () => {
+test('el PIN de cualquier empleado activo autoriza operaciones identificando al usuario', async () => {
   const owner = new DataService(environment.authenticatedContext('owner', auth('owner')).firestore(), { uid: 'owner' });
   const cashier = new DataService(environment.authenticatedContext('cashier', auth('cashier')).firestore(), { uid: 'cashier' });
   await owner.saveMyDrawerPin('628403');
   await cashier.saveMyDrawerPin('739502');
-  await assert.rejects(cashier.verifyDrawerPin('628403'), /PIN incorrecto/);
+  const fromCashier = await cashier.verifyDrawerPin('628403');
+  assert.equal(fromCashier.user.id, 'owner');
   assert.equal((await cashier.verifyDrawerPin('739502')).user.id, 'cashier');
+  await assert.rejects(cashier.verifyDrawerPin('999999'), /no reconocido/);
 });
 
 test('nómina en efectivo acepta la llamada del formulario y es atómica e idempotente', async () => {
@@ -140,7 +142,7 @@ test('venta real, reintento y cierre mantienen saldo y cajero autenticado', asyn
   assert.equal((await service.createDirectDocument(input)).id, first.id);
   const invoice = (await getDoc(doc(db, 'invoices', first.id))).data();
   assert.equal(invoice.cashierId, 'owner');
-  assert.equal(invoice.cashierName, 'Propietario');
+  assert.equal(invoice.cashierName, 'Otra persona');
   assert.equal((await getDoc(doc(db, 'products', 'p1'))).data().stock, 9);
   assert.equal((await getDoc(doc(db, 'cashSessions', cashSessionId))).data().expectedCents, 11000);
   await assertFails(setDoc(doc(db, 'invoices', 'forged-author-00001'), { ...invoice,

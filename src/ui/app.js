@@ -2983,7 +2983,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
               cashSessionId: state.activeCash.id,
               type: 'out',
               amountCents,
-              reason: fullReason
+              reason: fullReason,
+              createdByName: result.user.displayName || result.user.username
             });
 
             const printVoucher = modalRoot.querySelector('#drawer-outflow-print')?.checked;
@@ -3264,7 +3265,13 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           fiaoAttempt = preparePaymentAttempt(fiaoAttempt, {
             entries: [{ invoiceId, balanceCents: Number(inv.totalCents) - Number(inv.paidCents || 0) }],
             amountCents, tenderedCents, prefix: 'fiao-payment',
-            payment: { method, reference, cashSessionId: state.activeCash.id }
+            payment: {
+              method,
+              reference,
+              cashSessionId: state.activeCash.id,
+              cashierId: verifyRes.user.id,
+              cashierName: verifyRes.user.displayName
+            }
           });
           await executePaymentAttempt(fiaoAttempt, (id, payment) => service.recordPayment(id, payment));
           toast('Cobro de fiao registrado con éxito.', 'success');
@@ -3426,7 +3433,13 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           bulkAttempt = preparePaymentAttempt(bulkAttempt, {
             entries: selectedCbs.map(cb => ({ invoiceId: cb.value, invoiceNumber: cb.dataset.invoiceNumber, balanceCents: Number(cb.dataset.balanceCents || 0) })),
             amountCents: totalAmountCents, tenderedCents, prefix: 'fiao-payment',
-            payment: { method, reference: reference || `Abono fiao ${clientName}`, cashSessionId: state.activeCash.id }
+            payment: {
+              method,
+              reference: reference || `Abono fiao ${clientName}`,
+              cashSessionId: state.activeCash.id,
+              cashierId: verifyRes.user.id,
+              cashierName: verifyRes.user.displayName
+            }
           });
           const confirmedLines = await executePaymentAttempt(bulkAttempt, (id, payment) => service.recordPayment(id, payment));
           const appliedInvoices = confirmedLines.map(line => ({
@@ -3561,7 +3574,13 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           const grandTotalCents = entries.reduce((sum, entry) => sum + entry.balanceCents, 0);
           deliveryAttempt = preparePaymentAttempt(deliveryAttempt, {
             entries, amountCents: grandTotalCents, tenderedCents: grandTotalCents, prefix: 'delivery-settle',
-            payment: { method, reference, cashSessionId: state.activeCash.id }
+            payment: {
+              method,
+              reference,
+              cashSessionId: state.activeCash.id,
+              cashierId: verifyRes.user.id,
+              cashierName: verifyRes.user.displayName
+            }
           });
           const confirmedLines = await executePaymentAttempt(deliveryAttempt, (id, payment) => service.recordPayment(id, payment));
           const settledInvoices = confirmedLines.map(line => ({
@@ -4292,7 +4311,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
               </button>
             </div>
             <p style="margin:6px 0; font-size:.82rem; color:var(--muted);text-align:center;">
-              ${isCredit ? `Digita el PIN de 6 dígitos de ${escapeHtml(activeUserName)} para registrar el fiao.` : isDelivery ? `Digita el PIN de 6 dígitos de ${escapeHtml(activeUserName)} para autorizar el despacho.` : `Digita el PIN de 6 dígitos de ${escapeHtml(activeUserName)} para autorizar el cobro.`}
+              Digita tu PIN de 6 dígitos para autorizar. El ticket se registrará a tu nombre.
             </p>
             <input id="checkout-pin-input" name="pin" type="password" inputmode="none" pattern="[0-9]{6}" maxlength="6" placeholder="" required readonly tabindex="-1" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;">
             <div class="pin-slots-container" id="chk-pin-slots">
@@ -5165,9 +5184,14 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     if (movementAttempt?.fingerprint !== fingerprint) movementAttempt = { fingerprint, requestId: createOperationId('cash-movement') };
 
     let createdId = null;
-    const outcome = await authorizeCashForm(event, `Movimiento de caja (${type === 'in' ? 'Entrada' : 'Salida'})`, async () => {
+    let authorizedUser = null;
+    const outcome = await authorizeCashForm(event, `Movimiento de caja (${type === 'in' ? 'Entrada' : 'Salida'})`, async (authorized) => {
+      authorizedUser = authorized?.user || null;
+      const createdByName = authorizedUser?.displayName || user.displayName || user.username || 'Cajero';
       const res = await service.createCashMovement({
-        ...payload, requestId: movementAttempt.requestId
+        ...payload,
+        requestId: movementAttempt.requestId,
+        createdByName
       });
       createdId = res;
       return res;
@@ -5188,7 +5212,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
             category: rawCategory,
             reason: rawReason,
             createdAt: new Date(),
-            createdByName: user.displayName || user.username || 'Cajero'
+            createdByName: authorizedUser?.displayName || user.displayName || user.username || 'Cajero'
           };
           const voucher = buildCashMovementEscPos(mov, state.activeCash, state.settings || {});
           const plainText = buildCashMovementPlainText(mov, state.activeCash, state.settings || {});
@@ -5210,8 +5234,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     setBusy(button, true);
     try {
       return await perform(async () => {
-        await service.verifyDrawerPin(pin, reason);
-        return task();
+        const authorized = await service.verifyDrawerPin(pin, reason);
+        return task(authorized);
       }, success, after);
     } finally {
       if (pinInput) pinInput.value = '';
