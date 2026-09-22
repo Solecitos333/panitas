@@ -49,14 +49,15 @@ beforeEach(async () => {
 
 after(async () => environment?.cleanup());
 
-test('dos usuarios concurrentes no pueden reservar el mismo PIN y nadie puede leer las reservas', async () => {
+test('PIN compartido: reserva única concurrente, consulta puntual activa y listado bloqueado', async () => {
   const ownerDb = environment.authenticatedContext('owner', auth('owner')).firestore();
   const cashierDb = environment.authenticatedContext('cashier', auth('cashier')).firestore();
   const owner = new DataService(ownerDb, { uid: 'owner', displayName: 'Propietario' });
   const cashier = new DataService(cashierDb, { uid: 'cashier', displayName: 'Caja' });
   const results = await Promise.allSettled([owner.saveMyDrawerPin('582401'), cashier.saveMyDrawerPin('582401')]);
   assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
-  await assertFails(getDoc(doc(ownerDb, 'pinClaims', '582401')));
+  const reservation = await assertSucceeds(getDoc(doc(ownerDb, 'pinClaims', '582401')));
+  assert.ok(['owner', 'cashier'].includes(reservation.data().userId));
   await assertFails(getDocs(collection(ownerDb, 'pinClaims')));
   await assertFails(setDoc(doc(ownerDb, 'userSecrets', 'cashier'), { drawerPin: '749201', pinUnique: true, updatedBy: 'owner', updatedAt: serverTimestamp() }));
 });
@@ -559,13 +560,38 @@ test('un usuario genérico activo opera sin depender de verificación por correo
   await assertSucceeds(getDoc(doc(db, 'users', 'generic')));
 });
 
-test('solo propietario lista usuarios; caja solo lee su propio perfil', async () => {
+test('solo propietario lista usuarios; caja consulta perfiles por ID para identificar el PIN', async () => {
   const ownerDb = environment.authenticatedContext('owner', auth('owner')).firestore();
   const cashierDb = environment.authenticatedContext('cashier', auth('cashier')).firestore();
   await assertSucceeds(getDocs(collection(ownerDb, 'users')));
   await assertFails(getDocs(collection(cashierDb, 'users')));
   await assertSucceeds(getDoc(doc(cashierDb, 'users', 'cashier')));
-  await assertFails(getDoc(doc(cashierDb, 'users', 'owner')));
+  await assertSucceeds(getDoc(doc(cashierDb, 'users', 'owner')));
+});
+
+test('consulta de operador bloquea anónimos, desconocidos e inactivos y no revela secretos ajenos', async () => {
+  const ownerDb = environment.authenticatedContext('owner', auth('owner')).firestore();
+  await new DataService(ownerDb, { uid: 'owner' }).saveMyDrawerPin('628403');
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'users', 'disabled'), { active: false, roles: ['cashier'] });
+  });
+  const forbidden = [
+    environment.unauthenticatedContext().firestore(),
+    environment.authenticatedContext('unknown', auth('cashier')).firestore(),
+    environment.authenticatedContext('disabled', auth('cashier')).firestore()
+  ];
+  for (const db of forbidden) {
+    await assertFails(getDoc(doc(db, 'pinClaims', '628403')));
+    await assertFails(getDoc(doc(db, 'users', 'owner')));
+  }
+  const cashierDb = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  await assertFails(getDocs(collection(cashierDb, 'pinClaims')));
+  await assertFails(getDoc(doc(cashierDb, 'userSecrets', 'owner')));
+  await assertFails(updateDoc(doc(cashierDb, 'users', 'owner'), { roles: ['cashier'] }));
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), 'users', 'owner'), { active: false });
+  });
+  await assert.rejects(new DataService(cashierDb, { uid: 'cashier' }).verifyDrawerPin('628403'), /no est.*habilitado/);
 });
 
 test('un usuario genérico no puede crear ni elevar su propio perfil', async () => {
