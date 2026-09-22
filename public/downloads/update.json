@@ -1,28 +1,28 @@
 {
-    "schemaVersion":  1,
-    "channel":  "stable",
-    "packageName":  "com.panitas.pos",
-    "versionCode":  43,
-    "versionName":  "1.6.3",
-    "publishedAt":  "2026-09-21T17:17:07Z",
-    "minimumSupportedVersionCode":  10,
-    "mandatory":  false,
-    "artifact":  {
-                     "url":  "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.6.3-code43.zip",
-                     "filename":  "LosPanitas-Elo-POS-v1.6.3-code43.zip",
-                     "size":  1689569,
-                     "sha256":  "E44B0DFA84F9795E5F17377E102970274B6DEE91FBBA62C832BA78FE6DA1E6CE"
-                 },
-    "apk":  {
-                "entry":  "LosPanitas-Elo-POS.apk",
-                "size":  1693334,
-                "sha256":  "E36D27A0AB65F93C3187D2C2E04F274DF374FE9617F04488563F41B0B8A5B987",
-                "signingCertificateSha256":  "42DE27571244F0A23E533BF1C97D5D8587F4F12C3C34EA3209EDFBC67B8B3395"
-            },
-    "releaseNotes":  [
-                         "Corrección de cobro con precio modificado: Se eliminó la restricción que impedía cobrar productos con porciones o precios personalizados en el carrito desde la terminal POS.",
-                         "Detección multiusuario por PIN: Al cobrar o registrar movimientos de caja con el PIN de 6 dígitos, el sistema identifica automáticamente al operador (Nechy o Junior) y registra su nombre en el ticket, comprobante y auditoría.",
-                         "Catálogo y Búsqueda en POS: Se reactivaron y sincronizaron los jugos de RD$80 y RD$60 en el catálogo activo, y se optimizó la búsqueda rápida del POS para permitir filtrar directamente por precio (\u002780\u0027, \u002760\u0027).",
-                         "Seguridad y limpieza: Se removió la cuenta de prueba administrativa para salvaguardar la integridad de las operaciones del negocio."
-                     ]
+  "schemaVersion": 1,
+  "channel": "stable",
+  "packageName": "com.panitas.pos",
+  "versionCode": 44,
+  "versionName": "1.6.4",
+  "publishedAt": "2026-09-22T12:03:18Z",
+  "minimumSupportedVersionCode": 10,
+  "mandatory": false,
+  "artifact": {
+    "url": "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.6.4-code44.zip",
+    "filename": "LosPanitas-Elo-POS-v1.6.4-code44.zip",
+    "size": 1693251,
+    "sha256": "10BE427B8E5C7E184CC3A0813865E2086E902624D06EC1606C47CCE05DDEB59E"
+  },
+  "apk": {
+    "entry": "LosPanitas-Elo-POS.apk",
+    "size": 1697430,
+    "sha256": "B501CCD3628CF28AFA946E8E2BDAE6CD9548ADF560A0BDEB843A317808C78A87",
+    "signingCertificateSha256": "42DE27571244F0A23E533BF1C97D5D8587F4F12C3C34EA3209EDFBC67B8B3395"
+  },
+  "releaseNotes": [
+    "Panel Mis terminales para propietarios: versión instalada, última comunicación, progreso y errores de actualización.",
+    "Solicitudes remotas de actualización con caducidad de 24 horas y registro inmutable del solicitante.",
+    "La ELO informa su estado al iniciar sesión; instalación segura sin interrumpir ventas, impresiones ni formularios pendientes.",
+    "Confirmación de actualización mediante la versión reportada tras reiniciar; permisos pendientes de Android visibles en el panel."
+  ]
 }

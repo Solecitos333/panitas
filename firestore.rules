@@ -749,6 +749,44 @@ service cloud.firestore {
       allow write: if isOwner() || isManager() || canBill();
     }
 
+    // Device reports are scoped to the signed-in cash account. Commands are
+    // append-only owner requests, never executable code or arbitrary download URLs.
+    match /terminals/{terminalId} {
+      allow read: if isOwner() || (canBill() && resource.data.accountUid == request.auth.uid);
+      allow create, update: if canBill()
+        && request.resource.data.accountUid == request.auth.uid
+        && (!exists(/databases/$(database)/documents/terminals/$(terminalId)) || resource.data.accountUid == request.auth.uid)
+        && request.resource.data.keys().hasOnly(['accountUid', 'label', 'installedVersionCode', 'installedVersionName', 'availableVersionCode', 'updateState', 'progress', 'message', 'errorCode', 'fullyManaged', 'busy', 'commandId', 'commandPhase', 'lastSeenAt', 'sampledAtMs'])
+        && request.resource.data.sampledAtMs is int && request.resource.data.sampledAtMs > 0
+        && request.resource.data.label is string && request.resource.data.label.size() <= 120
+        && request.resource.data.installedVersionName is string && request.resource.data.installedVersionName.size() <= 40
+        && request.resource.data.installedVersionCode is int && request.resource.data.installedVersionCode >= 0
+        && request.resource.data.availableVersionCode is int && request.resource.data.availableVersionCode >= 0
+        && request.resource.data.updateState is string && request.resource.data.updateState.size() <= 40
+        && request.resource.data.progress is int && request.resource.data.progress >= 0 && request.resource.data.progress <= 100
+        && request.resource.data.message is string && request.resource.data.message.size() <= 500
+        && request.resource.data.errorCode is string && request.resource.data.errorCode.size() <= 80
+        && request.resource.data.fullyManaged is bool && request.resource.data.busy is bool
+        && request.resource.data.commandId is string && request.resource.data.commandId.size() <= 120
+        && request.resource.data.commandPhase is string && request.resource.data.commandPhase.size() <= 40
+        && writtenNow(request.resource.data.lastSeenAt);
+      allow delete: if false;
+      match /commands/{commandId} {
+        allow read: if isOwner() || (canBill() && get(/databases/$(database)/documents/terminals/$(terminalId)).data.accountUid == request.auth.uid);
+        allow create: if isOwner()
+          && exists(/databases/$(database)/documents/terminals/$(terminalId))
+          && request.resource.data.keys().hasOnly(['action', 'targetVersionCode', 'requestedBy', 'createdAt', 'expiresAt'])
+          && request.resource.data.action == 'update'
+          && request.resource.data.targetVersionCode is int && request.resource.data.targetVersionCode > 0
+          && request.resource.data.requestedBy == request.auth.uid
+          && writtenNow(request.resource.data.createdAt)
+          && request.resource.data.expiresAt is timestamp
+          && request.resource.data.expiresAt > request.time
+          && request.resource.data.expiresAt <= request.time + duration.value(25, 'h');
+        allow update, delete: if false;
+      }
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

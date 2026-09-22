@@ -2,8 +2,9 @@ import test, { after, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { collection, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp, writeBatch } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp, writeBatch, Timestamp, deleteDoc } from 'firebase/firestore';
 import { DataService } from '../src/services/data-service.js';
+import { startRemoteTerminals } from '../src/services/remote-terminals.js';
 
 let environment;
 
@@ -48,6 +49,69 @@ beforeEach(async () => {
 });
 
 after(async () => environment?.cleanup());
+
+test('remote integration: heartbeat, owner request, busy deferral, restart confirmation and cleanup', async () => {
+  const ownerDb = environment.authenticatedContext('owner', auth('owner')).firestore();
+  const cashierDb = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  const intervals = new Set(), listeners = new Map(), storage = new Map();
+  const host = { EloPOS: {}, navigator: { onLine: true }, localStorage: { getItem: k => storage.get(k), setItem: (k, v) => storage.set(k, v) },
+    setInterval: fn => { intervals.add(fn); return fn; }, clearInterval: fn => intervals.delete(fn), setTimeout, clearTimeout,
+    addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: name => listeners.delete(name) };
+  let rows = [], errors = [], now = Date.now(), busy = true, checks = 0;
+  let status = { installedVersionCode: 43, installedVersionName: '1.6.3', state: 'idle' };
+  const waitFor = async predicate => { for (let i = 0; i < 150; i++) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 20)); } throw Error('Remote integration timed out'); };
+  const manager = startRemoteTerminals({ db: ownerDb, user: { uid: 'owner', active: true, roles: ['owner'] }, host: { ...host, EloPOS: null }, onChange: value => { rows = value; }, onError: e => errors.push(e) });
+  const terminal = startRemoteTerminals({ db: cashierDb, user: { uid: 'cashier', active: true, roles: ['cashier'] }, host, clock: () => now, onChange() {}, onError: e => errors.push(e),
+    native: { getStatus: () => status, isBusy: () => busy, check: () => { checks++; status = { ...status, state: 'checking' }; return true; }, install: () => true } });
+  try {
+    await waitFor(() => rows.length === 1);
+    const id = rows[0].id;
+    const request = await manager.request(id, 'update');
+    await waitFor(() => rows[0]?.command?.id === request);
+    // A status refresh must not replace a pending update request.
+    await manager.request(id, 'report');
+    assert.equal((await getDocs(collection(ownerDb, 'terminals', id, 'commands'))).size, 1);
+    now += 6000; intervals.forEach(fn => fn());
+    await waitFor(() => rows[0]?.commandPhase === 'waiting_for_idle'); assert.equal(checks, 0);
+    busy = false; now += 6000; intervals.forEach(fn => fn());
+    await waitFor(() => checks === 1);
+    status = { installedVersionCode: 44, installedVersionName: '1.6.4', state: 'idle' };
+    // Drain any preceding report before emitting the next native-version sample.
+    await waitFor(() => rows[0]?.commandPhase === 'checking');
+    now += 6000; intervals.forEach(fn => fn());
+    await waitFor(() => rows[0]?.commandPhase === 'completed');
+    assert.equal(rows[0].installedVersionCode, 44); assert.equal(rows[0].commandId, request);
+    assert.deepEqual(errors, []);
+  } finally { terminal.destroy(); manager.destroy(); }
+  assert.equal(intervals.size, 0); assert.equal(listeners.size, 0);
+});
+
+test('remote control restricts device reports and permits only immutable owner update commands', async () => {
+  const owner = environment.authenticatedContext('owner', auth('owner')).firestore();
+  const cashier = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  const manager = environment.authenticatedContext('manager', auth('manager')).firestore();
+  const anonymous = environment.unauthenticatedContext().firestore();
+  const kitchen = environment.authenticatedContext('kitchen', auth('kitchen')).firestore();
+  const report = { accountUid: 'cashier', label: 'ELO', installedVersionCode: 43, installedVersionName: '1.6.3', availableVersionCode: 44, updateState: 'idle', progress: 0, message: '', errorCode: '', fullyManaged: false, busy: false, commandId: '', commandPhase: '', lastSeenAt: serverTimestamp() };
+  report.sampledAtMs = Date.now();
+  await assertSucceeds(setDoc(doc(cashier, 'terminals', 'elo'), report));
+  await assertSucceeds(getDocs(collection(owner, 'terminals')));
+  await assertFails(getDoc(doc(anonymous, 'terminals', 'elo')));
+  await assertFails(getDoc(doc(manager, 'terminals', 'elo')));
+  await assertFails(setDoc(doc(manager, 'terminals', 'elo'), { ...report, accountUid: 'manager' }));
+  await assertFails(setDoc(doc(kitchen, 'terminals', 'kitchen'), { ...report, accountUid: 'kitchen' }));
+  await assertFails(setDoc(doc(cashier, 'terminals', 'elo'), { ...report, lastSeenAt: Timestamp.fromMillis(1) }));
+  const command = { action: 'update', targetVersionCode: 44, requestedBy: 'owner', createdAt: serverTimestamp(), expiresAt: Timestamp.fromMillis(Date.now() + 86400000) };
+  await assertSucceeds(setDoc(doc(owner, 'terminals', 'elo', 'commands', 'request1'), command));
+  await assertSucceeds(getDocs(collection(cashier, 'terminals', 'elo', 'commands')));
+  await assertFails(setDoc(doc(cashier, 'terminals', 'elo', 'commands', 'request2'), { ...command, requestedBy: 'cashier' }));
+  await assertFails(setDoc(doc(manager, 'terminals', 'elo', 'commands', 'request2'), { ...command, requestedBy: 'manager' }));
+  await assertFails(setDoc(doc(owner, 'terminals', 'elo', 'commands', 'shell'), { ...command, action: 'shell' }));
+  await assertFails(setDoc(doc(owner, 'terminals', 'elo', 'commands', 'url'), { ...command, url: 'https://example.test/unsafe.apk' }));
+  await assertFails(setDoc(doc(owner, 'terminals', 'elo', 'commands', 'late'), { ...command, expiresAt: Timestamp.fromMillis(Date.now() + 172800000) }));
+  await assertFails(updateDoc(doc(owner, 'terminals', 'elo', 'commands', 'request1'), { targetVersionCode: 99 }));
+  await assertFails(deleteDoc(doc(owner, 'terminals', 'elo', 'commands', 'request1')));
+});
 
 test('PIN compartido: reserva única concurrente, consulta puntual activa y listado bloqueado', async () => {
   const ownerDb = environment.authenticatedContext('owner', auth('owner')).firestore();

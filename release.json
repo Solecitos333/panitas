@@ -1,13 +1,13 @@
 {
-  "versionName": "1.6.3",
-  "versionCode": 43,
+  "versionName": "1.6.4",
+  "versionCode": 44,
   "channel": "stable",
   "minimumSupportedVersionCode": 10,
   "mandatory": false,
   "releaseNotes": [
-    "Corrección de cobro con precio modificado: Se eliminó la restricción que impedía cobrar productos con porciones o precios personalizados en el carrito desde la terminal POS.",
-    "Detección multiusuario por PIN: Al cobrar o registrar movimientos de caja con el PIN de 6 dígitos, el sistema identifica automáticamente al operador (Nechy o Junior) y registra su nombre en el ticket, comprobante y auditoría.",
-    "Catálogo y Búsqueda en POS: Se reactivaron y sincronizaron los jugos de RD$80 y RD$60 en el catálogo activo, y se optimizó la búsqueda rápida del POS para permitir filtrar directamente por precio ('80', '60').",
-    "Seguridad y limpieza: Se removió la cuenta de prueba administrativa para salvaguardar la integridad de las operaciones del negocio."
+    "Panel Mis terminales para propietarios: versión instalada, última comunicación, progreso y errores de actualización.",
+    "Solicitudes remotas de actualización con caducidad de 24 horas y registro inmutable del solicitante.",
+    "La ELO informa su estado al iniciar sesión; instalación segura sin interrumpir ventas, impresiones ni formularios pendientes.",
+    "Confirmación de actualización mediante la versión reportada tras reiniciar; permisos pendientes de Android visibles en el panel."
   ]
 }

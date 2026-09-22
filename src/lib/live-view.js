@@ -9,7 +9,7 @@ const dependencies = {
   cash: ['cashSessions', 'cashMovements', 'payments', 'users', 'invoices', 'products', 'inventoryMovements'],
   payroll: ['employees', 'payrollPayments', 'cashSessions', 'cashMovements'],
   reports: ['invoices', 'payments', 'cashMovements', 'inventoryMovements'],
-  terminal: [], whatsapp: ['whatsappBot'], settings: []
+  terminal: [], whatsapp: ['whatsappBot'], settings: [], remote: []
 };
 export function affectsCurrentView(route, collection, modal = '') {
   // A modal can show a document unrelated to the underlying route.

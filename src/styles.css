@@ -4913,4 +4913,10 @@ input[data-touch-numpad] {
 }
 
 
-
+/* Remote administration remains readable on a phone and does not rebuild POS. */
+.remote-terminals { max-width: 960px; margin: 0 auto; display: grid; gap: 18px; }
+.remote-terminal-card { padding: 22px; border: 1px solid var(--border, #414141); border-radius: 16px; background: var(--surface, #17191d); overflow-wrap: anywhere; }
+.remote-terminal-card dl { display: grid; grid-template-columns: minmax(130px, 1fr) 2fr; gap: 10px 18px; }
+.remote-terminal-card dd { margin: 0; }
+.remote-terminal-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+@media (max-width: 600px) { .remote-terminal-card dl { grid-template-columns: 1fr; } .remote-terminal-card dd { margin-bottom: 10px; } .remote-terminal-actions .button { width: 100%; } }

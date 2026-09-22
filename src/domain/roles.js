@@ -35,7 +35,7 @@ export function allowedNavigation(user) {
     ['kds', 'kds:view'], ['invoices', 'billing:view'], ['receivables', 'receivables:*'], ['deliveries', 'deliveries:*'], ['clients', 'clients:*'],
     ['products', 'catalog:view'], ['whatsapp', 'whatsapp:*'], ['cash', 'cash:*'], ['reports', 'reports:view'],
     ['users', 'users:manage'], ['audit', 'audit:view'], ['terminal', 'terminal:view'], ['settings', '*'],
-    ['payroll', 'payroll:view']
+    ['payroll', 'payroll:view'], ['remote', '*']
   ];
   return entries.filter(([, permission]) => can(user, permission)).map(([id]) => id);
 }

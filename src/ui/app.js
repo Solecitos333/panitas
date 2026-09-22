@@ -46,6 +46,8 @@ import { setupTouchNumericInputs } from '../lib/touch-numpad.js';
 import { createScopedIcons } from '../lib/scoped-icons.js';
 import { preparePaymentAttempt, executePaymentAttempt } from '../lib/payment-attempt.js';
 import { createSleepManager } from '../lib/sleep-manager.js';
+import { startRemoteTerminals } from '../services/remote-terminals.js';
+import { renderRemoteTerminals } from '../modules/remote-terminals.js';
 import { matchesFuzzy, fuzzyScore } from '../lib/fuzzy-search.js';
 
 const NAV = [
@@ -56,7 +58,7 @@ const NAV = [
   ['products','package','Productos'], ['whatsapp','smartphone','Bot WhatsApp'], ['cash','wallet-cards','Caja'],
   ['reports','chart-no-axes-combined','Reportes'],
   ['users','lock','Usuarios (PIN)'], ['audit','shield-check','Auditoría'], ['terminal','cpu','Terminal ELO'], ['settings','settings','Configuración'],
-  ['payroll','lock','Nómina (PIN)']
+  ['payroll','lock','Nómina (PIN)'], ['remote','monitor','Mis terminales']
 ];
 
 const icons = {
@@ -137,6 +139,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     }
   };
   let destroyed = false;
+  let remoteControl = null;
+  let remoteRequestBusy = false;
   let disposePinPad = () => {};
   let disposePayrollPin = () => {};
   let disposeUsersPin = () => {};
@@ -162,6 +166,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 
   async function start() {
     state.settings = await service.loadSettings();
+    remoteControl = startRemoteTerminals({ db: service.db, user,
+      onChange: rows => { state.remoteTerminals = rows; state.remoteError = ''; if (state.route === 'remote') requestLiveRender(); },
+      onError: message => { state.remoteError = message; if (state.route === 'remote') requestLiveRender(); }
+    });
     // Una sesión de caja representa dinero físico. Nunca se crea por iniciar sesión o
     // reiniciar la terminal: el cajero debe abrirla explícitamente con su fondo inicial.
     service.watchAll({
@@ -325,7 +333,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       reports: renderReports,
       users: () => (!state.usersUnlocked ? renderUsersLockScreen(state, user) : renderUsers(state)),
       audit: renderAuditLogs,
-      terminal: () => renderTerminalDiag(), settings: renderSettings
+      terminal: () => renderTerminalDiag(), settings: renderSettings, remote: renderRemoteTerminals
     };
     const renderer = renderers[state.route] || renderDashboard;
     // The native cash register never displays the mobile-only inventory/dashboard.
@@ -1794,6 +1802,17 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   }
 
   function bindUpdateActions(target) {
+    target.querySelectorAll('[data-remote-action]').forEach(btn => btn.addEventListener('click', async () => {
+      if (remoteRequestBusy || !can(user, '*')) return;
+      const action = btn.dataset.remoteAction;
+      if (action === 'update' && !window.confirm('¿Solicitar la actualización? Si la terminal está desconectada, esperará hasta 24 horas. No se interrumpirán operaciones en curso.')) return;
+      remoteRequestBusy = true; btn.disabled = true;
+      try {
+        await remoteControl.request(btn.dataset.remoteId, action);
+        if (!destroyed) toast(action === 'report' ? 'Último estado consultado. Revisa la hora de la señal.' : 'Solicitud guardada. Esperando confirmación de la terminal.', 'success');
+      } catch (error) { if (!destroyed) toast(error.message || 'No se pudo enviar la solicitud.', 'error'); }
+      finally { remoteRequestBusy = false; btn.disabled = false; }
+    }));
     target.querySelectorAll('[data-update-check]').forEach((btn)=>btn.addEventListener('click', checkNativeUpdate));
     target.querySelectorAll('[data-update-install]').forEach((btn)=>btn.addEventListener('click', installNativeUpdate));
     target.querySelectorAll('[data-update-permission]').forEach((btn)=>btn.addEventListener('click', requestUpdatePermission));
@@ -6668,6 +6687,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   }
   function destroy(){
     destroyed=true;
+    remoteControl?.destroy();
     sleepManager.destroy();
     disposePinPad();
     disposePayrollPin();
