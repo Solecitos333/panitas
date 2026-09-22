@@ -5,6 +5,7 @@ import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebas
 import { collection, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp, writeBatch, Timestamp, deleteDoc } from 'firebase/firestore';
 import { DataService } from '../src/services/data-service.js';
 import { startRemoteTerminals } from '../src/services/remote-terminals.js';
+import release from '../release.json' with { type: 'json' };
 
 let environment;
 
@@ -75,12 +76,12 @@ test('remote integration: heartbeat, owner request, busy deferral, restart confi
     await waitFor(() => rows[0]?.commandPhase === 'waiting_for_idle'); assert.equal(checks, 0);
     busy = false; now += 6000; intervals.forEach(fn => fn());
     await waitFor(() => checks === 1);
-    status = { installedVersionCode: 44, installedVersionName: '1.6.4', state: 'idle' };
+    status = { installedVersionCode: release.versionCode, installedVersionName: release.versionName, state: 'idle' };
     // Drain any preceding report before emitting the next native-version sample.
     await waitFor(() => rows[0]?.commandPhase === 'checking');
     now += 6000; intervals.forEach(fn => fn());
     await waitFor(() => rows[0]?.commandPhase === 'completed');
-    assert.equal(rows[0].installedVersionCode, 44); assert.equal(rows[0].commandId, request);
+    assert.equal(rows[0].installedVersionCode, release.versionCode); assert.equal(rows[0].commandId, request);
     assert.deepEqual(errors, []);
   } finally { terminal.destroy(); manager.destroy(); }
   assert.equal(intervals.size, 0); assert.equal(listeners.size, 0);

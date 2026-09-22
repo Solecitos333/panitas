@@ -4920,3 +4920,70 @@ input[data-touch-numpad] {
 .remote-terminal-card dd { margin: 0; }
 .remote-terminal-actions { display: flex; flex-wrap: wrap; gap: 12px; }
 @media (max-width: 600px) { .remote-terminal-card dl { grid-template-columns: 1fr; } .remote-terminal-card dd { margin-bottom: 10px; } .remote-terminal-actions .button { width: 100%; } }
+
+/* Screen-only layout corrections. Keep DOM/tab order, business logic and print
+   templates unchanged; allow controls to grow instead of covering neighbours. */
+@media screen {
+  .panel-heading, .surface-card > header { flex-wrap: wrap; }
+  .panel-heading > div, .surface-card > header > div,
+  .pos-layout > *, .pos-topbar-left, .pos-topbar-title,
+  .form-grid > *, .search-field, .pos-queue-list { min-width: 0; }
+  .header-actions, .form-footer, .pos-loaded-table-actions, .tab-strip { flex-wrap: wrap; gap: 10px; }
+  .button { height: auto; padding-top: 8px; padding-bottom: 8px; line-height: 1.25; white-space: normal; }
+  .button > svg, .icon-button, .modal-card > header > button { flex-shrink: 0; }
+  .toolbar { flex-wrap: wrap; }
+  .toolbar > .search-field { flex: 1 1 220px; }
+  .form-grid input, .form-grid select, .form-grid textarea { min-width: 0; max-width: 100%; }
+  .modal-card > header > div { min-width: 0; overflow-wrap: break-word; }
+  .modal-actions > .button { max-width: 100%; }
+
+  .pos-topbar-left, .pos-topbar-title { flex-wrap: wrap; }
+  .pos-queue-title { white-space: normal; }
+  .pos-queue-pick-btn { flex-shrink: 0; }
+  .pos-dest-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .pos-dest-pill { min-width: 0; min-height: 44px; white-space: normal; overflow: visible; line-height: 1.2; }
+  .pos-dest-pill svg { flex-shrink: 0; }
+  .pos-dest-pill > span { min-width: 0; overflow-wrap: break-word; }
+  .pos-pay-method-grid { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+  .pos-pay-btn { min-width: 0; overflow-wrap: break-word; }
+  .pos-pay-btn > span { max-width: 100%; }
+  .product-tile-footer { flex-wrap: wrap; gap: 8px; }
+  .product-stock-badge { min-width: 0; }
+  .product-tile-price { margin-left: auto; white-space: nowrap; }
+  .cart-totals > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .cart-totals > div > span { min-width: 0; }
+  .cart-totals b, .cart-totals strong { flex-shrink: 0; white-space: nowrap; }
+  .cart-line-sub { flex-wrap: wrap; }
+  .pos-qty-control { flex-shrink: 0; }
+  .pos-print-option-row { flex: 0 0 auto; flex-wrap: wrap; gap: 8px; }
+  .pos-print-option-row label { min-width: 0; }
+  .pos-actions-group { flex: 0 0 auto; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); }
+  .pos-actions-group > button { min-width: 0; height: auto; white-space: normal; line-height: 1.25; }
+  .pos-actions-group .pos-cobrar-btn { font-size: 1.05rem; padding: 12px 10px; }
+  .pos-fast-cart .pos-cart-destination-box { flex: 0 0 auto; }
+  .product-grid > .empty-state:first-child ~ #pos-no-matches { display: none !important; }
+}
+
+@media screen and (min-width: 901px) {
+  /* The queues precede the cart: do not reserve almost a full screen below them. */
+  .pos-fast-cart { height: calc(100vh - 260px); min-height: 460px; max-height: calc(100vh - 20px); }
+  .pos-fast-cart .cart-lines { max-height: 170px; }
+}
+
+@media screen and (min-width: 901px) and (max-width: 1180px) {
+  .pos-layout { grid-template-columns: minmax(0, 1fr) 370px; gap: 12px; }
+  .main-content { padding-left: 18px; padding-right: 18px; }
+}
+
+@media screen and (max-width: 640px) {
+  .toolbar > .search-field { flex-basis: auto; }
+  .pos-tables-queue-bar, .pos-deliveries-queue-bar { flex-wrap: wrap; }
+  .pos-queue-list { flex: 1 1 120px; }
+  .pos-queue-title { max-width: 100%; }
+  .pos-topbar-right { gap: 6px; }
+  .pos-pay-method-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .pos-dest-pill { font-size: .74rem; }
+  .pos-actions-group { grid-template-columns: minmax(0, 1fr); }
+  .modal-actions > .button { flex: 1 1 130px; }
+  .grand-total { flex-wrap: wrap; }
+}

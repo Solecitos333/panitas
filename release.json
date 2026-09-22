@@ -1,13 +1,12 @@
 {
-  "versionName": "1.6.4",
-  "versionCode": 44,
+  "versionName": "1.6.5",
+  "versionCode": 45,
   "channel": "stable",
   "minimumSupportedVersionCode": 10,
   "mandatory": false,
   "releaseNotes": [
-    "Panel Mis terminales para propietarios: versión instalada, última comunicación, progreso y errores de actualización.",
-    "Solicitudes remotas de actualización con caducidad de 24 horas y registro inmutable del solicitante.",
-    "La ELO informa su estado al iniciar sesión; instalación segura sin interrumpir ventas, impresiones ni formularios pendientes.",
-    "Confirmación de actualización mediante la versión reportada tras reiniciar; permisos pendientes de Android visibles en el panel."
+    "Ajustes visuales sin cambiar el orden ni las funciones: botones adaptables, etiquetas e importes separados y cabeceras sin solapamientos.",
+    "Carrito ajustado a la altura de pantalla con acciones separadas del contenido desplazable.",
+    "Métodos de pago y opciones de destino legibles en pantallas estrechas; estilos de impresión sin cambios."
   ]
 }
