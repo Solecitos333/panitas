@@ -287,3 +287,38 @@ test('permite facturar un producto con precio modificado en el carrito o porcion
   assert.equal(savedInvoice.paidCents, 8000);
   assert.equal(savedInvoice.items[0].unitPriceCents, 8000);
 });
+
+test('permite despachar un pedido delivery con precio modificado y costo de envío', async () => {
+  const service = new MemoryDataService(actor);
+  const productId = await service.saveProduct({ name: 'Pechuga a la plancha', priceCents: 25000, costCents: 0, taxRate: 0, isPrepared: true, active: true });
+
+  const invoice = await service.createDirectDocument({
+    documentType: 'invoice',
+    clientName: 'Cliente Delivery',
+    deliveryDriverId: 'driver-1',
+    deliveryDriverName: 'Erick delivery',
+    deliveryAddress: 'Calle Las Palmas #24',
+    deliveryPhone: '809-555-1234',
+    deliveryStatus: 'in_transit',
+    items: [
+      { productId, name: 'Pechuga a la plancha', unitPriceCents: 7500, isCustomPrice: true, taxRate: 0, quantity: 1 },
+      { productId: 'prod-costo-de-envio-delivery', name: 'Costo de Envío (Delivery)', unitPriceCents: 5000, isDeliveryFee: true, taxRate: 0, quantity: 1 }
+    ],
+    payment: {
+      amountCents: 0,
+      method: 'delivery_cod',
+      tenderedCents: 0
+    }
+  });
+
+  assert.ok(invoice.id);
+  const saved = service.data.invoices.find((i) => i.id === invoice.id);
+  assert.equal(saved.totalCents, 12500);
+  assert.equal(saved.paidCents, 0);
+  assert.equal(saved.status, 'pending');
+  assert.equal(saved.deliveryStatus, 'in_transit');
+  assert.equal(saved.deliveryDriverName, 'Erick delivery');
+  assert.equal(saved.items[0].unitPriceCents, 7500);
+  assert.equal(saved.items[1].unitPriceCents, 5000);
+});
+

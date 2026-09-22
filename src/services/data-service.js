@@ -815,7 +815,7 @@ export class DataService {
       for (const line of input.items) {
         const quantity = Number(line.quantity);
         if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 999) throw new Error('Una cantidad de producto no es válida.');
-        if (!line.productId) continue;
+        if (!line.productId || line.isDeliveryFee || line.productId === 'prod-costo-de-envio-delivery') continue;
         const current = inventoryLines.get(line.productId) || { quantity: 0, line };
         current.quantity = Math.round((current.quantity + quantity) * 1000) / 1000;
         inventoryLines.set(line.productId, current);
