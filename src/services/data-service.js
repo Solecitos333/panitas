@@ -13,6 +13,7 @@ import { calculateWasteCostCents, getInventoryReason, validateInventoryAdjustmen
 import { validateEmployeeData, validatePayrollPayment } from '../domain/payroll.js';
 import { createOperationId } from '../lib/id.js';
 import { payrollFingerprint } from '../domain/payroll.js';
+import { documentItems } from '../domain/document-items.js';
 
 const DEFAULT_SETTINGS = Object.freeze({
   name: 'Los Panitas by Nechy',
@@ -597,6 +598,7 @@ export class DataService {
   }
 
   async createOrder(input) {
+    input = { ...input, items: documentItems(input.items) };
     const tableRef = doc(this.db, 'tables', input.tableId);
     let targetOrderId = null;
 
@@ -762,6 +764,7 @@ export class DataService {
   }
 
   async createInvoiceTransaction(input) {
+    input = { ...input, items: documentItems(input.items) };
     const requestId = String(input.requestId || '').trim();
     const hasRequestId = /^[a-zA-Z0-9_-]{16,100}$/.test(requestId);
     const invoiceRef = hasRequestId ? doc(this.db, 'invoices', requestId) : doc(collection(this.db, 'invoices'));

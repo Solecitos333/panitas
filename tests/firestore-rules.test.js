@@ -445,6 +445,58 @@ test('un pago de crédito no puede simular dinero cobrado', async () => {
   await assertFails(batch.commit());
 });
 
+for (const method of ['cash', 'delivery_cod']) test(`café con tamaño y campos opcionales vacíos: ${method}`, async () => {
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'products', 'coffee'), {
+      name: 'Café Negro', priceCents: 2000, isPrepared: true, stock: 0, active: true
+    });
+  });
+  const db = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  const service = new DataService(db, { uid: 'cashier', displayName: 'Caja', roles: ['cashier'] });
+  const input = { requestId: `sale-coffee-${method}-00001`, documentType: 'invoice',
+    items: [
+      { productId: 'coffee', name: 'Café Negro (12 oz)', variantId: '12oz', variantName: '12 oz',
+        side: undefined, sidePriceCents: undefined, quantity: 1, unitPriceCents: 5000, taxRate: 0 },
+      { productId: 'p1', name: 'Tostada', variantId: undefined, side: undefined,
+        quantity: 1, unitPriceCents: 9000, taxRate: 0 }
+    ],
+    deliveryDriverName: method === 'delivery_cod' ? 'Repartidor prueba' : '',
+    payment: { method, amountCents: method === 'cash' ? 14000 : 0,
+      tenderedCents: 15000, cashSessionId: 'shift-cashier' }
+  };
+  const created = await service.createDirectDocument(input);
+  assert.equal((await service.createDirectDocument(input)).id, created.id);
+  const invoice = (await getDoc(doc(db, 'invoices', created.id))).data();
+  assert.equal(invoice.totalCents, 14000);
+  assert.equal(invoice.items[0].variantId, '12oz');
+  assert.equal('side' in invoice.items[0], false);
+  assert.equal('variantId' in invoice.items[1], false);
+  assert.equal(invoice.status, method === 'cash' ? 'paid' : 'pending');
+  assert.equal((await getDoc(doc(db, 'products', 'coffee'))).data().stock, 0);
+  assert.equal((await getDoc(doc(db, 'products', 'p1'))).data().stock, 9);
+  assert.equal((await getDoc(doc(db, 'cashSessions', 'shift-cashier'))).data().expectedCents,
+    method === 'cash' ? 14500 : 500);
+  assert.equal((await getDoc(doc(db, 'payments', `${created.id}-payment`))).exists(), method === 'cash');
+  assert.equal('side' in input.items[0], true);
+});
+
+test('comanda nueva con opciones vacías se guarda y cobra sin valores undefined', async () => {
+  const db = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  const service = new DataService(db, { uid: 'cashier', displayName: 'Caja', roles: ['cashier'] });
+  const items = [{ productId: 'p1', name: 'Producto', quantity: 1, unitPriceCents: 10000,
+    variantId: '7oz', variantName: '7 oz', side: undefined, sidePriceCents: undefined, taxRate: 0 }];
+  const id = await service.createOrder({ tableId: 'mesa-1', items });
+  assert.equal('side' in (await getDoc(doc(db, 'orders', id))).data().items[0], false);
+  // Kitchen/service transitions are covered separately; seed the served state here.
+  await environment.withSecurityRulesDisabled(async context => {
+    await updateDoc(doc(context.firestore(), 'orders', id), { status: 'served' });
+  });
+  const invoice = await service.chargeOrder(id, { requestId: 'sale-coffee-table-00001',
+    method: 'cash', amountCents: 10000, cashSessionId: 'shift-cashier' }, items);
+  assert.equal((await getDoc(doc(db, 'invoices', invoice.id))).data().status, 'paid');
+  assert.equal((await getDoc(doc(db, 'orders', id))).data().status, 'closed');
+});
+
 test('el servicio real completa factura, pago, inventario, contador y caja atómicamente', async () => {
   const db = environment.authenticatedContext('cashier', auth('cashier')).firestore();
   const service = new DataService(db, {
