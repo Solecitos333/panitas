@@ -55,7 +55,9 @@ export function formatMoney(value, currency = 'DOP') {
 export function normalizeQuantity(value) {
   const quantity = Number(value);
   if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 999) throw new RangeError('Cantidad inválida.');
-  return Math.round(quantity * 1000) / 1000;
+  const rounded = Math.round(quantity * 1000) / 1000;
+  if (rounded <= 0) throw new RangeError('Cantidad demasiado pequeña; el mínimo es 0.001.');
+  return rounded;
 }
 
 export function calculateLine(item) {
@@ -66,6 +68,10 @@ export function calculateLine(item) {
   if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) throw new RangeError('Impuesto inválido.');
 
   const baseSubtotalCents = Math.round(unitPriceCents * quantity);
+
+  for (const value of [item.discountCents, item.discountPercent]) {
+    if (value != null && (!Number.isFinite(Number(value)) || Number(value) < 0)) throw new RangeError('Descuento inválido.');
+  }
 
   // Descuento por línea si existe
   let discountCents = 0;
@@ -91,6 +97,9 @@ export function calculateLine(item) {
 }
 
 export function calculateDocument(items, options = {}) {
+  for (const [label, value] of [['Descuento', options.discount], ['Propina', options.tipCents], ['Propina', options.legalTipRate]]) {
+    if (value != null && (!Number.isFinite(Number(value)) || Number(value) < 0)) throw new RangeError(`${label} inválido.`);
+  }
   if (!Array.isArray(items) || items.length === 0) {
     return {
       subtotalCents: 0,
@@ -126,10 +135,14 @@ export function calculateDocument(items, options = {}) {
 
   // Cálculo de ITBIS proporcional considerando el descuento global si aplica
   let taxCents = 0;
-  if (globalDiscountCents > 0 && rawSubtotalCents > 0) {
-    const discountRatio = Math.max(0, 1 - (totalDiscountCents / rawSubtotalCents));
+  if (globalDiscountCents > 0 && rawSubtotalCents > lineDiscountsCents) {
+    const netSubtotal = rawSubtotalCents - lineDiscountsCents;
+    let cumulative = 0, allocated = 0;
     taxCents = lineResults.reduce((sum, l) => {
-      const lineTaxable = Math.round(l.baseSubtotalCents * discountRatio);
+      cumulative += l.subtotalCents;
+      const cumulativeDiscount = Math.round(globalDiscountCents * cumulative / netSubtotal);
+      const lineTaxable = l.subtotalCents - (cumulativeDiscount - allocated);
+      allocated = cumulativeDiscount;
       return sum + Math.round(lineTaxable * l.taxRate / 100);
     }, 0);
   } else {
@@ -139,7 +152,7 @@ export function calculateDocument(items, options = {}) {
   // Propina Legal del 10% (Ley 80-92 de República Dominicana)
   let tipCents = 0;
   if (options.includeLegalTip === true) {
-    const tipRate = Number(options.legalTipRate || 10);
+    const tipRate = Number(options.legalTipRate ?? 10);
     tipCents = Math.round(taxableSubtotalCents * tipRate / 100);
   } else if (options.tipCents != null && options.tipCents > 0) {
     tipCents = Math.round(Number(options.tipCents));

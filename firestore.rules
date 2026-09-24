@@ -388,6 +388,34 @@ service cloud.firestore {
       ]);
     }
 
+    // Editing content is distinct from a kitchen/status transition. Preserve the
+    // table, status and lifecycle fields, increment revision, and link a new event.
+    function validOrderContentEdit(orderId) {
+      let data = request.resource.data;
+      let event = /databases/$(database)/documents/orders/$(orderId)/events/$(data.get('lastEditEventId', 'missing'));
+      return data.revision == resource.data.revision + 1
+        && resource.data.status in ['pending', 'preparing', 'ready', 'served', 'pending_payment']
+        && data.status == resource.data.status
+        && data.diff(resource.data).affectedKeys().hasOnly([
+          'items', 'notes', 'subtotalCents', 'discountCents', 'taxableSubtotalCents', 'taxCents',
+          'tipCents', 'totalCents', 'discount', 'discountType', 'includeLegalTip',
+          'revision', 'updatedAt', 'updatedBy', 'lastEditEventId'
+        ])
+        && canCreateOrders()
+        && data.updatedBy == request.auth.uid && writtenNow(data.updatedAt)
+        && data.items is list && data.items.size() > 0 && data.items.size() <= 250
+        && validFinancialTotals(data)
+        && data.notes is string && data.notes.size() <= 500
+        && data.tableId is string && data.tableId.size() > 0
+        && get(/databases/$(database)/documents/tables/$(data.tableId)).data.currentOrderId == orderId
+        && data.lastEditEventId is string && !exists(event) && existsAfter(event)
+        && getAfter(event).data.action == 'items_updated'
+        && getAfter(event).data.revision == data.revision
+        && getAfter(event).data.actorId == request.auth.uid
+        && getAfter(event).data.orderId == orderId
+        && writtenNow(getAfter(event).data.createdAt);
+    }
+
     match /users/{userId} {
       allow get: if active();
       allow list: if isOwner();
@@ -556,6 +584,7 @@ service cloud.firestore {
 
     match /orders/{orderId} {
       allow read: if canOperateOrders();
+      allow update: if validOrderContentEdit(orderId);
       allow create: if canCreateOrders()
         && request.resource.data.status == 'pending'
         && request.resource.data.revision == 1
@@ -569,13 +598,17 @@ service cloud.firestore {
         && validMoney(request.resource.data.taxCents)
         && validMoney(request.resource.data.totalCents)
         && (validCreatedOrderLink(orderId, request.resource.data) || validWhatsAppOrderLink(orderId, request.resource.data));
-      allow update: if canOperateOrders()
-        && orderChangedOnly()
+      allow update: if orderChangedOnly()
+        && canOperateOrders()
         && request.resource.data.revision == resource.data.revision + 1
         && request.resource.data.updatedBy == request.auth.uid
         && writtenNow(request.resource.data.updatedAt)
         && writtenNow(request.resource.data.statusChangedAt)
-        && validOrderTransition(resource.data.status, request.resource.data.status)
+        && (validOrderTransition(resource.data.status, request.resource.data.status)
+          || (request.resource.data.status == 'closed'
+            && resource.data.status in ['pending', 'preparing', 'ready']
+            && resource.data.get('source', '') != 'whatsapp'
+            && canBill()))
         && validClosedOrderLink(orderId)
         && validCancelledOrderLink()
         && (request.resource.data.status != 'cancelled'

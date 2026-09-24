@@ -921,7 +921,7 @@ export function renderPos(state) {
               style="${posDestination !== 'table' ? 'display:none;' : ''}"
             >
               <i data-lucide="utensils"></i>
-              <span>Mandar a mesa</span>
+              <span>${loadedOrder ? 'Guardar cambios de mesa' : 'Mandar a mesa'}</span>
             </button>
             <button
               class="pos-cobrar-btn"

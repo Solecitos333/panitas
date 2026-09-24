@@ -2,7 +2,7 @@ import test, { after, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { collection, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp, writeBatch, Timestamp, deleteDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp, writeBatch, Timestamp, deleteDoc, deleteField } from 'firebase/firestore';
 import { DataService } from '../src/services/data-service.js';
 import { startRemoteTerminals } from '../src/services/remote-terminals.js';
 import release from '../release.json' with { type: 'json' };
@@ -352,6 +352,33 @@ test('caja solo cierra una comanda servida junto con su factura y liberación de
   await assertSucceeds(batch.commit());
 });
 
+for (const status of ['pending', 'preparing', 'ready']) test(`cobro directo de mesa ${status} exige factura y caja sin permisos de cocina`, async () => {
+  const db = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  const service = new DataService(db, { uid: 'cashier', displayName: 'Caja' });
+  const items = [{ productId: 'p1', name: 'Café', quantity: 1, unitPriceCents: 10000 }];
+  const id = await service.createOrder({ tableId: 'mesa-1', items });
+  await environment.withSecurityRulesDisabled(async context => {
+    await updateDoc(doc(context.firestore(), 'orders', id), { status });
+  });
+  for (const role of ['cashier', 'waiter', 'kitchen']) {
+    const roleDb = environment.authenticatedContext(role, auth(role)).firestore();
+    await assertFails(updateDoc(doc(roleDb, 'orders', id), {
+      status: 'closed', linkedInvoiceId: 'missing-invoice', revision: 2, closedBy: role,
+      closedAt: serverTimestamp(), updatedBy: role, updatedAt: serverTimestamp(), statusChangedAt: serverTimestamp()
+    }));
+    if (role !== 'cashier') await assert.rejects(new DataService(roleDb, { uid: role }).chargeOrder(id, {
+      requestId: `unauthorized-close-${status}-${role}`, method: 'credit', amountCents: 0
+    }));
+  }
+  const invoice = await service.chargeOrder(id, { requestId: `direct-table-${status}-0001`, method: 'cash',
+    amountCents: 10000, cashSessionId: 'shift-cashier' });
+  assert.equal((await getDoc(doc(db, 'invoices', invoice.id))).data().paidCents, 10000);
+  assert.equal((await getDoc(doc(db, 'orders', id))).data().status, 'closed');
+  assert.equal((await getDoc(doc(db, 'tables', 'mesa-1'))).data().currentOrderId, null);
+  assert.equal((await getDoc(doc(db, 'cashSessions', 'shift-cashier'))).data().expectedCents, 10500);
+  assert.equal((await getDoc(doc(db, 'products', 'p1'))).data().stock, 9);
+});
+
 test('pagos y auditorías son inmutables', async () => {
   const db = environment.authenticatedContext('owner', auth('owner')).firestore();
   await assertFails(updateDoc(doc(db, 'payments', 'pay1'), { amountCents: 1 }));
@@ -495,6 +522,147 @@ test('comanda nueva con opciones vacías se guarda y cobra sin valores undefined
     method: 'cash', amountCents: 10000, cashSessionId: 'shift-cashier' }, items);
   assert.equal((await getDoc(doc(db, 'invoices', invoice.id))).data().status, 'paid');
   assert.equal((await getDoc(doc(db, 'orders', id))).data().status, 'closed');
+});
+
+test('editar una mesa abierta guarda artículos y descuentos sin cambiar su estado', async () => {
+  const db = environment.authenticatedContext('owner', auth('owner')).firestore();
+  const service = new DataService(db, { uid: 'owner', displayName: 'Dueño' });
+  const items = [{ productId: 'p1', name: 'Producto', quantity: 1, unitPriceCents: 10000 }];
+  const id = await service.createOrder({ tableId: 'mesa-1', items, discount: 10, discountType: 'percent' });
+  const updated = await service.createOrder({ tableId: 'mesa-1', items: [{ ...items[0], quantity: 2 }],
+    replaceItems: true, expectedOrderId: id, expectedRevision: 1 });
+  assert.equal(updated, id);
+  const order = (await getDoc(doc(db, 'orders', id))).data();
+  assert.equal(order.totalCents, 18000);
+  assert.equal(order.status, 'pending');
+  assert.equal(order.revision, 2);
+  await assert.rejects(service.createOrder({ tableId: 'mesa-1', items, replaceItems: true,
+    expectedOrderId: id, expectedRevision: 1 }), /cambió|actualiza/i);
+});
+
+test('cobrar mesa con descuento por artículo no aplica el descuento por segunda vez', async () => {
+  const db = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  const service = new DataService(db, { uid: 'cashier', displayName: 'Caja' });
+  const items = [{ productId: 'p1', name: 'Producto', quantity: 1, unitPriceCents: 10000, discountPercent: 10 }];
+  const id = await service.createOrder({ tableId: 'mesa-1', items });
+  await environment.withSecurityRulesDisabled(async context => {
+    await updateDoc(doc(context.firestore(), 'orders', id), { status: 'served',
+      subtotalCents: 10000, discountCents: 1000, taxableSubtotalCents: 9000, totalCents: 9000,
+      discount: deleteField(), discountType: deleteField(), tipCents: 0 });
+  });
+  const invoice = await service.chargeOrder(id, { requestId: 'order-line-discount-0001', method: 'cash',
+    amountCents: 9000, tenderedCents: 10000, cashSessionId: 'shift-cashier' });
+  assert.equal((await getDoc(doc(db, 'invoices', invoice.id))).data().totalCents, 9000);
+});
+
+for (const role of ['cashier', 'waiter', 'manager']) test(`edición de contenido permite ${role} y conserva rastro de auditoría`, async () => {
+  const db = environment.authenticatedContext(role, auth(role)).firestore();
+  const service = new DataService(db, { uid: role, displayName: role });
+  const items = [{ productId: 'p1', name: 'Producto', quantity: 1, unitPriceCents: 10000 }];
+  const id = await service.createOrder({ tableId: 'mesa-1', items, notes: 'Sin sal' });
+  await service.createOrder({ tableId: 'mesa-1', items, notes: '', replaceItems: true,
+    expectedOrderId: id, expectedRevision: 1 });
+  const order = (await getDoc(doc(db, 'orders', id))).data();
+  assert.equal(order.notes, '');
+  const event = (await getDoc(doc(db, 'orders', id, 'events', order.lastEditEventId))).data();
+  assert.equal(event.action, 'items_updated');
+  assert.equal(event.actorId, role);
+  assert.equal(event.revision, 2);
+});
+
+test('dos ediciones concurrentes no se sobrescriben y dos adiciones conservan ambos pedidos', async () => {
+  const db = environment.authenticatedContext('owner', auth('owner')).firestore();
+  const service = new DataService(db, { uid: 'owner', displayName: 'Dueño' });
+  const items = [{ productId: 'p1', name: 'Producto', quantity: 1, unitPriceCents: 10000 }];
+  const id = await service.createOrder({ tableId: 'mesa-1', items });
+  const edit = { tableId: 'mesa-1', items, replaceItems: true, expectedOrderId: id, expectedRevision: 1 };
+  const results = await Promise.allSettled([service.createOrder(edit), service.createOrder({ ...edit, notes: 'Otro editor' })]);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.match(results.find(result => result.status === 'rejected').reason.message, /cambió/);
+  await Promise.all([service.createOrder({ tableId: 'mesa-1', items }), service.createOrder({ tableId: 'mesa-1', items })]);
+  assert.equal((await getDoc(doc(db, 'orders', id))).data().items.length, 3);
+});
+
+test('editar contenido no permite cocina, cambiar de mesa, inventar totales ni omitir el evento', async () => {
+  const db = environment.authenticatedContext('owner', auth('owner')).firestore();
+  const service = new DataService(db, { uid: 'owner', displayName: 'Dueño' });
+  const items = [{ productId: 'p1', name: 'Producto', quantity: 1, unitPriceCents: 10000 }];
+  const id = await service.createOrder({ tableId: 'mesa-1', items });
+  const kitchenDb = environment.authenticatedContext('kitchen', auth('kitchen')).firestore();
+  const kitchenService = new DataService(kitchenDb, { uid: 'kitchen', displayName: 'Cocina' });
+  await assert.rejects(kitchenService.createOrder({ tableId: 'mesa-1', items }), /permission|PERMISSION/i);
+  for (const mutation of [{ tableId: 'mesa-2' }, { totalCents: 1 }, { revision: 20 }]) {
+    const batch = writeBatch(db), event = doc(collection(db, 'orders', id, 'events'));
+    batch.update(doc(db, 'orders', id), { items, revision: 2, updatedBy: 'owner', updatedAt: serverTimestamp(),
+      lastEditEventId: event.id, ...mutation });
+    batch.set(event, { orderId: id, actorId: 'owner', revision: 2, action: 'items_updated', createdAt: serverTimestamp() });
+    await assertFails(batch.commit());
+  }
+  await assertFails(updateDoc(doc(db, 'orders', id), { items, revision: 2, updatedBy: 'owner', updatedAt: serverTimestamp() }));
+});
+
+test('reintento exacto del cobro de mesa cerrada confirma la factura sin duplicar', async () => {
+  const db = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  const service = new DataService(db, { uid: 'cashier', displayName: 'Caja' });
+  const items = [{ productId: 'p1', name: 'Producto', quantity: 1, unitPriceCents: 10000 }];
+  const id = await service.createOrder({ tableId: 'mesa-1', items });
+  await environment.withSecurityRulesDisabled(async context => {
+    await updateDoc(doc(context.firestore(), 'orders', id), { status: 'served' });
+  });
+  const payment = { requestId: 'table-retry-review-0001', method: 'cash', amountCents: 10000, cashSessionId: 'shift-cashier' };
+  const created = await service.chargeOrder(id, payment);
+  await service.closeCashSession('shift-cashier', { closingCents: 10500 });
+  assert.equal((await service.chargeOrder(id, payment)).id, created.id);
+  await assert.rejects(service.chargeOrder(id, { ...payment, amountCents: 9000 }), /referencia/);
+  await assert.rejects(service.chargeOrder(id, { ...payment, requestId: 'other-sale-review-0001' }), /cobrada/);
+  assert.equal((await getDoc(doc(db, 'products', 'p1'))).data().stock, 9);
+});
+
+test('reusar ID de venta con otro producto, importe o método no oculta una venta distinta', async () => {
+  const db = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  const service = new DataService(db, { uid: 'cashier', displayName: 'Caja' });
+  const input = { requestId: 'sale-fingerprint-review-0001', items: [{ productId: 'p1', name: 'Producto',
+    quantity: 1, unitPriceCents: 10000 }], payment: { amountCents: 10000, method: 'cash', cashSessionId: 'shift-cashier' } };
+  const first = await service.createDirectDocument(input);
+  for (const change of [{ items: [{ ...input.items[0], quantity: 2 }] },
+    { payment: { ...input.payment, method: 'card' } },
+    { payment: { ...input.payment, tenderedCents: 20000 } },
+    { payment: { ...input.payment, cashSessionId: 'other-session' } }, { clientName: 'Otro cliente' }]) {
+    await assert.rejects(service.createDirectDocument({ ...input, ...change }), /referencia|datos/i);
+  }
+  assert.equal((await service.createDirectDocument(input)).id, first.id);
+  assert.equal((await getDoc(doc(db, 'products', 'p1'))).data().stock, 9);
+});
+
+test('venta sin ID genera referencia válida y una referencia malformada falla antes de guardar', async () => {
+  const db = environment.authenticatedContext('cashier', auth('cashier')).firestore();
+  const service = new DataService(db, { uid: 'cashier', displayName: 'Caja' });
+  const input = { items: [{ productId: 'p1', name: 'Producto', quantity: 1, unitPriceCents: 10000 }] };
+  const created = await service.createDirectDocument(input);
+  assert.equal((await getDoc(doc(db, 'invoices', created.id))).data().requestId, created.id);
+  await assert.rejects(service.createDirectDocument({ ...input, requestId: 'bad/id' }), /referencia/);
+  assert.equal((await getDoc(doc(db, 'products', 'p1'))).data().stock, 9);
+});
+
+test('anular delivery no devuelve existencias por un costo de envío sin inventario', async () => {
+  const db = environment.authenticatedContext('owner', auth('owner')).firestore();
+  const service = new DataService(db, { uid: 'owner', displayName: 'Dueño' });
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'products', 'prod-costo-de-envio-delivery'), {
+      name: 'Costo envío', active: true, stock: 0, priceCents: 5000
+    });
+  });
+  const created = await service.createDirectDocument({ requestId: 'cancel-delivery-fee-0001',
+    items: [{ productId: 'p1', name: 'Producto', quantity: 1, unitPriceCents: 10000 },
+      { productId: 'prod-costo-de-envio-delivery', isDeliveryFee: true, name: 'Envío', quantity: 1, unitPriceCents: 5000 }],
+    payment: { method: 'delivery_cod' } });
+  await service.cancelInvoice(created.id, 'Pedido cancelado');
+  assert.equal((await getDoc(doc(db, 'products', 'prod-costo-de-envio-delivery'))).data().stock, 0);
+  assert.equal((await getDoc(doc(db, 'products', 'p1'))).data().stock, 10);
+  const audit = (await getDocs(collection(db, 'auditLogs'))).docs.map(snap => snap.data());
+  assert.equal(audit.filter(event => event.action === 'invoice.cancelled' && event.details.includes(created.id)).length, 1);
+  await assert.rejects(service.cancelInvoice(created.id, 'Pedido cancelado'), /anulada/);
+  assert.equal((await getDoc(doc(db, 'products', 'p1'))).data().stock, 10);
 });
 
 test('el servicio real completa factura, pago, inventario, contador y caja atómicamente', async () => {

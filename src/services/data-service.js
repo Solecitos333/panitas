@@ -14,6 +14,8 @@ import { validateEmployeeData, validatePayrollPayment } from '../domain/payroll.
 import { createOperationId } from '../lib/id.js';
 import { payrollFingerprint } from '../domain/payroll.js';
 import { documentItems } from '../domain/document-items.js';
+import { orderPricing, assertOrderRevision } from '../domain/order-pricing.js';
+import { matchesSaleIntent, isStockLine } from '../domain/sale-intent.js';
 
 const DEFAULT_SETTINGS = Object.freeze({
   name: 'Los Panitas by Nechy',
@@ -597,10 +599,11 @@ export class DataService {
     return result;
   }
 
-  async createOrder(input) {
+  async createOrder(input, conflictRetries = 0) {
     input = { ...input, items: documentItems(input.items) };
     const tableRef = doc(this.db, 'tables', input.tableId);
     let targetOrderId = null;
+    let observedOrderId = null, observedRevision = null;
 
     const totals = calculateDocument(input.items, {
       discount: input.discount,
@@ -609,11 +612,13 @@ export class DataService {
       tipCents: input.tipCents
     });
 
-    await runTransaction(this.db, async (transaction) => {
+    try { await runTransaction(this.db, async (transaction) => {
       const tableSnapshot = await transaction.get(tableRef);
       if (!tableSnapshot.exists() || tableSnapshot.data().active === false) throw new Error('La mesa no está disponible.');
       const tableData = tableSnapshot.data();
       const existingOrderId = tableData.currentOrderId;
+      observedOrderId = existingOrderId;
+      observedRevision = null;
 
       if (existingOrderId) {
         const existingOrderRef = doc(this.db, 'orders', existingOrderId);
@@ -622,19 +627,26 @@ export class DataService {
           targetOrderId = existingOrderId;
           const currentRevision = Number(existingOrderSnap.data().revision || 1) + 1;
           const existingData = existingOrderSnap.data();
+          observedRevision = existingData.revision;
+          assertOrderRevision({ ...existingData, id: existingOrderId }, input);
           const finalItems = input.replaceItems ? input.items : [...(existingData.items || []), ...(input.items || [])];
-          const finalTotals = calculateDocument(finalItems, {
-            discount: input.discount ?? existingData.discount,
-            discountType: input.discountType ?? existingData.discountType,
-            includeLegalTip: input.includeLegalTip ?? existingData.includeLegalTip,
-            tipCents: input.tipCents ?? existingData.tipCents
-          });
+          const previousPricing = orderPricing(existingData);
+          const pricing = {
+            discount: input.discount ?? previousPricing.discount,
+            discountType: input.discountType ?? previousPricing.discountType,
+            includeLegalTip: input.includeLegalTip ?? previousPricing.includeLegalTip,
+            tipCents: input.tipCents ?? previousPricing.tipCents
+          };
+          const finalTotals = calculateDocument(finalItems, pricing);
+          const eventRef = doc(collection(existingOrderRef, 'events'));
           transaction.update(existingOrderRef, {
+            lastEditEventId: eventRef.id,
+            discount: pricing.discount, discountType: pricing.discountType, includeLegalTip: pricing.includeLegalTip,
             items: finalItems,
-            notes: String(input.notes || existingData.notes || '').trim().slice(0, 500),
+            notes: String(input.notes ?? existingData.notes ?? '').trim().slice(0, 500),
             subtotalCents: finalTotals.subtotalCents,
             discountCents: finalTotals.discountCents || 0,
-            taxableSubtotalCents: finalTotals.taxableSubtotalCents || finalTotals.subtotalCents,
+            taxableSubtotalCents: finalTotals.taxableSubtotalCents,
             taxCents: finalTotals.taxCents,
             tipCents: finalTotals.tipCents || 0,
             totalCents: finalTotals.totalCents,
@@ -642,13 +654,13 @@ export class DataService {
             updatedAt: serverTimestamp(),
             updatedBy: this.actor.uid
           });
-          const eventRef = doc(collection(existingOrderRef, 'events'));
           transaction.set(eventRef, this.orderEvent(existingOrderId, existingData.status, existingData.status, 'items_updated', currentRevision));
           return;
         }
       }
 
       const orderRef = doc(collection(this.db, 'orders'));
+      if (input.replaceItems) throw new Error('La comanda cambió. Actualiza y vuelve a cargar la mesa.');
       targetOrderId = orderRef.id;
       const eventRef = doc(collection(orderRef, 'events'));
       const payload = {
@@ -660,9 +672,11 @@ export class DataService {
         notes: String(input.notes || '').trim().slice(0, 500),
         priority: ['normal', 'high', 'urgent'].includes(input.priority) ? input.priority : 'normal',
         status: 'pending',
+        discount: Number(input.discount || 0), discountType: input.discountType || 'amount',
+        includeLegalTip: input.includeLegalTip === true,
         subtotalCents: totals.subtotalCents,
         discountCents: totals.discountCents || 0,
-        taxableSubtotalCents: totals.taxableSubtotalCents || totals.subtotalCents,
+        taxableSubtotalCents: totals.taxableSubtotalCents,
         taxCents: totals.taxCents,
         tipCents: totals.tipCents || 0,
         totalCents: totals.totalCents,
@@ -677,7 +691,20 @@ export class DataService {
       transaction.set(orderRef, payload);
       transaction.update(tableRef, { currentOrderId: orderRef.id, status: 'occupied', updatedAt: serverTimestamp() });
       transaction.set(eventRef, this.orderEvent(orderRef.id, '', 'pending', 'created', 1));
-    });
+    }); } catch (error) {
+      // Rules may reject a stale revision before the SDK retries a concurrent write.
+      // Only retry a proven conflict; never mask an authorization/network failure.
+      if (['permission-denied', 'aborted'].includes(error.code)) {
+        const table = await getDocFromServer(tableRef).catch(() => null);
+        const currentId = table?.data()?.currentOrderId;
+        const current = currentId ? await getDocFromServer(doc(this.db, 'orders', currentId)).catch(() => null) : null;
+        const changed = table?.exists() && (currentId !== observedOrderId
+          || (current?.exists() && current.data().revision !== observedRevision));
+        if (changed && input.replaceItems) throw new Error('La comanda cambió. Actualiza y vuelve a cargar la mesa.');
+        if (changed && conflictRetries < 2) return this.createOrder(input, conflictRetries + 1);
+      }
+      throw error;
+    }
     return targetOrderId;
   }
 
@@ -752,21 +779,23 @@ export class DataService {
     const orderSnapshot = await getDoc(doc(this.db, 'orders', orderId));
     if (!orderSnapshot.exists()) throw new Error('La comanda no existe.');
     const order = { id: orderSnapshot.id, ...orderSnapshot.data() };
-    if (['closed', 'cancelled'].includes(order.status)) throw new Error('La comanda ya fue cobrada o anulada.');
+    const confirmedRetry = order.status === 'closed' && payment.requestId && order.linkedInvoiceId === payment.requestId;
+    if (['closed', 'cancelled'].includes(order.status) && !confirmedRetry) throw new Error('La comanda ya fue cobrada o anulada.');
     const itemsToCharge = Array.isArray(updatedItems) && updatedItems.length ? updatedItems : order.items;
     return this.createInvoiceTransaction({
       requestId: payment.requestId,
       documentType: 'invoice', clientName: order.clientName, clientId: '', clientRnc: payment.clientRnc || order.clientRnc || '', items: itemsToCharge,
-      discountCents: order.discountCents || 0,
-      tipCents: order.tipCents || 0,
+      ...orderPricing(order),
       ncfType: payment.ncfType || '', payment, orderId: order.id, tableId: order.tableId
     });
   }
 
   async createInvoiceTransaction(input) {
     input = { ...input, items: documentItems(input.items) };
-    const requestId = String(input.requestId || '').trim();
+    const requestId = String(input.requestId || createOperationId('sale')).trim();
     const hasRequestId = /^[a-zA-Z0-9_-]{16,100}$/.test(requestId);
+    if (!hasRequestId) throw new Error('La referencia de venta no es válida. Inicia un nuevo intento.');
+    input = { ...input, requestId };
     const invoiceRef = hasRequestId ? doc(this.db, 'invoices', requestId) : doc(collection(this.db, 'invoices'));
     const paymentRef = hasRequestId ? doc(this.db, 'payments', `${requestId}-payment`) : doc(collection(this.db, 'payments'));
     const auditRef = doc(collection(this.db, 'auditLogs'));
@@ -818,7 +847,7 @@ export class DataService {
       for (const line of input.items) {
         const quantity = Number(line.quantity);
         if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 999) throw new Error('Una cantidad de producto no es válida.');
-        if (!line.productId || line.isDeliveryFee || line.productId === 'prod-costo-de-envio-delivery') continue;
+        if (!isStockLine(line)) continue;
         const current = inventoryLines.get(line.productId) || { quantity: 0, line };
         current.quantity = Math.round((current.quantity + quantity) * 1000) / 1000;
         inventoryLines.set(line.productId, current);
@@ -834,6 +863,10 @@ export class DataService {
         const existing = existingInvoiceSnapshot.data();
         if (!hasRequestId || existing.requestId !== requestId || existing.createdBy !== this.actor.uid) {
           throw new Error('La referencia de esta venta ya está en uso.');
+        }
+        const initialPayment = await transaction.get(paymentRef);
+        if (!matchesSaleIntent(existing, initialPayment.exists() ? initialPayment.data() : null, input, totals, this.actor.uid)) {
+          throw new Error('La referencia de esta venta ya está en uso con otros datos. Consulta la factura antes de volver a cobrar.');
         }
         createdDocument = {
           id: invoiceRef.id, invoiceNumber: existing.invoiceNumber, ncf: existing.ncf || '',
@@ -860,8 +893,9 @@ export class DataService {
       if (orderSnapshot) {
         if (!orderSnapshot.exists()) throw new Error('La comanda fue eliminada.');
         const order = orderSnapshot.data();
-        if (!['served', 'pending_payment'].includes(order.status)) throw new Error('La comanda cambió antes del cobro.');
+        if (!['pending', 'preparing', 'ready', 'served', 'pending_payment'].includes(order.status)) throw new Error('La comanda cambió antes del cobro.');
         if (JSON.stringify(order.items) !== JSON.stringify(input.items)) throw new Error('Los productos de la comanda cambiaron.');
+        if (Number(order.totalCents) !== totals.totalCents) throw new Error('El total de la comanda cambió. Vuelve a cargar y guardar la mesa antes de cobrar.');
       }
       const productSnapshots = await Promise.all([...inventoryLines.entries()].map(async ([productId, entry]) => {
         const ref = doc(this.db, 'products', productId);
@@ -1039,7 +1073,10 @@ export class DataService {
   }
 
   async cancelInvoice(invoiceId, reason) {
+    reason = String(reason || '').trim().slice(0, 500);
+    if (reason.length < 3) throw new Error('Indica un motivo de anulación de al menos tres caracteres.');
     const invoiceRef = doc(this.db, 'invoices', invoiceId);
+    const auditRef = doc(collection(this.db, 'auditLogs'));
     await runTransaction(this.db, async (transaction) => {
       const snapshot = await transaction.get(invoiceRef);
       if (!snapshot.exists()) throw new Error('La factura no existe.');
@@ -1048,7 +1085,7 @@ export class DataService {
       if (Number(invoice.paidCents || 0) > 0) throw new Error('No se puede anular una factura con cobros.');
       const quantities = new Map();
       if (invoice.documentType === 'invoice') for (const line of invoice.items || []) {
-        if (!line.productId) continue;
+        if (!isStockLine(line)) continue;
         quantities.set(line.productId, Math.round((Number(quantities.get(line.productId) || 0) + Number(line.quantity || 0)) * 1000) / 1000);
       }
       const products = await Promise.all([...quantities.entries()].map(async ([productId, quantity]) => {
@@ -1067,8 +1104,12 @@ export class DataService {
         status: 'cancelled', cancellationReason: String(reason || '').trim().slice(0, 500),
         cancelledAt: serverTimestamp(), cancelledBy: this.actor.uid, updatedAt: serverTimestamp(), updatedBy: this.actor.uid
       });
+      transaction.set(auditRef, {
+        action: 'invoice.cancelled', details: `${invoiceId}: ${reason}`,
+        actorId: this.actor.uid, actorName: this.actor.displayName || this.actor.username || '',
+        actorEmail: this.actor.email || '', createdAt: serverTimestamp()
+      });
     });
-    await this.audit('invoice.cancelled', `${invoiceId}: ${reason}`);
   }
 
   async ensureDailyCashSession(defaultOpeningCents = 0) {

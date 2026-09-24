@@ -9,6 +9,9 @@ import { createOperationId } from "../lib/id.js";
 import { calculateWasteCostCents, getInventoryReason, validateInventoryAdjustment } from "../domain/inventory.js";
 import { validateEmployeeData, validatePayrollPayment, payrollFingerprint } from "../domain/payroll.js";
 import { can } from "../domain/roles.js";
+import { orderPricing, assertOrderRevision } from '../domain/order-pricing.js';
+import { matchesSaleIntent, isStockLine } from '../domain/sale-intent.js';
+import { documentItems } from '../domain/document-items.js';
 
 export class MemoryDataService {
   constructor(actor = {}) {
@@ -472,6 +475,7 @@ export class MemoryDataService {
     return paymentRecord;
   }
   async createOrder(input) {
+    input = { ...input, items: documentItems(input.items) };
     const table = this.data.tables.find((item) => item.id === input.tableId);
     if (!table) throw new Error("Mesa no disponible.");
 
@@ -485,16 +489,16 @@ export class MemoryDataService {
     if (table.currentOrderId) {
       const existing = this.data.orders.find((item) => item.id === table.currentOrderId);
       if (existing && !["closed", "cancelled"].includes(existing.status)) {
+        assertOrderRevision(existing, input);
         const finalItems = input.replaceItems ? input.items : [...(existing.items || []), ...(input.items || [])];
-        const finalTotals = calculateDocument(finalItems, {
-          discount: input.discount ?? existing.discount,
-          discountType: input.discountType ?? existing.discountType,
-          includeLegalTip: input.includeLegalTip ?? existing.includeLegalTip,
-          tipCents: input.tipCents ?? existing.tipCents
-        });
+        const previous = orderPricing(existing);
+        const pricing = { discount: input.discount ?? previous.discount, discountType: input.discountType ?? previous.discountType,
+          includeLegalTip: input.includeLegalTip ?? previous.includeLegalTip, tipCents: input.tipCents ?? previous.tipCents };
+        const finalTotals = calculateDocument(finalItems, pricing);
         existing.items = finalItems;
+        Object.assign(existing, pricing);
         Object.assign(existing, finalTotals);
-        existing.notes = input.notes || existing.notes;
+        existing.notes = input.notes ?? existing.notes;
         existing.updatedAt = new Date();
         existing.revision = Number(existing.revision || 1) + 1;
         this.emit("orders");
@@ -503,6 +507,7 @@ export class MemoryDataService {
     }
 
     const id = createOperationId("order");
+    if (input.replaceItems) throw new Error('La comanda cambió. Actualiza y vuelve a cargar la mesa.');
     this.data.orders.unshift({
       id,
       ...input,
@@ -564,9 +569,14 @@ export class MemoryDataService {
   async chargeOrder(id, payment, updatedItems) {
     const order = this.data.orders.find((item) => item.id === id);
     if (!order) throw new Error("La comanda no existe.");
-    if (["closed", "cancelled"].includes(order.status))
+    const confirmedRetry = order.status === 'closed' && payment.requestId && order.linkedInvoiceId === payment.requestId;
+    if (["closed", "cancelled"].includes(order.status) && !confirmedRetry)
       throw new Error("La comanda ya fue cobrada o anulada.");
     const itemsToCharge = Array.isArray(updatedItems) && updatedItems.length ? updatedItems : order.items;
+    if (!confirmedRetry && (JSON.stringify(documentItems(itemsToCharge)) !== JSON.stringify(documentItems(order.items))
+      || calculateDocument(itemsToCharge, orderPricing(order)).totalCents !== order.totalCents)) {
+      throw new Error('La comanda cambió. Vuelve a cargar y guardar la mesa antes de cobrar.');
+    }
     const created = await this.createDocument({
       requestId: payment.requestId,
       documentType: "invoice",
@@ -574,12 +584,12 @@ export class MemoryDataService {
       clientRnc: payment.clientRnc || order.clientRnc || "",
       ncfType: payment.ncfType || "",
       items: itemsToCharge,
-      discountCents: order.discountCents || 0,
-      tipCents: order.tipCents || 0,
+      ...orderPricing(order),
       payment,
       orderId: id,
       tableId: order.tableId,
     });
+    if (confirmedRetry) return created;
     order.status = "closed";
     order.linkedInvoiceId = created.id;
     const table = this.data.tables.find((item) => item.id === order.tableId);
@@ -592,18 +602,11 @@ export class MemoryDataService {
     return created;
   }
   async createDocument(input) {
+    input = { ...input, items: documentItems(input.items) };
     const requestId = String(input.requestId || "").trim();
     const existing = requestId
       ? this.data.invoices.find((item) => item.requestId === requestId)
       : null;
-    if (existing)
-      return {
-        id: existing.id,
-        invoiceNumber: existing.invoiceNumber,
-        ncf: existing.ncf,
-        ncfType: existing.ncfType || "",
-        documentType: existing.documentType,
-      };
     const totals = calculateDocument(input.items, {
       discount: input.discount || input.discountCents,
       discountType: input.discountType || (input.discountCents ? "amount" : "percent"),
@@ -611,6 +614,14 @@ export class MemoryDataService {
       includeLegalTip: input.includeLegalTip === true,
       tipCents: input.tipCents,
     });
+    if (existing) {
+      const payment = this.data.payments.find(item => item.id === `${requestId}-payment`);
+      if (!matchesSaleIntent(existing, payment, input, totals, this.actor.uid)) {
+        throw new Error('La referencia de esta venta ya está en uso con otros datos.');
+      }
+      return { id: existing.id, invoiceNumber: existing.invoiceNumber, ncf: existing.ncf,
+        ncfType: existing.ncfType || '', documentType: existing.documentType };
+    }
     const id = requestId || createOperationId("document");
     const documentType = input.documentType || "invoice";
     const amount =
@@ -654,6 +665,7 @@ export class MemoryDataService {
       clientRnc: input.clientRnc || "",
       clientPhone: input.clientPhone || "",
       clientAddress: input.clientAddress || "",
+      orderId: input.orderId || '', tableId: input.tableId || '',
       notes: input.notes || "",
       items: input.items,
       ...totals,
@@ -702,6 +714,7 @@ export class MemoryDataService {
     }
     if (documentType === "invoice")
       input.items.forEach((line) => {
+        if (!isStockLine(line)) return;
         const product = this.data.products.find(
           (item) => item.id === line.productId,
         );
@@ -793,6 +806,7 @@ export class MemoryDataService {
     if (invoice.status === "cancelled") throw new Error("La factura ya está anulada.");
     if (invoice.documentType === "invoice") {
       for (const line of invoice.items || []) {
+        if (!isStockLine(line)) continue;
         const product = this.data.products.find((item) => item.id === line.productId);
         if (product && !product.isPrepared) product.stock += Number(line.quantity || 0);
       }

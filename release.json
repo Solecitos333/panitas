@@ -1,12 +1,12 @@
 {
-  "versionName": "1.6.6",
-  "versionCode": 46,
+  "versionName": "1.6.7",
+  "versionCode": 47,
   "channel": "stable",
   "minimumSupportedVersionCode": 10,
   "mandatory": false,
   "releaseNotes": [
-    "Corrección urgente: facturación de café y productos con tamaños u opciones sin el error de campos undefined.",
-    "Protección al guardar facturas, delivery y comandas, incluidos carritos creados antes de actualizar.",
-    "Conserva los ajustes visuales de 1.6.5; no cambia precios, existencias, permisos ni impresión."
+    "Correcciones de mesas: guardar cambios con revisión de concurrencia, cobro directo autorizado y reintentos de cobro seguros.",
+    "Rechaza reutilizar referencias de venta con otros datos; anulación y auditoría atómicas sin devolver stock por cargos de envío.",
+    "Unifica descuentos y propinas entre precuenta y cobro, y evita cambios al carrito mientras se guarda una comanda. Requiere publicar las reglas Firestore de esta versión antes de actualizar."
   ]
 }

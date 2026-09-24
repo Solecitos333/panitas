@@ -206,6 +206,18 @@ test('MemoryDataService.liberateTable cancela la comanda y deja la mesa disponib
   assert.equal(orderAfter.cancellationReason, 'Liberada por cancelación de prueba');
 });
 
+test('reintentar cobro en demo no libera una comanda nueva de la misma mesa', async () => {
+  const service = new MemoryDataService({ uid: 'cashier-1', roles: ['cashier'], active: true });
+  const input = { tableId: service.data.tables[0].id, items: [{ name: 'Café', quantity: 1, unitPriceCents: 10000 }] };
+  const orderId = await service.createOrder(input);
+  const payment = { requestId: 'retry-table-demo-0001', method: 'credit', amountCents: 0 };
+  const invoice = await service.chargeOrder(orderId, payment);
+  const secondOrder = await service.createOrder(input);
+  assert.equal((await service.chargeOrder(orderId, payment)).id, invoice.id);
+  assert.equal(service.data.tables[0].currentOrderId, secondOrder);
+  await assert.rejects(service.chargeOrder(secondOrder, payment, [{ ...input.items[0], quantity: 2 }]), /cambió/);
+});
+
 test('renderPos y renderTablePickerModal renderizan botones para Liberar Mesa', () => {
   const tables = [
     { id: 't1', name: 'Mesa 1', active: true, currentOrderId: 'ord-1' },

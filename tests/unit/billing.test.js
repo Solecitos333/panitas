@@ -42,6 +42,25 @@ test('calcula Propina Legal del 10% (Ley 80-92 RD)', () => {
   assert.equal(result.totalCents, 128000);
 });
 
+test('descuento global se distribuye después de descuentos de línea, respetando cada tasa', () => {
+  const result = calculateDocument([
+    { quantity: 2, unitPriceCents: 10000, taxRate: 18, discountPercent: 10 },
+    { quantity: 1, unitPriceCents: 5000, taxRate: 0 }
+  ], { discount: 1000, discountType: 'amount', discountInCents: true });
+  assert.equal(result.taxCents, 3099);
+  assert.equal(result.totalCents, 25099);
+});
+
+test('cantidades que redondean a cero y descuentos no finitos producen errores claros', () => {
+  const items = [{ quantity: 1, unitPriceCents: 10000 }];
+  assert.throws(() => calculateDocument([{ ...items[0], quantity: 0.0001 }]), /Cantidad/);
+  for (const discount of [NaN, Infinity, -1, 'no-numérico']) {
+    assert.throws(() => calculateDocument(items, { discount }), /Descuento/);
+    assert.throws(() => calculateDocument([{ ...items[0], discountPercent: discount }]), /Descuento/);
+  }
+  assert.equal(calculateDocument(items, { includeLegalTip: true, legalTipRate: 0 }).tipCents, 0);
+});
+
 test('valida RNC y Cédula dominicana con algoritmo oficial DGII', () => {
   // RNC ejemplo válido: 101001577 (Banco de Reservas de la República Dominicana) o 131880738
   const validRnc = validateRncOrCedula('101001577');

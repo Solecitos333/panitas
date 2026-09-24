@@ -10,6 +10,7 @@ import {
 } from 'lucide';
 import { can, allowedNavigation, primaryRole } from '../domain/roles.js';
 import { calculateDocument, toCents, getPendingDeliveryInvoices } from '../domain/billing.js';
+import { orderPricing, editedOrderPricing } from '../domain/order-pricing.js';
 import { getClientMemory, searchClientMemory, isDeliveryInvoice, invoiceBelongsToClient } from '../domain/client-memory.js';
 import { renderCartLines, renderCartTotals, renderDashboard, renderKds, renderOrderDrawer, renderPos, renderTables, renderTablePickerModal, renderProductOptionPickerModal } from '../modules/operations.js';
 import { hasProductVariants, hasProductSides, calculateVariantLinePrice, formatLineName, VARIANT_TEMPLATES } from '../domain/catalog.js';
@@ -116,7 +117,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   const managementMode = !window.EloPOS && new URLSearchParams(location.search).get('mode') === 'management';
   const state = {
     user, settings: {}, route: initialRoute(user), cart: [], selectedOrderId: '', selectedInvoiceId: '', preselectedTableId: '', modal: '',
-    loadedOrderId: '', loadedTableId: '',
+    loadedOrderId: '', loadedTableId: '', loadedOrderRevision: null, sendingOrder: false,
     hardwareStatus: null, updateStatus: getEloUpdateStatus(), scannerActive: false, checkoutOpening: false, saleInProgress: false, pendingLiveRender: false, pendingPinDestination: '', mobileReportPeriod: 'day', posDiscountState: { discount: 0, discountType: 'amount', includeLegalTip: false }, posDraft: {}, posSearch: '', posCategory: 'Todos', posPaymentMethod: 'cash',
     sidebarCollapsed: typeof localStorage !== 'undefined' && localStorage.getItem('panitas_sidebar_collapsed') === '1',
     products: [], clients: [], tables: [], orders: [], invoices: [], payments: [], cashSessions: [], cashMovements: [], users: [], auditLogs: [], deliveryDrivers: [], selectedDeliveryDriver: null, selectedDeliveryInvoices: [], editingDriver: null, reassigningInvoiceId: '', whatsappBot: null, development,
@@ -443,6 +444,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   }
 
   function handleEloMsrEvent(event) {
+    if (state.sendingOrder) return;
     const { name, pan } = event.detail || {};
     if (!name) return;
     toast(`Tarjeta deslizada: ${name} (${pan || 'MSR'})`, 'info');
@@ -458,6 +460,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   }
 
   function handleBarcodeScan(rawCode) {
+    if (state.sendingOrder) return toast('Espera a que termine de guardarse la comanda.', 'warning');
     const code = String(rawCode || '').trim();
     if (!code) return;
     const lowerCode = code.toLowerCase();
@@ -3644,7 +3647,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   }
 
   function route(id){
-    if (state.saleInProgress || state.checkoutOpening) return toast('Espera a que termine la operación actual.', 'warning');
+    if (state.saleInProgress || state.checkoutOpening || state.sendingOrder) return toast('Espera a que termine la operación actual.', 'warning');
     if (id === 'tables') id = 'pos';
     if(!allowedNavigation(user).includes(id))return;
     if(state.route === id && !state.modal) {
@@ -3858,6 +3861,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     }
 
     state.loadedOrderId = order.id;
+    state.loadedOrderRevision = order.revision;
+    state.posDestination = 'table';
     state.loadedTableId = table.id;
     state.cart = (order.items || []).map((i) => ({ ...i }));
     state.posDraft = {
@@ -3867,11 +3872,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       notes: order.notes || '',
       printReceipt: state.posDraft?.printReceipt !== false
     };
-    state.posDiscountState = {
-      discount: order.discountCents ? order.discountCents / 100 : 0,
-      discountType: 'amount',
-      includeLegalTip: Boolean(order.tipCents)
-    };
+    state.posDiscountState = orderPricing(order);
     toast(`Comanda de ${table.name} cargada. Puedes cobrarla o agregar más productos.`, 'success');
     renderContent();
   }
@@ -3919,18 +3920,20 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   }
 
   async function sendComandaToTable(tableId) {
+    if (state.sendingOrder) return;
     if (!state.cart.length) return toast('Agrega al menos un producto a la cuenta antes de mandar a la mesa.', 'warning');
     const table = (state.tables || []).find((t) => t.id === tableId);
     const tableName = table ? table.name : 'Mesa';
     const formElement = root.querySelector('#pos-checkout-form');
     const form = formElement ? new FormData(formElement) : new FormData();
-    const discountVal = Number(form.get('posDiscountValue') || state.posDiscountState?.discount || 0);
-    const discountType = form.get('posDiscountType') || state.posDiscountState?.discountType || 'amount';
-    const includeLegalTip = form.get('posIncludeLegalTip') === 'on' || Boolean(state.posDiscountState?.includeLegalTip);
-    const totals = calculateDocument(state.cart, { discount: discountVal, discountType, includeLegalTip });
+    const pricing = readPosPricing();
+    const totals = calculateDocument(state.cart, pricing);
     const clientName = String(form.get('clientName') || state.posDraft?.clientName || 'Consumidor final').trim() || 'Consumidor final';
 
     try {
+      state.sendingOrder = true;
+      root.setAttribute('aria-busy', 'true');
+      updateSafety.setBlocker('sending-order', true);
       toast(`Enviando comanda a ${tableName}...`, 'info');
       const orderId = await service.createOrder({
         items: state.cart.map((i) => ({ ...i })),
@@ -3938,11 +3941,11 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         clientRnc: String(form.get('posClientRnc') || '').trim(),
         notes: String(form.get('notes') || state.posDraft?.notes || '').trim(),
         priority: 'normal',
-        discount: discountVal,
-        discountType,
-        includeLegalTip,
+        ...pricing,
         tableId,
-        replaceItems: Boolean(state.loadedOrderId)
+        replaceItems: Boolean(state.loadedOrderId),
+        expectedOrderId: state.loadedOrderId || '',
+        expectedRevision: state.loadedOrderRevision
       });
       toast(`Comanda enviada a ${tableName}.`, 'success');
       beepHardware('ok').catch(() => {});
@@ -3968,6 +3971,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     } catch (err) {
       console.error(err);
       toast(err.message || 'Error al enviar comanda a la mesa.', 'danger');
+    } finally {
+      state.sendingOrder = false;
+      root.removeAttribute('aria-busy');
+      updateSafety.setBlocker('sending-order', false);
     }
   }
 
@@ -4000,7 +4007,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 
   async function submitPos(event){
     if (event && event.preventDefault) event.preventDefault();
-    if (state.saleInProgress || state.checkoutOpening) return toast('El cobro anterior todavía se está procesando.', 'warning');
+    if (state.saleInProgress || state.checkoutOpening || state.sendingOrder) return toast('La operación anterior todavía se está procesando.', 'warning');
     if(!state.cart.length)return toast('Agrega al menos un producto a la cuenta.', 'warning');
     const formElement = root.querySelector('#pos-checkout-form');
     if (formElement && !formElement.reportValidity()) return;
@@ -4009,10 +4016,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const documentType = form.get('documentType') || 'invoice';
     if(!tableId&&!state.capabilities.bill)return toast('Selecciona una mesa para enviar la comanda.','danger');
 
-    const discountVal = Number(form.get('posDiscountValue') || state.posDiscountState?.discount || 0);
-    const discountType = form.get('posDiscountType') || state.posDiscountState?.discountType || 'amount';
-    const includeLegalTip = form.get('posIncludeLegalTip') === 'on' || Boolean(state.posDiscountState?.includeLegalTip);
-    state.posDiscountState = { discount: discountVal, discountType, includeLegalTip };
+    state.posDiscountState = readPosPricing();
 
     const totals = calculateDocument(state.cart, state.posDiscountState);
     const method = form.get('paymentMethod') || root.querySelector('#pos-payment-method')?.value || state.posPaymentMethod || 'cash';
@@ -4107,9 +4111,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       tableId: tableId || state.loadedTableId || '',
       ncfType,
       notes: form.get('notes') || '',
-      discount: discountVal,
-      discountType,
-      includeLegalTip,
+      ...state.posDiscountState,
       requestId: createOperationId('sale')
     };
 
@@ -4145,6 +4147,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         discount: payload.discount,
         discountType: payload.discountType,
         includeLegalTip: payload.includeLegalTip,
+        tipCents: payload.tipCents,
         ncfType: payload.ncfType,
         tableId: payload.tableId,
         cashierId: employee.id,
@@ -4173,17 +4176,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       // confirman antes de tocar periféricos, para que una impresora fallida nunca borre una venta.
       const created = payload.orderId
         ? await service.chargeOrder(payload.orderId, {
+            ...docPayload.payment,
             requestId: payload.requestId,
-            method: payload.method,
-            reference: payload.reference || '',
-            amountCents: payload.totals.totalCents,
-            tenderedCents: payload.tenderedCents,
-            changeCents: payload.method === 'cash' ? Math.max(0, payload.tenderedCents - payload.totals.totalCents) : 0,
             clientRnc: payload.clientRnc || '',
-            ncfType: payload.ncfType || '',
-            cashSessionId: state.activeCash?.id || '',
-            cashierId: employee.id,
-            cashierName: employee.displayName
+            ncfType: payload.ncfType || ''
           }, payload.items)
         : await service.createDirectDocument(docPayload);
       // Memoria Activa: Registro y actualización transparente de clientes en fiao, delivery o POS
@@ -5764,10 +5760,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 
   async function printCartPrebill() {
     if (!state.cart.length) return toast('Agrega productos al pedido para imprimir pre-cuenta.', 'warning');
-    const discountVal = Number(root.querySelector('#pos-discount-value')?.value || 0);
-    const discountType = root.querySelector('#pos-discount-type')?.value || 'amount';
-    const includeLegalTip = root.querySelector('#pos-legal-tip')?.checked === true;
-    state.posDiscountState = { discount: discountVal, discountType, includeLegalTip };
+    state.posDiscountState = readPosPricing();
 
     const totals = calculateDocument(state.cart, state.posDiscountState);
     const tableName = root.querySelector('#pos-checkout-form [name=tableId] option:checked')?.text || 'Consumo directo';
@@ -5787,10 +5780,19 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     else toast('Error al imprimir pre-cuenta.', 'danger');
   }
 
+  function readPosPricing() {
+    const discount = root.querySelector('#pos-discount-value');
+    return editedOrderPricing(state.posDiscountState, {
+      discount: discount ? Number(discount.value || 0) : undefined,
+      discountType: root.querySelector('#pos-discount-type')?.value,
+      includeLegalTip: root.querySelector('#pos-legal-tip')?.checked
+    });
+  }
+
   async function printOrderPrebill(orderId) {
     const order = state.orders.find((item)=>item.id===orderId);
     if (!order) return;
-    const totals = calculateDocument(order.items, { discount: order.discountCents ? order.discountCents / 100 : 0, discountType: 'amount', includeLegalTip: Boolean(order.tipCents) });
+    const totals = calculateDocument(order.items, orderPricing(order));
     const prebillData = {
       tableName: order.tableName || 'Mesa',
       clientName: order.clientName || 'Consumidor',
@@ -5849,10 +5851,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     const changeDisplay = root.querySelector('#pos-change-display');
     const changeAmount = root.querySelector('#pos-change-amount');
 
-    const discountVal = Number(root.querySelector('#pos-discount-value')?.value || 0);
-    const discountType = root.querySelector('#pos-discount-type')?.value || 'amount';
-    const includeLegalTip = root.querySelector('#pos-legal-tip')?.checked === true;
-    state.posDiscountState = { discount: discountVal, discountType, includeLegalTip };
+    state.posDiscountState = readPosPricing();
 
     const totals = calculateDocument(state.cart, state.posDiscountState);
     const totalsBlock = root.querySelector('.cart-totals-block');
@@ -6632,6 +6631,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     state.posPaymentMethod=String(data.get('paymentMethod')||state.posPaymentMethod||'cash');
   }
   function resetPosDraft(){
+    state.loadedOrderId = '';
+    state.loadedTableId = '';
+    state.loadedOrderRevision = null;
+    state.preselectedTableId = '';
     state.posDraft={ printReceipt: true, clientName: '' };state.posSearch='';state.posCategory='Todos';state.posPaymentMethod='cash';state.posDestination='takeout';
     state.posDiscountState={discount:0,discountType:'amount',includeLegalTip:false};
   }
@@ -6687,6 +6690,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   }
   function destroy(){
     destroyed=true;
+    for (const type of ['click', 'keydown', 'beforeinput', 'submit']) root.removeEventListener(type, guardOrderSave, true);
+    root.removeAttribute('aria-busy');
     remoteControl?.destroy();
     sleepManager.destroy();
     disposePinPad();
@@ -6695,6 +6700,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     for (const finish of busyButtons.values()) finish();
     busyButtons.clear();
     updateSafety.setBlocker('application', false);
+    updateSafety.setBlocker('sending-order', false);
     if (hardwarePollId) clearInterval(hardwarePollId);
     service.destroy();
     window.removeEventListener('online',updateConnection);
@@ -6704,6 +6710,13 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     window.removeEventListener('elo-update-status',handleEloUpdateStatus);
     root.innerHTML='';
   }
+  function guardOrderSave(event) {
+    if (!state.sendingOrder) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (event.type === 'click') toast('Guardando la comanda; espera un momento.', 'info');
+  }
+  for (const type of ['click', 'keydown', 'beforeinput', 'submit']) root.addEventListener(type, guardOrderSave, true);
   start().catch((error)=>{
     updateSafety.setBlocker('application', false);
     root.innerHTML=`<div class="fatal-state"><h1>No pudimos iniciar el sistema</h1><p>${escapeHtml(error.message)}</p><button class="button primary" data-retry-start>Reintentar</button></div>`;

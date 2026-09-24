@@ -2,26 +2,26 @@
   "schemaVersion": 1,
   "channel": "stable",
   "packageName": "com.panitas.pos",
-  "versionCode": 46,
-  "versionName": "1.6.6",
-  "publishedAt": "2026-09-23T12:31:55Z",
+  "versionCode": 47,
+  "versionName": "1.6.7",
+  "publishedAt": "2026-09-24T04:19:24Z",
   "minimumSupportedVersionCode": 10,
   "mandatory": false,
   "artifact": {
-    "url": "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.6.6-code46.zip",
-    "filename": "LosPanitas-Elo-POS-v1.6.6-code46.zip",
-    "size": 1693988,
-    "sha256": "7E7D6F5C92BB4CFCD8C6953C48989CF2ACDAC2AF9882137DEF3E7661C7C50636"
+    "url": "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.6.7-code47.zip",
+    "filename": "LosPanitas-Elo-POS-v1.6.7-code47.zip",
+    "size": 1695350,
+    "sha256": "E9BC829702F2D23C4882FE8F83377E2E1AF0AF9DB90A01E08A12BBF2599FA8BA"
   },
   "apk": {
     "entry": "LosPanitas-Elo-POS.apk",
-    "size": 1697432,
-    "sha256": "47093AFEB11CC452250ED7BEB1DE0D356338D77A664DB30D164A43D94AB392DE",
+    "size": 1701526,
+    "sha256": "02889F8FAF4269508A5A76F2A1B6E4B6C15CFD88D60D9C33B97D10B44EF54DBF",
     "signingCertificateSha256": "42DE27571244F0A23E533BF1C97D5D8587F4F12C3C34EA3209EDFBC67B8B3395"
   },
   "releaseNotes": [
-    "Corrección urgente: facturación de café y productos con tamaños u opciones sin el error de campos undefined.",
-    "Protección al guardar facturas, delivery y comandas, incluidos carritos creados antes de actualizar.",
-    "Conserva los ajustes visuales de 1.6.5; no cambia precios, existencias, permisos ni impresión."
+    "Correcciones de mesas: guardar cambios con revisión de concurrencia, cobro directo autorizado y reintentos de cobro seguros.",
+    "Rechaza reutilizar referencias de venta con otros datos; anulación y auditoría atómicas sin devolver stock por cargos de envío.",
+    "Unifica descuentos y propinas entre precuenta y cobro, y evita cambios al carrito mientras se guarda una comanda. Requiere publicar las reglas Firestore de esta versión antes de actualizar."
   ]
 }
