@@ -1,6 +1,7 @@
 # Revisión de estabilidad — 1.6.7 (47)
 
-Fecha: 24 de septiembre de 2026. Candidata preparada; no publicada todavía.
+Fecha: 24 de septiembre de 2026. Paquete validado para publicación al cierre.
+La instalación en cada terminal se confirma por su versión instalada y señal reciente.
 Base: `08e197b` (1.6.6). Respaldo: `backup-before-stability-audit-20260923`.
 Rama: `fix/operational-regressions-20260923`.
 
@@ -30,7 +31,13 @@ Rama: `fix/operational-regressions-20260923`.
 - Revisión mediante la habilidad Browser en la demo local: detectó el botón de guardar mesa ausente y la referencia residual a una mesa cobrada. Verificado: crear artículo → mesa → aumentar cantidad → guardar → PIN → factura de RD$200 → siguiente venta independiente de RD$100. Sin escribir ventas en producción ni confirmar hardware desde la demo.
 - Logs locales ignorados por Git: `test-results/stability-unit.log`, `stability-rules.log`, `stability-validate.log`, `stability-apk.log`. La advertencia del build sobre bundles grandes sigue pendiente; no es un fallo de compilación.
 
-## Publicación coordinada (pendiente de aprobación de horario)
+## Publicación coordinada y horario de soporte
+
+Horario comunicado por el propietario: atención de 07:00 a 15:00 y cierre operativo
+a las 16:00, zona America/Santo_Domingo. Las actualizaciones se tramitan después
+de las 16:00 y solo se instalan con la terminal libre; no se configura una tarea
+diaria automática. Antes de esta publicación, a las 17:02 del 24/09, la ELO
+confirmó versión 1.6.6 (46), conexión reciente y `busy: false`.
 
 1. Confirmar terminal sin operación en curso; no forzar cierre de carrito ni borrar datos.
 2. Revisar cambios nuevos en `main` antes de integrar esta rama.
