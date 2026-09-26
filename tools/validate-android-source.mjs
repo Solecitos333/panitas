@@ -20,16 +20,21 @@ try {
   const rSource = join(generated, 'R.java');
   await writeFile(rSource,
     'package com.panitas.pos; public final class R { public static final class drawable { public static final int app_icon = 1; } }\n');
+  const tests = (await walk(join(root, 'tests', 'android'))).filter((file) => file.endsWith('.java'));
   const sources = [...await walk(sourceRoot), rSource].filter((file) => file.endsWith('.java'));
   const javac = findJavac();
   const result = spawnSync(javac, [
     '-encoding', 'UTF-8', '-source', '8', '-target', '8',
-    '-cp', platformJar, '-d', classes, ...sources
+    '-cp', platformJar, '-d', classes, ...sources, ...tests
   ], { encoding: 'utf8' });
   if (result.status !== 0) {
     throw new Error(`El contenedor Android no compila:\n${result.stdout || ''}${result.stderr || ''}${result.error || ''}`);
   }
   console.log(`Android validado: ${sources.length - 1} fuentes Java compiladas contra ${basename(platformJar)}.`);
+  const java = javac.replace(/javac(\.exe)?$/, 'java$1');
+  const queueTest = spawnSync(java, ['-cp', classes, 'com.panitas.pos.LatestTaskQueueTest'], { encoding: 'utf8' });
+  if (queueTest.status !== 0) throw new Error(`Falló la cola de visor: ${queueTest.stdout || ''}${queueTest.stderr || ''}${queueTest.error || ''}`);
+  console.log(queueTest.stdout.trim());
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

@@ -1,6 +1,6 @@
 {
   "name": "los-panitas-by-nechy",
-  "version": "1.6.7",
+  "version": "1.6.8",
   "private": true,
   "type": "module",
   "description": "POS, facturación y cocina para Los Panitas by Nechy.",
@@ -10,6 +10,7 @@
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --test tests/unit/*.test.js",
     "test:android": "node tools/validate-android-source.mjs",
+    "benchmark:terminal": "node tools/benchmark-terminal.mjs",
     "test:rules": "node --test tests/firestore-rules.test.js",
     "test:emulator": "firebase emulators:exec --only firestore \"npm run test:rules\"",
     "seed:foundation": "node tools/seed-foundation.mjs",

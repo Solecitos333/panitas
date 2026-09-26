@@ -1275,11 +1275,11 @@ export function renderCartLines(items) {
   return items.map(cartLine).join('');
 }
 
-export function renderCartTotals(items, discountState = { discount: 0, discountType: 'amount', includeLegalTip: false }) {
+export function renderCartTotals(items, discountState = { discount: 0, discountType: 'amount', includeLegalTip: false }, totals = null) {
   if (!items || !items.length) {
     return `<div class="cart-totals"><div><span>Subtotal</span><b>RD$ 0.00</b></div><div class="grand-total"><span>Total</span><strong>RD$ 0.00</strong></div></div>`;
   }
-  const res = calculateDocument(items, discountState || {});
+  const res = totals || calculateDocument(items, discountState || {});
   return `<div class="cart-totals">
     <div class="cart-total-row"><span>Subtotal</span><b>${formatMoney(res.subtotalCents)}</b></div>
     ${res.discountCents > 0 ? `<div class="cart-total-row discount" style="color:#ef4444;"><span>Descuento</span><b>-${formatMoney(res.discountCents)}</b></div>` : ''}

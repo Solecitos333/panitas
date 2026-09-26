@@ -1,12 +1,12 @@
 {
-  "versionName": "1.6.7",
-  "versionCode": 47,
+  "versionName": "1.6.8",
+  "versionCode": 48,
   "channel": "stable",
   "minimumSupportedVersionCode": 10,
   "mandatory": false,
   "releaseNotes": [
-    "Correcciones de mesas: guardar cambios con revisión de concurrencia, cobro directo autorizado y reintentos de cobro seguros.",
-    "Rechaza reutilizar referencias de venta con otros datos; anulación y auditoría atómicas sin devolver stock por cargos de envío.",
-    "Unifica descuentos y propinas entre precuenta y cobro, y evita cambios al carrito mientras se guarda una comanda. Requiere publicar las reglas Firestore de esta versión antes de actualizar."
+    "Menos trabajo al sincronizar el historial y buscar clientes; los saldos se actualizan al recibir cambios.",
+    "Evita reconstruir pantallas y consultar periféricos durante el reposo; reduce cálculos repetidos del carrito.",
+    "Separa el visor del cliente de la cola de impresión y gaveta, descartando mensajes visuales antiguos sin descartar tickets ni operaciones."
   ]
 }

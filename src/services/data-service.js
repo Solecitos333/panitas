@@ -16,6 +16,7 @@ import { payrollFingerprint } from '../domain/payroll.js';
 import { documentItems } from '../domain/document-items.js';
 import { orderPricing, assertOrderRevision } from '../domain/order-pricing.js';
 import { matchesSaleIntent, isStockLine } from '../domain/sale-intent.js';
+import { createSnapshotReader } from '../lib/snapshot-reader.js';
 
 const DEFAULT_SETTINGS = Object.freeze({
   name: 'Los Panitas by Nechy',
@@ -57,8 +58,9 @@ export class DataService {
 
   watch(name, sortField, callback, direction = 'desc') {
     const ref = sortField ? query(collection(this.db, name), orderBy(sortField, direction)) : collection(this.db, name);
+    const readSnapshot = createSnapshotReader();
     const unsubscribe = onSnapshot(ref, (snapshot) => {
-      callback(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })));
+      callback(readSnapshot(snapshot));
     }, (error) => callback([], error));
     this.unsubscribers.push(unsubscribe);
     return unsubscribe;

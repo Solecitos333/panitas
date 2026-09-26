@@ -2,26 +2,26 @@
   "schemaVersion": 1,
   "channel": "stable",
   "packageName": "com.panitas.pos",
-  "versionCode": 47,
-  "versionName": "1.6.7",
-  "publishedAt": "2026-09-24T04:19:24Z",
+  "versionCode": 48,
+  "versionName": "1.6.8",
+  "publishedAt": "2026-09-26T02:59:34Z",
   "minimumSupportedVersionCode": 10,
   "mandatory": false,
   "artifact": {
-    "url": "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.6.7-code47.zip",
-    "filename": "LosPanitas-Elo-POS-v1.6.7-code47.zip",
-    "size": 1695350,
-    "sha256": "E9BC829702F2D23C4882FE8F83377E2E1AF0AF9DB90A01E08A12BBF2599FA8BA"
+    "url": "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.6.8-code48.zip",
+    "filename": "LosPanitas-Elo-POS-v1.6.8-code48.zip",
+    "size": 1696449,
+    "sha256": "0BA4338C1E70183A1A9A7B5B03CF879072262F713F1718456D73A17D86DC7A14"
   },
   "apk": {
     "entry": "LosPanitas-Elo-POS.apk",
     "size": 1701526,
-    "sha256": "02889F8FAF4269508A5A76F2A1B6E4B6C15CFD88D60D9C33B97D10B44EF54DBF",
+    "sha256": "6D3C1A087D72F49AB3E121EA4675A6A3140DCD13FB71E6ADF43FFC4D9085A8FB",
     "signingCertificateSha256": "42DE27571244F0A23E533BF1C97D5D8587F4F12C3C34EA3209EDFBC67B8B3395"
   },
   "releaseNotes": [
-    "Correcciones de mesas: guardar cambios con revisión de concurrencia, cobro directo autorizado y reintentos de cobro seguros.",
-    "Rechaza reutilizar referencias de venta con otros datos; anulación y auditoría atómicas sin devolver stock por cargos de envío.",
-    "Unifica descuentos y propinas entre precuenta y cobro, y evita cambios al carrito mientras se guarda una comanda. Requiere publicar las reglas Firestore de esta versión antes de actualizar."
+    "Menos trabajo al sincronizar el historial y buscar clientes; los saldos se actualizan al recibir cambios.",
+    "Evita reconstruir pantallas y consultar periféricos durante el reposo; reduce cálculos repetidos del carrito.",
+    "Separa el visor del cliente de la cola de impresión y gaveta, descartando mensajes visuales antiguos sin descartar tickets ni operaciones."
   ]
 }

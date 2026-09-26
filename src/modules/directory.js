@@ -421,7 +421,7 @@ export function renderProducts(state) {
 }
 
 export function renderClients(state) {
-  const allClients = getClientMemory(state);
+  const allClients = state.clientMemory || getClientMemory(state);
   const totalClients = allClients.length;
   const registeredCount = allClients.filter(c => c.isRegisteredClient).length;
   const memoryOnlyCount = Math.max(0, totalClients - registeredCount);

@@ -57,6 +57,20 @@ export function isDeliveryInvoice(inv) {
  * @param {object} state Estado global de la aplicación
  * @returns {Array<object>} Lista unificada de perfiles de clientes en memoria activa
  */
+export function createClientMemorySelector() {
+  let clients, invoices, result;
+  return (state = {}) => {
+    // Both services publish a new array when a collection changes. Never cache
+    // across users or reuse balances after a payment, cancellation or client edit.
+    if (!result || clients !== state.clients || invoices !== state.invoices) {
+      result = getClientMemory(state);
+      clients = state.clients;
+      invoices = state.invoices;
+    }
+    return result;
+  };
+}
+
 export function getClientMemory(state = {}) {
   const clients = state.clients || [];
   const invoices = state.invoices || [];
@@ -90,13 +104,11 @@ export function getClientMemory(state = {}) {
   }
 
   // 2. Procesar el historial de facturas (orden cronológico ascendente para que los datos más recientes sobrescriban)
-  const sortedInvoices = [...invoices].sort((a, b) => {
-    const da = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
-    const db = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
-    return da - db;
-  });
+  const sortedInvoices = invoices.map((invoice) => ({ invoice,
+    date: invoice.createdAt?.toDate ? invoice.createdAt.toDate() : new Date(invoice.createdAt || 0)
+  })).sort((a, b) => a.date - b.date);
 
-  for (const inv of sortedInvoices) {
+  for (const { invoice: inv, date: invDate } of sortedInvoices) {
     const rawName = String(inv.clientName || inv.deliveryClientName || '').trim();
     if (!rawName || rawName.toLowerCase() === 'consumidor final') continue;
     const key = getClientIdentityKey({ clientId: inv.clientId, name: rawName });
@@ -136,7 +148,6 @@ export function getClientMemory(state = {}) {
     if (inv.clientId && !entry.id) entry.id = inv.clientId;
     if (inv.clientRnc && !entry.rnc) entry.rnc = inv.clientRnc;
 
-    const invDate = inv.createdAt?.toDate ? inv.createdAt.toDate() : new Date(inv.createdAt || 0);
     if (!entry.lastSeenDate || invDate > entry.lastSeenDate) {
       entry.lastSeenDate = invDate;
     }

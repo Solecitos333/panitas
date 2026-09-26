@@ -11,7 +11,7 @@ import {
 import { can, allowedNavigation, primaryRole } from '../domain/roles.js';
 import { calculateDocument, toCents, getPendingDeliveryInvoices } from '../domain/billing.js';
 import { orderPricing, editedOrderPricing } from '../domain/order-pricing.js';
-import { getClientMemory, searchClientMemory, isDeliveryInvoice, invoiceBelongsToClient } from '../domain/client-memory.js';
+import { createClientMemorySelector, searchClientMemory, isDeliveryInvoice, invoiceBelongsToClient } from '../domain/client-memory.js';
 import { renderCartLines, renderCartTotals, renderDashboard, renderKds, renderOrderDrawer, renderPos, renderTables, renderTablePickerModal, renderProductOptionPickerModal } from '../modules/operations.js';
 import { hasProductVariants, hasProductSides, calculateVariantLinePrice, formatLineName, VARIANT_TEMPLATES } from '../domain/catalog.js';
 import { exportReport, renderInvoiceModal, renderInvoices, renderReports } from '../modules/billing.js';
@@ -27,6 +27,7 @@ import { downloadText, escapeHtml, formatMoney } from '../lib/format.js';
 import { businessDateKey } from '../lib/business-time.js';
 import { createOperationId } from '../lib/id.js';
 import { affectsCurrentView } from '../lib/live-view.js';
+import { createRenderQueue } from '../lib/render-queue.js';
 import {
   openCashDrawerHardware, buildInvoiceEscPos, buildInvoicePlainText, buildKitchenEscPos, buildKitchenPlainText,
   buildCashReportEscPos, buildCashReportPlainText, buildPrebillEscPos, buildPrebillPlainText,
@@ -115,7 +116,9 @@ if (typeof document !== 'undefined') {
 
 export function createApplication({ root, user, service, onLogout, onChangePassword, development = false }) {
   const managementMode = !window.EloPOS && new URLSearchParams(location.search).get('mode') === 'management';
+  const readClientMemory = createClientMemorySelector();
   const state = {
+    get clientMemory() { return readClientMemory(this); },
     user, settings: {}, route: initialRoute(user), cart: [], selectedOrderId: '', selectedInvoiceId: '', preselectedTableId: '', modal: '',
     loadedOrderId: '', loadedTableId: '', loadedOrderRevision: null, sendingOrder: false,
     hardwareStatus: null, updateStatus: getEloUpdateStatus(), scannerActive: false, checkoutOpening: false, saleInProgress: false, pendingLiveRender: false, pendingPinDestination: '', mobileReportPeriod: 'day', posDiscountState: { discount: 0, discountType: 'amount', includeLegalTip: false }, posDraft: {}, posSearch: '', posCategory: 'Todos', posPaymentMethod: 'cash',
@@ -162,6 +165,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     },
     onWake: () => {
       setVFDMessage('LOS PANITAS', 'BIENVENIDO').catch(() => {});
+      flushPendingLiveRender();
     }
   });
 
@@ -202,7 +206,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     }).catch(() => {});
 
     hardwarePollId = setInterval(async () => {
-      if (destroyed || hardwarePollInFlight || state.saleInProgress) return;
+      if (destroyed || hardwarePollInFlight || state.saleInProgress || document.hidden || sleepManager.isSleeping()) return;
       hardwarePollInFlight = true;
       try {
         const st = await getHardwareStatus();
@@ -229,34 +233,23 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     if (affectsCurrentView(state.route, key, state.modal)) requestLiveRender();
   }; }
 
-  let liveRenderRaf = null;
-  function requestLiveRender() {
-    if (destroyed) return;
-    if (liveRenderRaf !== null) return;
-    const scheduleFn = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (cb) => setTimeout(cb, 16);
-    liveRenderRaf = scheduleFn(() => {
-      liveRenderRaf = null;
-      if (destroyed) return;
+  const liveRenderQueue = createRenderQueue({
+    isPaused: () => destroyed || document.hidden || sleepManager.isSleeping(),
+    canRender: () => {
       const active = document.activeElement;
       const editingField = active && root.contains(active) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName);
       const modalFormOpen = Boolean(root.querySelector('#modal-root form'));
-      if (state.saleInProgress || editingField || modalFormOpen || updateForms.isDirty(root)) {
-        state.pendingLiveRender = true;
-        return;
-      }
-      state.pendingLiveRender = false;
-      renderContent();
-    });
-  }
+      return !(state.saleInProgress || editingField || modalFormOpen || updateForms.isDirty(root));
+    },
+    render: () => renderContent(),
+    onPendingChange: (pending) => { state.pendingLiveRender = pending; }
+  });
+  function requestLiveRender() { liveRenderQueue.request(); }
 
   function flushPendingLiveRender() {
-    setTimeout(() => {
-      if (!state.pendingLiveRender || destroyed) return;
-      const active = document.activeElement;
-      const stillEditing = active && root.contains(active) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName);
-      if (!stillEditing && !root.querySelector('#modal-root form') && !updateForms.isDirty(root)) requestLiveRender();
-    }, 0);
+    setTimeout(() => liveRenderQueue.flush(), 0);
   }
+  document.addEventListener('visibilitychange', flushPendingLiveRender);
 
   function updateOrders(items, error) {
     if (error) toast('No se pudo sincronizar comandas.', 'danger');
@@ -325,6 +318,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 
   function renderContent() {
     if (!root.querySelector('#main-content')) return;
+    liveRenderQueue.clear();
     state.activeCash = activeCash();
     const renderers = {
       dashboard: renderDashboard, pos: renderPos, tables: renderTables, kds: renderKds,
@@ -682,7 +676,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           return;
         }
 
-        const memory = getClientMemory(state);
+        const memory = state.clientMemory;
         const suggestions = searchClientMemory(memory, q, 6);
 
         if (!suggestions.length) {
@@ -718,9 +712,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           </div>
         `).join('');
         dropdown.classList.remove('hidden');
-        if (window.lucide && typeof window.lucide.createIcons === 'function') {
-          try { window.lucide.createIcons(); } catch (_) {}
-        }
+        iconsRefresh(dropdown);
 
         dropdown.querySelectorAll('.client-autocomplete-item').forEach(item => {
           item.addEventListener('mousedown', (e) => {
@@ -3715,38 +3707,19 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       );
     }
 
-    const totalsEl = cartPanel.querySelector('.cart-totals-block');
-    if (totalsEl) {
-      totalsEl.innerHTML = renderCartTotals(state.cart, state.posDiscountState);
-    }
-
     const sendBtn = root.querySelector('[data-pos-send-table]');
     if (sendBtn) {
       sendBtn.disabled = !state.cart.length;
     }
 
-    const totals = calculateDocument(state.cart, state.posDiscountState || {});
-    const loadedTable = state.loadedTableId ? (state.tables || []).find((t) => t.id === state.loadedTableId) : null;
-    const actionText = loadedTable
-      ? `Cobrar ${loadedTable.name} ${formatMoney(totals.totalCents)}`
-      : (state.posPaymentMethod === 'credit'
-        ? `Registrar fiao ${formatMoney(totals.totalCents)}`
-        : (state.posPaymentMethod === 'delivery_cod'
-          ? `Despachar delivery ${formatMoney(totals.totalCents)}`
-          : `Cobrar ${formatMoney(totals.totalCents)}`));
-
     const submitBtn = root.querySelector('#pos-submit-btn');
     if (submitBtn) {
       submitBtn.disabled = !state.cart.length;
-      const span = submitBtn.querySelector('span');
-      if (span) span.textContent = actionText;
     }
 
     const mobileBtn = root.querySelector('.mobile-pos-charge');
     if (mobileBtn) {
       mobileBtn.disabled = !state.cart.length;
-      const mobileSpan = mobileBtn.querySelector('span');
-      if (mobileSpan) mobileSpan.textContent = actionText;
     }
 
     const prebillBtn = root.querySelector('[data-print-cart-prebill]');
@@ -3754,10 +3727,11 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       prebillBtn.style.display = state.cart.length ? '' : 'none';
     }
 
-    updatePosChange();
+    const totals = updatePosChange();
 
     if (linesEl) iconsRefresh(linesEl);
     updateSafety.setBlocker('application', !destroyed && updateIsBusy());
+    return totals;
   }
 
   function openCartItemOptions(index) {
@@ -3811,8 +3785,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       taxRate:product.taxRate||0,
       notes:''
     });
-    renderPosCartOnly();
-    const totals = calculateDocument(state.cart);
+    const totals = renderPosCartOnly() || calculateDocument(state.cart, state.posDiscountState);
     setVFDMessage(product.name.slice(0, 20), `TOT: ${formatMoney(totals.totalCents)}`);
   }
 
@@ -3832,8 +3805,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       }
       state.cart.splice(index,1);
     }
-    renderPosCartOnly();
-    const totals = calculateDocument(state.cart);
+    const totals = renderPosCartOnly() || calculateDocument(state.cart, state.posDiscountState);
     if (state.cart.length) {
       setVFDMessage('TOTAL CUENTA:', formatMoney(totals.totalCents));
     } else {
@@ -3978,8 +3950,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     }
   }
 
-  function updatePosSubmitLabel() {
-    const totals = calculateDocument(state.cart, state.posDiscountState || {});
+  function updatePosSubmitLabel(totals = calculateDocument(state.cart, state.posDiscountState || {})) {
     const method = root.querySelector('#pos-payment-method')?.value || 'cash';
     const loadedTable = state.loadedTableId ? (state.tables || []).find((t) => t.id === state.loadedTableId) : null;
     const printReceipt = root.querySelector('#pos-print-receipt') ? root.querySelector('#pos-print-receipt').checked : (state.posDraft?.printReceipt !== false);
@@ -5855,18 +5826,18 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 
     const totals = calculateDocument(state.cart, state.posDiscountState);
     const totalsBlock = root.querySelector('.cart-totals-block');
-    if (totalsBlock) totalsBlock.innerHTML = renderCartTotals(state.cart, state.posDiscountState);
+    if (totalsBlock) totalsBlock.innerHTML = renderCartTotals(state.cart, state.posDiscountState, totals);
     capturePosDraft();
 
     // Actualizar el botón cobrar
-    updatePosSubmitLabel();
+    updatePosSubmitLabel(totals);
 
-    if (!receivedInput || !changeAmount) return;
+    if (!receivedInput || !changeAmount) return totals;
     const received = Number(receivedInput.value || 0) * 100;
     if (received <= 0) {
       changeAmount.textContent = 'RD$ 0.00';
       changeDisplay?.classList.remove('insufficient');
-      return;
+      return totals;
     }
 
     const change = received - totals.totalCents;
@@ -5881,6 +5852,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         setVFDMessage(`RECIB: ${formatMoney(received)}`, `CAMB: ${formatMoney(change)}`).catch(() => {});
       }
     }
+    return totals;
   }
 
   function openItemNoteModal(index) {
@@ -6702,6 +6674,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     updateSafety.setBlocker('application', false);
     updateSafety.setBlocker('sending-order', false);
     if (hardwarePollId) clearInterval(hardwarePollId);
+    liveRenderQueue.destroy();
+    document.removeEventListener('visibilitychange', flushPendingLiveRender);
     service.destroy();
     window.removeEventListener('online',updateConnection);
     window.removeEventListener('offline',updateConnection);

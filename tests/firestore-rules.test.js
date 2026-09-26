@@ -51,6 +51,43 @@ beforeEach(async () => {
 
 after(async () => environment?.cleanup());
 
+test('incremental collection watch preserves sorting, additions, edits and removals', async () => {
+  const db = environment.authenticatedContext('owner', auth('owner')).firestore();
+  const service = new DataService(db, { uid: 'owner', roles: ['owner'], active: true });
+  let rows = [], failure;
+  const waitFor = async predicate => {
+    const deadline = Date.now() + 5000;
+    while (!predicate()) {
+      if (failure) throw failure;
+      if (Date.now() > deadline) throw Error('Snapshot did not converge');
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+  };
+  try {
+    service.watch('products', 'name', (items, error) => { rows = items; failure = error; }, 'asc');
+    await waitFor(() => rows.length === 1);
+    const initial = rows;
+    await environment.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), 'products', 'p2'), { name: 'A - Café', priceCents: 5000 });
+    });
+    await waitFor(() => rows.length === 2);
+    assert.deepEqual(rows.map(row => row.id), ['p2', 'p1']);
+    assert.equal(initial.length, 1);
+    assert.equal(rows[1], initial[0]);
+    await environment.withSecurityRulesDisabled(async context => {
+      await updateDoc(doc(context.firestore(), 'products', 'p1'), { name: '0 - Café', priceCents: 6000 });
+    });
+    await waitFor(() => rows[0]?.priceCents === 6000);
+    assert.deepEqual(rows.map(row => row.id), ['p1', 'p2']);
+    assert.equal(initial[0].priceCents, 10000);
+    await environment.withSecurityRulesDisabled(async context => {
+      await deleteDoc(doc(context.firestore(), 'products', 'p2'));
+    });
+    await waitFor(() => rows.length === 1);
+    assert.equal(rows[0].id, 'p1');
+  } finally { service.destroy(); }
+});
+
 test('remote integration: heartbeat, owner request, busy deferral, restart confirmation and cleanup', async () => {
   const ownerDb = environment.authenticatedContext('owner', auth('owner')).firestore();
   const cashierDb = environment.authenticatedContext('cashier', auth('cashier')).firestore();

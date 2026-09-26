@@ -59,7 +59,7 @@ export class MemoryDataService {
   watchAll(callbacks) {
     this.listeners = callbacks;
     Object.keys(callbacks).forEach((key) =>
-      callbacks[key](this.data[key] || []),
+      callbacks[key]([...(this.data[key] || [])]),
     );
   }
   emit(key) {

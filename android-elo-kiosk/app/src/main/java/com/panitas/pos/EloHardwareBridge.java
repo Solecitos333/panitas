@@ -20,6 +20,10 @@ public class EloHardwareBridge {
     private final String hardwareToken;
     private final WebView webView;
     private final ExecutorService hardwareQueue = Executors.newSingleThreadExecutor();
+    // A slow/offline customer display must never delay printing or drawer pulses.
+    private final ExecutorService displayExecutor = Executors.newSingleThreadExecutor();
+    private final LatestTaskQueue displayQueue = new LatestTaskQueue(displayExecutor,
+            error -> android.util.Log.w("EloHardwareBridge", "Customer display update failed", error));
     private CustomerDisplayManager customerDisplayManager;
 
     public EloHardwareBridge(Context context, UsbPrinterManager printerManager,
@@ -187,6 +191,8 @@ public class EloHardwareBridge {
     }
 
     public void destroy() {
+        displayQueue.close();
+        displayExecutor.shutdownNow();
         hardwareQueue.shutdownNow();
     }
 
@@ -215,7 +221,7 @@ public class EloHardwareBridge {
     /** Encola la actualización del visor en hilo de fondo para no bloquear JavaScript. */
     @JavascriptInterface
     public void setCustomerDisplayAsync(String line1, String line2) {
-        hardwareQueue.execute(() -> {
+        displayQueue.submit(() -> {
             if (customerDisplayManager != null) {
                 customerDisplayManager.setMessage(line1, line2);
             }
@@ -233,7 +239,7 @@ public class EloHardwareBridge {
     /** Muestra la bienvenida en la pantalla trasera. */
     @JavascriptInterface
     public void showCustomerWelcome(String businessName) {
-        hardwareQueue.execute(() -> {
+        displayQueue.submit(() -> {
             if (customerDisplayManager != null) {
                 customerDisplayManager.showWelcome(businessName);
             }
