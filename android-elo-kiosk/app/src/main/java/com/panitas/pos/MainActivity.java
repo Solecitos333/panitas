@@ -73,7 +73,7 @@ public class MainActivity extends Activity {
                     (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0);
         }
         webView = new WebView(this);
-        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        webView.setLayerType(View.LAYER_TYPE_NONE, null);
         setContentView(webView);
 
         WebSettings settings = webView.getSettings();

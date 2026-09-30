@@ -1897,7 +1897,9 @@ tbody tr:hover { background: rgba(255,255,255,.018); }
 }
 .elo-terminal .modal-card, .elo-terminal .modal-backdrop, .elo-terminal .toast,
 .elo-terminal .pos-cart-line, .elo-terminal .pos-method-panel,
-.elo-terminal .live-indicator span { animation: none !important; }
+.elo-terminal .live-indicator span,
+.elo-terminal .live-pulse-dot,
+.elo-terminal .live-dot-pulse { animation: none !important; }
 .elo-terminal .sidebar, .elo-terminal .app-shell > main { transition: none; will-change: auto; }
 .elo-terminal .modal-backdrop, .elo-terminal .touch-numpad-backdrop {
   -webkit-backdrop-filter: none !important;

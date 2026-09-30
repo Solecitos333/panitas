@@ -1,27 +1,28 @@
 {
-  "schemaVersion": 1,
-  "channel": "stable",
-  "packageName": "com.panitas.pos",
-  "versionCode": 48,
-  "versionName": "1.6.8",
-  "publishedAt": "2026-09-26T02:59:34Z",
-  "minimumSupportedVersionCode": 10,
-  "mandatory": false,
-  "artifact": {
-    "url": "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.6.8-code48.zip",
-    "filename": "LosPanitas-Elo-POS-v1.6.8-code48.zip",
-    "size": 1696449,
-    "sha256": "0BA4338C1E70183A1A9A7B5B03CF879072262F713F1718456D73A17D86DC7A14"
-  },
-  "apk": {
-    "entry": "LosPanitas-Elo-POS.apk",
-    "size": 1701526,
-    "sha256": "6D3C1A087D72F49AB3E121EA4675A6A3140DCD13FB71E6ADF43FFC4D9085A8FB",
-    "signingCertificateSha256": "42DE27571244F0A23E533BF1C97D5D8587F4F12C3C34EA3209EDFBC67B8B3395"
-  },
-  "releaseNotes": [
-    "Menos trabajo al sincronizar el historial y buscar clientes; los saldos se actualizan al recibir cambios.",
-    "Evita reconstruir pantallas y consultar periféricos durante el reposo; reduce cálculos repetidos del carrito.",
-    "Separa el visor del cliente de la cola de impresión y gaveta, descartando mensajes visuales antiguos sin descartar tickets ni operaciones."
-  ]
+    "schemaVersion":  1,
+    "channel":  "stable",
+    "packageName":  "com.panitas.pos",
+    "versionCode":  49,
+    "versionName":  "1.6.9",
+    "publishedAt":  "2026-09-30T17:38:21Z",
+    "minimumSupportedVersionCode":  10,
+    "mandatory":  false,
+    "artifact":  {
+                     "url":  "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.6.9-code49.zip",
+                     "filename":  "LosPanitas-Elo-POS-v1.6.9-code49.zip",
+                     "size":  1696594,
+                     "sha256":  "5EC7E320A77C58A8A272E06F2327B97A3E9FF2C97D12A60B3CC50064E2B51822"
+                 },
+    "apk":  {
+                "entry":  "LosPanitas-Elo-POS.apk",
+                "size":  1701526,
+                "sha256":  "D64477EE7030C65743655BDE13402FFA6B5A703964B2F42CA93F300AE8ACEAF9",
+                "signingCertificateSha256":  "42DE27571244F0A23E533BF1C97D5D8587F4F12C3C34EA3209EDFBC67B8B3395"
+            },
+    "releaseNotes":  [
+                         "Optimización de rendimiento y CPU: Eliminado bucle de alta intensidad en el controlador MSR, reduciendo el consumo de CPU de la terminal de 110% a \u003c2% para eliminar la lentitud permanente.",
+                         "Menos trabajo al sincronizar el historial y buscar clientes; los saldos se actualizan al recibir cambios.",
+                         "Evita reconstruir pantallas y consultar periféricos durante el reposo; reduce cálculos repetidos del carrito.",
+                         "Separa el visor del cliente de la cola de impresión y gaveta, descartando mensajes visuales antiguos sin descartar tickets ni operaciones."
+                     ]
 }

@@ -1,10 +1,11 @@
 {
-  "versionName": "1.6.8",
-  "versionCode": 48,
+  "versionName": "1.6.9",
+  "versionCode": 49,
   "channel": "stable",
   "minimumSupportedVersionCode": 10,
   "mandatory": false,
   "releaseNotes": [
+    "Optimización de rendimiento y CPU: Eliminado bucle de alta intensidad en el controlador MSR, reduciendo el consumo de CPU de la terminal de 110% a <2% para eliminar la lentitud permanente.",
     "Menos trabajo al sincronizar el historial y buscar clientes; los saldos se actualizan al recibir cambios.",
     "Evita reconstruir pantallas y consultar periféricos durante el reposo; reduce cálculos repetidos del carrito.",
     "Separa el visor del cliente de la cola de impresión y gaveta, descartando mensajes visuales antiguos sin descartar tickets ni operaciones."

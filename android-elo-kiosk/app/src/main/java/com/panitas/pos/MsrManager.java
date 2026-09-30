@@ -98,6 +98,10 @@ public class MsrManager {
 
     public void stop() {
         reading = false;
+        if (readThread != null) {
+            readThread.interrupt();
+            readThread = null;
+        }
         if (connection != null) {
             try { connection.close(); } catch (Exception ignored) {}
             connection = null;
@@ -109,12 +113,28 @@ public class MsrManager {
     }
 
     private void readLoop(UsbEndpoint ep) {
-        byte[] buffer = new byte[ep.getMaxPacketSize()];
+        int packetSize = ep != null ? ep.getMaxPacketSize() : 64;
+        if (packetSize <= 0) packetSize = 64;
+        byte[] buffer = new byte[packetSize];
         StringBuilder track1 = new StringBuilder();
+        int consecutiveIdle = 0;
 
         while (reading) {
-            int received = connection.bulkTransfer(ep, buffer, buffer.length, 500);
+            UsbDeviceConnection conn = connection;
+            if (conn == null) {
+                break;
+            }
+
+            int received = -1;
+            try {
+                received = conn.bulkTransfer(ep, buffer, buffer.length, 500);
+            } catch (Exception e) {
+                Log.w(TAG, "Error en lectura MSR: " + e.getMessage());
+                received = -1;
+            }
+
             if (received > 0) {
+                consecutiveIdle = 0;
                 // Parsear datos de pista 1: formato %B[numero]^[apellido]/[nombre]^[datos]
                 for (int i = 0; i < received; i++) {
                     char c = (char)(buffer[i] & 0x7F);
@@ -125,6 +145,21 @@ public class MsrManager {
                         parseAndNotify(track1.toString());
                         track1.setLength(0);
                     }
+                }
+            } else {
+                consecutiveIdle++;
+                try {
+                    // Evitar bucle de alta intensidad (spin loop a 100% CPU).
+                    // Cuando no hay tarjeta pasando o bulkTransfer retorna de inmediato/timeout,
+                    // pausamos el hilo para liberar completamente los núcleos del procesador.
+                    if (consecutiveIdle > 10) {
+                        Thread.sleep(150);
+                    } else {
+                        Thread.sleep(30);
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
                 }
             }
         }
