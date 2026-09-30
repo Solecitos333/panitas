@@ -437,6 +437,18 @@ public class LocalCommandServer implements Runnable {
                     return "{\"ok\":true,\"scannerActive\":false}";
                 }
 
+                // --- HARDWARE: LECTOR DE BANDA MAGNETICA (MSR) ---
+                case "msrOn": {
+                    if (msrManager == null) return "{\"ok\":false,\"error\":\"MsrManager no inicializado\"}";
+                    boolean ok = msrManager.start();
+                    return "{\"ok\":" + ok + ",\"msrActive\":" + msrManager.isActive() + "}";
+                }
+
+                case "msrOff": {
+                    if (msrManager != null) msrManager.stop();
+                    return "{\"ok\":true,\"msrActive\":false}";
+                }
+
                 // --- HARDWARE: VISOR VFD ---
                 case "setVFD": {
                     if (vfdManager == null) return "{\"ok\":false,\"error\":\"VFD no inicializado\"}";

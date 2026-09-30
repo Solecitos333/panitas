@@ -1,10 +1,11 @@
 {
-  "versionName": "1.6.9",
-  "versionCode": 49,
+  "versionName": "1.6.10",
+  "versionCode": 50,
   "channel": "stable",
   "minimumSupportedVersionCode": 10,
   "mandatory": false,
   "releaseNotes": [
+    "Ahorro de recursos y energía: Desactivación por defecto del escáner láser y lector de banda magnética (MSR) para liberar 100% de puertos USB y ciclos de procesamiento innecesarios.",
     "Optimización de rendimiento y CPU: Eliminado bucle de alta intensidad en el controlador MSR, reduciendo el consumo de CPU de la terminal de 110% a <2% para eliminar la lentitud permanente.",
     "Menos trabajo al sincronizar el historial y buscar clientes; los saldos se actualizan al recibir cambios.",
     "Evita reconstruir pantallas y consultar periféricos durante el reposo; reduce cálculos repetidos del carrito.",

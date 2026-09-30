@@ -38,7 +38,7 @@ import {
   sendEscPosToPrinter, EscPosBuilder, checkEloNativeServer,
   calculateClientTotalDebt,
 
-  startEloScanner, stopEloScanner, setVFDMessage, clearVFD, vfdWelcome,
+  startEloScanner, stopEloScanner, startEloMsr, stopEloMsr, setVFDMessage, clearVFD, vfdWelcome,
   beepHardware, getHardwareStatus, checkPaperStatus, sendEloCommand,
   getEloUpdateStatus, checkEloAppUpdate, installEloAppUpdate, openEloUpdatePermission
 } from '../lib/hardware.js';
@@ -5589,9 +5589,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         }
 
         setVal('#diag-drawer-val', statusRes.drawerAvailable ? 'Lista por impresora' : 'No disponible', Boolean(statusRes.drawerAvailable));
-        setVal('#diag-scanner-val', statusRes.scannerAvailable ? (statusRes.scannerActive ? 'Activa' : 'Disponible · apagada') : 'No detectada', Boolean(statusRes.scannerAvailable));
+        setVal('#diag-scanner-val', statusRes.scannerAvailable ? (statusRes.scannerActive ? 'Activo' : 'Desactivado (Ahorro)') : 'No detectado', Boolean(statusRes.scannerActive));
         setVal('#diag-vfd-val', statusRes.vfdConnected ? 'Conectado' : 'No reportado', Boolean(statusRes.vfdConnected));
-        setVal('#diag-msr-val', statusRes.msrActive ? 'MagTek activo' : 'No disponible', Boolean(statusRes.msrActive));
+        setVal('#diag-msr-val', statusRes.msrActive ? 'MagTek activo' : 'Desactivado (Ahorro)', Boolean(statusRes.msrActive));
         setVal('#diag-model-val', `${statusRes.model || 'Terminal Android'} · Android ${statusRes.androidVersion || 'N/D'}`, null);
         setVal('#diag-ip-val', statusRes.wifiIp || 'No reportada', Boolean(statusRes.wifiIp));
         setAdbHint(statusRes);
@@ -5674,6 +5674,14 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           await stopEloScanner();
           state.scannerActive = false;
           toast('Escáner apagado.', 'info');
+          setTimeout(() => initTerminalDiag(), 400);
+        } else if (action === 'msrOn') {
+          await startEloMsr();
+          toast('Lector MSR activado.', 'success');
+          setTimeout(() => initTerminalDiag(), 400);
+        } else if (action === 'msrOff') {
+          await stopEloMsr();
+          toast('Lector MSR apagado.', 'info');
           setTimeout(() => initTerminalDiag(), 400);
         } else if (action === 'beepOk') {
           await beepHardware('ok');

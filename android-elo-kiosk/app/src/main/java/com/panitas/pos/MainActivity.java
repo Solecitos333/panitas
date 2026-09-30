@@ -193,11 +193,11 @@ public class MainActivity extends Activity {
             }
             android.util.Log.i("EloMain", "VFD " + (vfdOk ? "conectado." : "no disponible."));
 
-            // MSR (Lector de tarjetas)
+            // MSR (Lector de banda magnetica - apagado por defecto para maximo ahorro de recursos)
             msrManager = new MsrManager(this, webView);
-            boolean msrOk = msrManager.start();
+            msrManager.stop();
             commandServer.setMsrManager(msrManager);
-            android.util.Log.i("EloMain", "MSR " + (msrOk ? "activo." : "no disponible."));
+            android.util.Log.i("EloMain", "MSR apagado por defecto (ahorro de recursos).");
         }, "EloHardwareInit").start();
     }
 

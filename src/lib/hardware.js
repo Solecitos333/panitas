@@ -1687,6 +1687,26 @@ export async function stopEloScanner() {
   return res && res.ok === true;
 }
 
+// ─── LECTOR DE BANDA MAGNÉTICA (MSR) ────────────────────────────────────────
+
+/**
+ * Activa la lectura del lector de tarjetas magnéticas MSR.
+ * @returns {Promise<boolean>}
+ */
+export async function startEloMsr() {
+  const res = await sendEloCommand({ cmd: 'msrOn' }, 800);
+  return Boolean(res && res.ok);
+}
+
+/**
+ * Desactiva y suspende el hilo del lector de tarjetas magnéticas MSR.
+ * @returns {Promise<boolean>}
+ */
+export async function stopEloMsr() {
+  const res = await sendEloCommand({ cmd: 'msrOff' }, 800);
+  return Boolean(res && res.ok);
+}
+
 // ─── VISOR DE CARA AL CLIENTE (VFD / CFD) ───────────────────────────────────
 
 /**

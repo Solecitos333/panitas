@@ -67,6 +67,8 @@ export function renderTerminalDiag() {
         <button class="button secondary compact" data-diag-action="clearVfd"><i data-lucide="monitor"></i> Apagar visor</button>
         <button class="button secondary compact" data-diag-action="scannerOn"><i data-lucide="scan-barcode"></i> Activar escáner</button>
         <button class="button secondary compact" data-diag-action="scannerOff"><i data-lucide="barcode"></i> Apagar escáner</button>
+        <button class="button secondary compact" data-diag-action="msrOn"><i data-lucide="credit-card"></i> Activar MSR</button>
+        <button class="button secondary compact" data-diag-action="msrOff"><i data-lucide="credit-card"></i> Apagar MSR</button>
         <button class="button secondary compact" data-diag-action="beepOk"><i data-lucide="volume-2"></i> Beep Éxito</button>
         <button class="button secondary compact" data-diag-action="beepError"><i data-lucide="volume-2"></i> Beep Error</button>
         <button class="button secondary compact" data-diag-action="reconnectPrinter"><i data-lucide="refresh-cw"></i> Reconectar Impresora</button>

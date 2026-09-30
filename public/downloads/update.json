@@ -2,24 +2,25 @@
     "schemaVersion":  1,
     "channel":  "stable",
     "packageName":  "com.panitas.pos",
-    "versionCode":  49,
-    "versionName":  "1.6.9",
-    "publishedAt":  "2026-09-30T17:38:21Z",
+    "versionCode":  50,
+    "versionName":  "1.6.10",
+    "publishedAt":  "2026-09-30T17:57:22Z",
     "minimumSupportedVersionCode":  10,
     "mandatory":  false,
     "artifact":  {
-                     "url":  "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.6.9-code49.zip",
-                     "filename":  "LosPanitas-Elo-POS-v1.6.9-code49.zip",
-                     "size":  1696594,
-                     "sha256":  "5EC7E320A77C58A8A272E06F2327B97A3E9FF2C97D12A60B3CC50064E2B51822"
+                     "url":  "https://los-panitas-by-nechy.web.app/downloads/LosPanitas-Elo-POS-v1.6.10-code50.zip",
+                     "filename":  "LosPanitas-Elo-POS-v1.6.10-code50.zip",
+                     "size":  1696883,
+                     "sha256":  "145FEC584684FFF5396211686A2E9A978FB1F3027E173C2159A30991DC751509"
                  },
     "apk":  {
                 "entry":  "LosPanitas-Elo-POS.apk",
                 "size":  1701526,
-                "sha256":  "D64477EE7030C65743655BDE13402FFA6B5A703964B2F42CA93F300AE8ACEAF9",
+                "sha256":  "4E952F9D6B43DCA8A2ADEE093A3AAC3E8288ADFA97111AE69DC362A38617BD65",
                 "signingCertificateSha256":  "42DE27571244F0A23E533BF1C97D5D8587F4F12C3C34EA3209EDFBC67B8B3395"
             },
     "releaseNotes":  [
+                         "Ahorro de recursos y energía: Desactivación por defecto del escáner láser y lector de banda magnética (MSR) para liberar 100% de puertos USB y ciclos de procesamiento innecesarios.",
                          "Optimización de rendimiento y CPU: Eliminado bucle de alta intensidad en el controlador MSR, reduciendo el consumo de CPU de la terminal de 110% a \u003c2% para eliminar la lentitud permanente.",
                          "Menos trabajo al sincronizar el historial y buscar clientes; los saldos se actualizan al recibir cambios.",
                          "Evita reconstruir pantallas y consultar periféricos durante el reposo; reduce cálculos repetidos del carrito.",
