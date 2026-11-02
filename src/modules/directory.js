@@ -1803,3 +1803,56 @@ export function renderEndDayWasteModal(products = []) {
     </div>
   `;
 }
+
+export function renderNewScannedProductModal(draft = {}) {
+  const isFound = Boolean(draft.foundInApi);
+  return `
+    <div class="modal-backdrop" data-modal-close>
+      <form id="scanned-product-form" class="modal-card form-modal" style="max-width:440px;" data-modal-card>
+        <header>
+          <div>
+            <span class="eyebrow" style="color:var(--brand-2);"><i data-lucide="scan-barcode" style="width:13px;height:13px;vertical-align:-2px;display:inline-block;"></i> Registro al vuelo</span>
+            <h2 style="font-size:1.2rem;margin-top:2px;">Nuevo Producto Detectado</h2>
+          </div>
+          <button type="button" class="icon-button" data-modal-close title="Cerrar"><i data-lucide="x"></i></button>
+        </header>
+
+        <div class="stack-form" style="padding-top:4px;gap:12px;">
+          ${isFound ? `
+          <div style="background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.25);border-radius:10px;padding:8px 12px;font-size:0.8rem;color:#10b981;display:flex;align-items:center;gap:8px;">
+            <i data-lucide="check-circle" style="width:16px;height:16px;flex-shrink:0;"></i>
+            <span>Producto reconocido vía Open Food Facts</span>
+          </div>` : `
+          <div style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);border-radius:10px;padding:8px 12px;font-size:0.8rem;color:#f59e0b;display:flex;align-items:center;gap:8px;">
+            <i data-lucide="alert-triangle" style="width:16px;height:16px;flex-shrink:0;"></i>
+            <span>Código no registrado en catálogo. Completa los datos:</span>
+          </div>`}
+
+          <label>Código de barras (SKU)
+            <input type="text" name="sku" id="scanned-product-sku" value="${escapeHtml(draft.sku || '')}" readonly style="background:rgba(255,255,255,.05);color:#cbd5e1;font-weight:700;letter-spacing:1px;" tabindex="-1">
+          </label>
+
+          <label>Nombre del producto *
+            <input type="text" name="name" id="scanned-product-name" required value="${escapeHtml(draft.name || '')}" placeholder="Ej. Coca-Cola 20oz, Chocolate Cortés..." maxlength="160" style="font-size:1rem;font-weight:600;">
+          </label>
+
+          <div class="form-grid two">
+            <label>Precio de venta (RD$) *
+              <input type="number" step="any" min="0" name="price" id="scanned-product-price" required placeholder="0.00" value="${escapeHtml(draft.price || '')}" style="font-size:1.2rem;font-weight:800;color:var(--brand-2);" autocomplete="off">
+            </label>
+            <label>Categoría
+              <input type="text" name="category" id="scanned-product-category" value="${escapeHtml(draft.category || 'General')}" maxlength="80" placeholder="General, Bebidas, etc.">
+            </label>
+          </div>
+
+          <footer style="margin-top:6px;display:flex;justify-content:flex-end;gap:10px;">
+            <button type="button" class="button secondary" data-modal-close>Cancelar</button>
+            <button type="submit" class="button primary" id="btn-save-scanned-product" style="gap:6px;">
+              <i data-lucide="plus-circle"></i> Guardar y sumar a la orden
+            </button>
+          </footer>
+        </div>
+      </form>
+    </div>
+  `;
+}

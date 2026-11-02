@@ -478,6 +478,10 @@ export function renderPos(state) {
             <i data-lucide="search"></i>
             <input id="product-search" type="search" value="${escapeHtml(state.posSearch || '')}" placeholder="Buscar por nombre o escanear SKU/código..." autocomplete="off">
           </label>
+          <button type="button" class="button secondary compact" id="pos-test-barcode-btn" data-test-barcode="5449000000996" title="Probar escaneo (5449000000996 - Coca-Cola)" style="gap:4px;padding:6px 10px;font-size:0.76rem;white-space:nowrap;flex-shrink:0;">
+            <i data-lucide="scan-barcode" style="width:14px;height:14px;"></i>
+            <span>Test Escáner</span>
+          </button>
         </div>
         <div class="pos-category-bar">
           ${categories.map((cat) => {

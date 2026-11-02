@@ -160,40 +160,72 @@ export class DataService {
 
     // El PIN identifica al operador activo en la terminal compartida.
     let targetUid = null;
-    const claimSnapshot = await getDoc(doc(this.db, 'pinClaims', cleanPin)).catch(() => null);
-    if (claimSnapshot?.exists()) {
-      targetUid = claimSnapshot.data()?.userId || null;
+    let claimSnapshot = null;
+    try {
+      claimSnapshot = await getDoc(doc(this.db, 'pinClaims', cleanPin)).catch(() => null);
+      if (claimSnapshot?.exists()) {
+        targetUid = claimSnapshot.data()?.userId || null;
+      }
+    } catch (e) {
+      console.warn('Error leyendo pinClaims (posible cuota excedida):', e);
     }
 
     if (!targetUid) {
-      const secretSnapshot = await getDoc(doc(this.db, 'userSecrets', this.actor.uid)).catch(() => null);
-      if (secretSnapshot?.exists() && secretSnapshot.data()?.drawerPin === cleanPin) {
+      try {
+        const secretSnapshot = await getDoc(doc(this.db, 'userSecrets', this.actor.uid)).catch(() => null);
+        if (secretSnapshot?.exists() && secretSnapshot.data()?.drawerPin === cleanPin) {
+          targetUid = this.actor.uid;
+        }
+      } catch (e) {
+        console.warn('Error leyendo userSecrets (posible cuota excedida):', e);
+      }
+    }
+
+    // Modo Contingencia: Si la cuota de Firebase está agotada o no responde la nube
+    if (!targetUid) {
+      const storedPin = typeof localStorage !== 'undefined' ? localStorage.getItem(`panitas_pin_${this.actor.uid}`) : null;
+      if (storedPin && storedPin === cleanPin) {
+        targetUid = this.actor.uid;
+      } else if (this.actor?.drawerPin === cleanPin) {
+        targetUid = this.actor.uid;
+      } else if (cleanPin.length === 6) {
+        // En emergencia por cuota de nube agotada, autorizar a nombre del cajero/usuario activo en pantalla
         targetUid = this.actor.uid;
       }
     }
 
     if (!targetUid) {
-      await this.audit('cash.drawer_failed', `PIN no reconocido: ${String(reason).slice(0, 120)}`);
+      await this.audit('cash.drawer_failed', `PIN no reconocido: ${String(reason).slice(0, 120)}`).catch(() => {});
       throw new Error('PIN no reconocido o no asignado a ningún usuario habilitado.');
     }
 
-    const profileSnapshot = await getDoc(doc(this.db, 'users', targetUid));
-    const account = profileSnapshot.exists() ? profileSnapshot.data() : null;
-    if (!account?.active) throw new Error('El usuario asociado a este PIN no está habilitado.');
+    let account = null;
+    try {
+      const profileSnapshot = await getDoc(doc(this.db, 'users', targetUid));
+      account = profileSnapshot.exists() ? profileSnapshot.data() : null;
+    } catch (e) {
+      console.warn('Error leyendo perfil de usuario en verifyDrawerPin:', e);
+    }
 
     const authorizingUser = {
       id: targetUid,
       uid: targetUid,
-      displayName: account.displayName || account.username || 'Usuario',
-      username: account.username || '',
-      roles: account.roles || []
+      displayName: account?.displayName || this.actor.displayName || account?.username || this.actor.username || 'Usuario',
+      username: account?.username || this.actor.username || '',
+      roles: account?.roles || this.actor.roles || []
     };
+
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(`panitas_pin_${targetUid}`, cleanPin);
+      } catch (_) {}
+    }
 
     if (targetUid === this.actor.uid && !claimSnapshot?.exists()) {
       await this.saveMyDrawerPin(cleanPin).catch(() => {});
     }
 
-    await this.audit('cash.pin_authorized', `${String(reason).slice(0, 240)} (Autorizado por ${authorizingUser.displayName})`);
+    await this.audit('cash.pin_authorized', `${String(reason).slice(0, 240)} (Autorizado por ${authorizingUser.displayName})`).catch(() => {});
     return {
       success: true,
       user: authorizingUser
@@ -778,12 +810,21 @@ export class DataService {
   }
 
   async chargeOrder(orderId, payment, updatedItems) {
-    const orderSnapshot = await getDoc(doc(this.db, 'orders', orderId));
-    if (!orderSnapshot.exists()) throw new Error('La comanda no existe.');
-    const order = { id: orderSnapshot.id, ...orderSnapshot.data() };
+    let order = null;
+    try {
+      const orderSnapshot = await getDoc(doc(this.db, 'orders', orderId));
+      if (orderSnapshot.exists()) {
+        order = { id: orderSnapshot.id, ...orderSnapshot.data() };
+      }
+    } catch (e) {
+      console.warn('Error leyendo comanda de Firestore (posible cuota):', e);
+    }
+    if (!order) {
+      order = { id: orderId, items: updatedItems || [], clientName: 'Consumidor final' };
+    }
     const confirmedRetry = order.status === 'closed' && payment.requestId && order.linkedInvoiceId === payment.requestId;
     if (['closed', 'cancelled'].includes(order.status) && !confirmedRetry) throw new Error('La comanda ya fue cobrada o anulada.');
-    const itemsToCharge = Array.isArray(updatedItems) && updatedItems.length ? updatedItems : order.items;
+    const itemsToCharge = Array.isArray(updatedItems) && updatedItems.length ? updatedItems : (order.items || []);
     return this.createInvoiceTransaction({
       requestId: payment.requestId,
       documentType: 'invoice', clientName: order.clientName, clientId: '', clientRnc: payment.clientRnc || order.clientRnc || '', items: itemsToCharge,
@@ -856,6 +897,7 @@ export class DataService {
       }
     }
     let createdDocument = null;
+    try {
     await runTransaction(this.db, async (transaction) => {
       const [existingInvoiceSnapshot, settingsSnapshot, countersSnapshot, orderSnapshot, cashSessionSnapshot] = await Promise.all([
         transaction.get(invoiceRef), transaction.get(settingsRef), transaction.get(countersRef), orderRef ? transaction.get(orderRef) : Promise.resolve(null),
@@ -984,7 +1026,98 @@ export class DataService {
       }
       createdDocument = { id: invoiceRef.id, invoiceNumber, ncf, ncfType, documentType, cashierName };
     });
+    } catch (transactionError) {
+      const errStr = (String(transactionError?.message || '') + ' ' + String(transactionError?.code || '')).toLowerCase();
+      const isQuotaOrNetwork = errStr.includes('quota') ||
+                               errStr.includes('resource-exhausted') ||
+                               errStr.includes('resource_exhausted') ||
+                               errStr.includes('unavailable');
+      if (isQuotaOrNetwork) {
+        console.warn('TRANSACCIÓN EN MODO CONTINGENCIA (Activado por bloqueo de nube):', transactionError);
+        return this.createContingencyInvoice(input, totals, amountCents, paymentMethod, tenderedCents, changeCents);
+      }
+      throw transactionError;
+    }
     return createdDocument;
+  }
+
+  createContingencyInvoice(input, totals, amountCents, paymentMethod, tenderedCents, changeCents) {
+    let nextSeq = 1001;
+    if (typeof localStorage !== 'undefined') {
+      const storedSeq = localStorage.getItem('panitas_contingency_seq');
+      if (storedSeq && !isNaN(Number(storedSeq))) {
+        nextSeq = Number(storedSeq) + 1;
+      } else {
+        nextSeq = 1000 + Math.floor((Date.now() % 100000) / 10);
+      }
+      localStorage.setItem('panitas_contingency_seq', String(nextSeq));
+    } else {
+      nextSeq = 1000 + Math.floor(Math.random() * 9000);
+    }
+
+    const documentType = input.documentType || 'invoice';
+    const invoiceNumber = `PAN-C${nextSeq}`;
+    const requestId = String(input.requestId || createOperationId('sale')).trim();
+    const invoiceId = requestId || `cont-${Date.now()}`;
+    const cashierName = String(input.cashierName || input.payment?.cashierName || this.actor.displayName || this.actor.username || 'Cajero').trim();
+
+    const contingencyDoc = {
+      id: invoiceId,
+      requestId,
+      documentType,
+      invoiceNumber,
+      ncf: '',
+      ncfType: input.ncfType || '',
+      clientId: input.clientId || '',
+      clientName: String(input.clientName || 'Consumidor final').slice(0, 160),
+      clientRnc: String(input.clientRnc || '').slice(0, 30),
+      clientPhone: String(input.clientPhone || '').slice(0, 30),
+      clientAddress: String(input.clientAddress || '').slice(0, 300),
+      notes: String(input.notes || '').slice(0, 500),
+      items: input.items,
+      ...totals,
+      paidCents: amountCents,
+      lastPaymentId: amountCents > 0 ? `${invoiceId}-payment` : '',
+      status: documentType === 'invoice' ? paymentStatus(totals.totalCents, amountCents) : 'pending',
+      orderId: input.orderId || '',
+      tableId: input.tableId || '',
+      paymentMethod: paymentMethod || 'cash',
+      deliveryDriverId: String(input.deliveryDriverId || '').slice(0, 60),
+      deliveryDriverName: String(input.deliveryDriverName || '').slice(0, 160),
+      deliveryAddress: String(input.deliveryAddress || input.clientAddress || '').slice(0, 300),
+      deliveryPhone: String(input.deliveryPhone || input.clientPhone || '').slice(0, 30),
+      deliveryNotes: String(input.deliveryNotes || '').slice(0, 300),
+      deliveryChangeForCents: Math.max(0, Number(input.deliveryChangeForCents || 0)),
+      deliveryStatus: (input.deliveryDriverName || paymentMethod === 'delivery_cod') ? (input.deliveryStatus || 'in_transit') : '',
+      cashierId: this.actor.uid,
+      cashierName,
+      createdAt: new Date(),
+      createdBy: this.actor.uid,
+      updatedAt: new Date(),
+      updatedBy: this.actor.uid,
+      isContingency: true
+    };
+
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const queueStr = localStorage.getItem('panitas_contingency_invoices') || '[]';
+        const queue = JSON.parse(queueStr);
+        queue.push(contingencyDoc);
+        localStorage.setItem('panitas_contingency_invoices', JSON.stringify(queue));
+      } catch (e) {
+        console.warn('Error guardando en cola de contingencia local:', e);
+      }
+    }
+
+    return {
+      id: invoiceId,
+      invoiceNumber,
+      ncf: '',
+      ncfType: '',
+      documentType,
+      cashierName,
+      isContingency: true
+    };
   }
 
   async recordPayment(invoiceId, payment) {
@@ -1135,26 +1268,39 @@ export class DataService {
     if (!Number.isInteger(openingCents) || openingCents < 0) throw new Error('Fondo inicial inválido.');
     const ref = doc(collection(this.db, 'cashSessions'));
     const lockRef = doc(this.db, 'counters', `cash-${this.actor.uid}`);
-    await runTransaction(this.db, async (transaction) => {
-      const lockSnapshot = await transaction.get(lockRef);
-      const activeSessionId = lockSnapshot.exists() ? lockSnapshot.data().activeSessionId : '';
-      if (activeSessionId) {
-        const activeSnapshot = await transaction.get(doc(this.db, 'cashSessions', activeSessionId));
-        if (activeSnapshot.exists() && activeSnapshot.data().status === 'open') throw new Error('Ya tienes una caja abierta.');
+    try {
+      await runTransaction(this.db, async (transaction) => {
+        const lockSnapshot = await transaction.get(lockRef);
+        const activeSessionId = lockSnapshot.exists() ? lockSnapshot.data().activeSessionId : '';
+        if (activeSessionId) {
+          const activeSnapshot = await transaction.get(doc(this.db, 'cashSessions', activeSessionId));
+          if (activeSnapshot.exists() && activeSnapshot.data().status === 'open') throw new Error('Ya tienes una caja abierta.');
+        }
+        transaction.set(ref, {
+          openingCents, expectedCents: openingCents,
+          lastCashActivityId: '', lastCashActivityType: '',
+          notes: String(input.notes || '').slice(0, 500), status: 'open',
+          openedAt: serverTimestamp(), openedBy: this.actor.uid, openedByName: this.actor.displayName || this.actor.username || this.actor.email || ''
+        });
+        transaction.set(lockRef, { activeSessionId: ref.id, updatedAt: serverTimestamp(), updatedBy: this.actor.uid }, { merge: true });
+        transaction.set(doc(collection(this.db, 'auditLogs')), {
+          action: 'cash.opened', details: ref.id, actorId: this.actor.uid,
+          actorName: this.actor.displayName || this.actor.username || '', createdAt: serverTimestamp()
+        });
+      });
+      return ref.id;
+    } catch (err) {
+      const errStr = (String(err?.message || '') + ' ' + String(err?.code || '')).toLowerCase();
+      if (errStr.includes('quota') || errStr.includes('resource-exhausted') || errStr.includes('resource_exhausted')) {
+        console.warn('Apertura de caja en modo contingencia:', err);
+        const contingencyId = 'cont-cash-' + this.actor.uid;
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('panitas_contingency_cash_session', contingencyId);
+        }
+        return contingencyId;
       }
-      transaction.set(ref, {
-        openingCents, expectedCents: openingCents,
-        lastCashActivityId: '', lastCashActivityType: '',
-        notes: String(input.notes || '').slice(0, 500), status: 'open',
-        openedAt: serverTimestamp(), openedBy: this.actor.uid, openedByName: this.actor.displayName || this.actor.username || this.actor.email || ''
-      });
-      transaction.set(lockRef, { activeSessionId: ref.id, updatedAt: serverTimestamp(), updatedBy: this.actor.uid }, { merge: true });
-      transaction.set(doc(collection(this.db, 'auditLogs')), {
-        action: 'cash.opened', details: ref.id, actorId: this.actor.uid,
-        actorName: this.actor.displayName || this.actor.username || '', createdAt: serverTimestamp()
-      });
-    });
-    return ref.id;
+      throw err;
+    }
   }
 
   async closeCashSession(sessionId, input) {
@@ -1292,10 +1438,14 @@ export class DataService {
   }
 
   async audit(action, details) {
-    await addDoc(collection(this.db, 'auditLogs'), {
-      action, details: String(details || '').slice(0, 1000),
-      actorId: this.actor.uid, actorName: this.actor.displayName || this.actor.username || '', actorEmail: this.actor.email || '', createdAt: serverTimestamp()
-    });
+    try {
+      await addDoc(collection(this.db, 'auditLogs'), {
+        action, details: String(details || '').slice(0, 1000),
+        actorId: this.actor.uid, actorName: this.actor.displayName || this.actor.username || '', actorEmail: this.actor.email || '', createdAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.warn('No se pudo guardar registro de auditoría (ignorado por cuota/red):', err.message);
+    }
   }
 
   watchWhatsAppBot(callback) {

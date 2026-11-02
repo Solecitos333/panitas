@@ -18,7 +18,7 @@ import { exportReport, renderInvoiceModal, renderInvoices, renderReports } from 
 import { renderReceivables, renderFiaoPayModal, renderClientBulkPayModal, renderClientStatementModal } from '../modules/receivables.js';
 import { renderDeliveries, renderDriverFormModal, renderDeliverySettleModal, renderReassignDeliveryModal } from '../modules/deliveries.js';
 import { renderWhatsApp, bindWhatsAppEvents } from '../modules/whatsapp.js';
-import { renderClientForm, renderClients, renderProductForm, renderProducts, renderStockAdjustModal, renderEndDayWasteModal } from '../modules/directory.js';
+import { renderClientForm, renderClients, renderProductForm, renderProducts, renderStockAdjustModal, renderEndDayWasteModal, renderNewScannedProductModal } from '../modules/directory.js';
 import { getInventoryReason } from '../domain/inventory.js';
 import { renderPayroll, renderPayrollLockScreen, renderEmployeeFormModal, renderPayrollPaymentModal } from '../modules/payroll.js';
 import { calculatePayrollNetCents } from '../domain/payroll.js';
@@ -228,7 +228,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   }
 
   function update(key) { return (items, error) => {
-    if (error) toast(`No se pudo sincronizar ${key}.`, 'danger');
+    if (error) {
+      console.warn(`Error sincronizando ${key} (conservando datos locales): ${error.message || error}`);
+      return;
+    }
     state[key] = items;
     if (affectsCurrentView(state.route, key, state.modal)) requestLiveRender();
   }; }
@@ -389,6 +392,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       const inv = (state.invoices || []).find((i) => i.id === state.reassigningInvoiceId) || (state.lastSaleResult?.id === state.reassigningInvoiceId ? state.lastSaleResult : null);
       modalRoot.innerHTML = renderReassignDeliveryModal(inv, state.deliveryDrivers);
     }
+    else if (state.modal === 'newScannedProduct') {
+      modalRoot.innerHTML = renderNewScannedProductModal(state.scannedProductDraft || {});
+    }
     else if (state.modal === 'productOptions') {
       modalRoot.innerHTML = renderProductOptionPickerModal(state.optionPickerProduct, state.optionPickerItem, state.optionPickerCartIndex);
     }
@@ -430,6 +436,8 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     window.addEventListener('elo-scan', handleEloScanEvent);
     window.addEventListener('elo-msr', handleEloMsrEvent);
     window.addEventListener('elo-update-status', handleEloUpdateStatus);
+    window.removeEventListener('keydown', handleGlobalKeyDown, true);
+    window.addEventListener('keydown', handleGlobalKeyDown, true);
   }
 
   function handleEloScanEvent(event) {
@@ -453,29 +461,151 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     capturePosDraft();
   }
 
-  function handleBarcodeScan(rawCode) {
+  let scannerBuffer = '';
+  let lastKeyTime = 0;
+  let firstKeyTime = 0;
+
+  function handleGlobalKeyDown(event) {
+    if (state.sendingOrder) return;
+    if (event.ctrlKey || event.altKey || event.metaKey) return;
+    if (state.modal) return;
+
+    const now = Date.now();
+    const activeEl = document.activeElement;
+    const isInputOrTextarea = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable);
+    const isProductSearch = activeEl && activeEl.id === 'product-search';
+
+    if (event.key === 'Enter') {
+      const elapsed = now - firstKeyTime;
+      const bufferLen = scannerBuffer.length;
+      const avgInterval = bufferLen > 0 ? elapsed / bufferLen : 999;
+      const timeSinceLastKey = now - lastKeyTime;
+
+      // Ráfaga rápida del lector USB/HID (<65ms promedio por tecla)
+      const isScannerBurst = bufferLen >= 3 && timeSinceLastKey < 90 && (avgInterval <= 65 || (!isInputOrTextarea && avgInterval <= 110));
+
+      if (isScannerBurst) {
+        event.preventDefault();
+        event.stopPropagation();
+        const code = scannerBuffer.trim();
+        scannerBuffer = '';
+        lastKeyTime = 0;
+        firstKeyTime = 0;
+
+        if (isInputOrTextarea) {
+          if (isProductSearch) {
+            activeEl.value = '';
+            state.posSearch = '';
+            filterCards({ target: activeEl });
+          } else if (activeEl.value && activeEl.value.endsWith(code)) {
+            activeEl.value = activeEl.value.slice(0, -code.length);
+          }
+        }
+
+        if (code) {
+          handleBarcodeScan(code);
+        }
+        return;
+      }
+
+      scannerBuffer = '';
+      lastKeyTime = 0;
+      firstKeyTime = 0;
+      return;
+    }
+
+    if (event.key && event.key.length === 1) {
+      if (now - lastKeyTime > 65) {
+        scannerBuffer = event.key;
+        firstKeyTime = now;
+      } else {
+        scannerBuffer += event.key;
+      }
+      lastKeyTime = now;
+    }
+  }
+
+  async function handleBarcodeScan(rawCode) {
     if (state.sendingOrder) return toast('Espera a que termine de guardarse la comanda.', 'warning');
     const code = String(rawCode || '').trim();
     if (!code) return;
+
     const lowerCode = code.toLowerCase();
     const product = state.products.find(p =>
       p.active !== false && (
         (p.sku && p.sku.toLowerCase() === lowerCode) ||
+        (p.barcode && p.barcode.toLowerCase() === lowerCode) ||
         (p.id && p.id.toLowerCase() === lowerCode) ||
-        (p.name && p.name.toLowerCase() === lowerCode)
+        (p.name && p.name.toLowerCase() === lowerCode) ||
+        (Array.isArray(p.variants) && p.variants.some(v => (v.sku && v.sku.toLowerCase() === lowerCode) || (v.barcode && v.barcode.toLowerCase() === lowerCode)))
       )
     );
 
     if (product) {
+      if (state.route !== 'pos') route('pos');
       addProduct(product.id);
-      beepHardware('ok');
+      beepHardware('ok').catch(() => {});
       toast(`+1 ${product.name}`, 'success');
-      const totals = calculateDocument(state.cart);
+      const totals = calculateDocument(state.cart, state.posDiscountState);
       setVFDMessage(product.name.slice(0, 20), `TOT: ${formatMoney(totals.totalCents)}`);
-    } else {
-      beepHardware('error');
-      toast(`Código "${code}" no encontrado en catálogo.`, 'warning');
+      return;
     }
+
+    // Consulta de producto en Open Food Facts
+    beepHardware('error').catch(() => {});
+    toast(`Código "${code}" no registrado. Consultando Open Food Facts...`, 'info', 2000);
+
+    let suggestedName = '';
+    let category = 'General';
+    let foundInApi = false;
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const url = `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json`;
+      const response = await fetch(url, {
+        headers: { 'User-Agent': 'LosPanitasPOS/1.6.10 (terminal@lospanitas.app)' },
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.status === 1 && data.product) {
+          foundInApi = true;
+          const p = data.product;
+          const rawName = (p.product_name_es || p.product_name || p.generic_name_es || p.generic_name || '').trim();
+          const brand = (p.brands || p.brand_owner || '').trim();
+
+          if (brand && rawName) {
+            suggestedName = rawName.toLowerCase().includes(brand.toLowerCase()) ? rawName : `${brand} - ${rawName}`;
+          } else {
+            suggestedName = rawName || brand || '';
+          }
+
+          const catTags = (p.categories_tags || []).join(' ').toLowerCase();
+          if (catTags.includes('beverage') || catTags.includes('boisson') || catTags.includes('bebida') || catTags.includes('soda') || catTags.includes('juice') || catTags.includes('water')) {
+            category = 'Bebidas';
+          } else if (catTags.includes('snack') || catTags.includes('chip') || catTags.includes('piqueo')) {
+            category = 'Piqueos';
+          } else if (catTags.includes('dessert') || catTags.includes('postre') || catTags.includes('sweet') || catTags.includes('candy') || catTags.includes('chocolate')) {
+            category = 'Postres';
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Error consultando Open Food Facts:', err);
+    }
+
+    state.scannedProductDraft = {
+      sku: code,
+      name: suggestedName,
+      price: '',
+      category,
+      foundInApi
+    };
+    state.modal = 'newScannedProduct';
+    renderModal();
   }
 
   function bindContent() {
@@ -483,6 +613,10 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelectorAll('#main-content [data-route]').forEach((button)=>button.addEventListener('click',()=>route(button.dataset.route)));
     root.querySelector('[data-refresh]')?.addEventListener('click',()=>renderContent());
     root.querySelectorAll('[data-product-add]').forEach((button)=>button.addEventListener('click',()=>addProduct(button.dataset.productAdd)));
+    root.querySelector('[data-test-barcode]')?.addEventListener('click', (e) => {
+      const code = e.currentTarget.dataset.testBarcode || '5449000000996';
+      handleBarcodeScan(code);
+    });
     root.querySelectorAll('[data-mobile-period]').forEach((button) => button.addEventListener('click', () => {
       state.mobileReportPeriod = button.dataset.mobilePeriod;
       renderContent();
@@ -1915,6 +2049,94 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         }
       });
     }
+    // Formulario de Producto Escaneado (Open Food Facts / Registro al vuelo)
+    const scannedForm = modalRoot?.querySelector('#scanned-product-form');
+    if (scannedForm) {
+      const priceInput = scannedForm.querySelector('#scanned-product-price');
+      const nameInput = scannedForm.querySelector('#scanned-product-name');
+
+      setTimeout(() => {
+        if (state.scannedProductDraft?.name && priceInput) {
+          priceInput.focus();
+          priceInput.select();
+        } else if (nameInput) {
+          nameInput.focus();
+          nameInput.select();
+        }
+      }, 60);
+
+      nameInput?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          priceInput?.focus();
+          priceInput?.select();
+        }
+      });
+
+      scannedForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const f = new FormData(scannedForm);
+        const name = String(f.get('name') || '').trim();
+        if (!name) return toast('Ingresa el nombre del producto.', 'warning');
+        const sku = String(f.get('sku') || '').trim();
+        const priceVal = f.get('price');
+        let priceCents = 0;
+        try {
+          priceCents = toCents(priceVal);
+        } catch {
+          return toast('Indica un precio de venta válido.', 'warning');
+        }
+        if (priceCents <= 0) {
+          return toast('El precio debe ser mayor a 0.', 'warning');
+        }
+        const category = String(f.get('category') || 'General').trim() || 'General';
+
+        const submitBtn = scannedForm.querySelector('#btn-save-scanned-product');
+        if (submitBtn) submitBtn.disabled = true;
+
+        try {
+          const newProduct = {
+            name,
+            sku,
+            category,
+            priceCents,
+            costCents: 0,
+            taxRate: 0,
+            stock: 100,
+            active: true,
+            isPrepared: false,
+            inventoryType: 'resale',
+            minStock: 5,
+            hasVariants: false,
+            variants: [],
+            hasSides: false
+          };
+
+          let newId = null;
+          try {
+            newId = await perform(() => service.saveProduct(newProduct));
+          } catch (err) {
+            console.warn('Error guardando producto en Firestore (modo local):', err);
+            newId = 'local-prod-' + Date.now();
+          }
+
+          const createdProduct = { id: newId || ('local-prod-' + Date.now()), ...newProduct };
+          if (!state.products.some((p) => p.id === createdProduct.id)) {
+            state.products.push(createdProduct);
+          }
+
+          closeModal();
+          if (state.route !== 'pos') route('pos');
+          addProduct(createdProduct.id);
+          beepHardware('ok').catch(() => {});
+          toast(`"${name}" guardado y sumado a la orden.`, 'success');
+        } catch (err) {
+          toast(`Error guardando producto: ${err.message}`, 'danger');
+          if (submitBtn) submitBtn.disabled = false;
+        }
+      });
+    }
+
     // Formulario de Producto e Inventario
     const productForm = modalRoot?.querySelector('#product-form');
     if (productForm) {
@@ -4239,7 +4461,17 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         // Courier advances are explicit, audited Caja movements, never an
         // unconfirmed write after a completed dispatch or a silent drawer pulse.
       }, 0);
-      toast(isCredit ? `Fiao registrado a nombre de ${payload.clientName}.` : hasDelivery ? `Pedido delivery despachado con ${payload.deliveryDriverName || 'mensajero'}.` : 'Venta registrada correctamente.', 'success');
+      if (created?.isContingency) {
+        state.invoices.unshift(state.lastSaleResult);
+        toast(hasDelivery ? `¡Delivery despachado en Modo Contingencia! Se guardó localmente en la terminal y se imprimió el comprobante.` : '¡Venta registrada e impresa en Modo Contingencia local!', 'warning', 8000);
+      } else {
+        if (created?.isContingency) {
+        state.invoices.unshift(state.lastSaleResult);
+        toast(hasDelivery ? `¡Delivery despachado en Modo Contingencia! Se guardó localmente en la terminal y se imprimió el comprobante.` : '¡Venta registrada e impresa en Modo Contingencia local!', 'warning', 8000);
+      } else {
+        toast(isCredit ? `Fiao registrado a nombre de ${payload.clientName}.` : hasDelivery ? `Pedido delivery despachado con ${payload.deliveryDriverName || 'mensajero'}.` : 'Venta registrada correctamente.', 'success');
+      }
+      }
       return { ok: true, result: created };
     } catch (err) {
       console.error(err);
@@ -6690,6 +6922,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     window.removeEventListener('elo-scan',handleEloScanEvent);
     window.removeEventListener('elo-msr',handleEloMsrEvent);
     window.removeEventListener('elo-update-status',handleEloUpdateStatus);
+    window.removeEventListener('keydown',handleGlobalKeyDown,true);
     root.innerHTML='';
   }
   function guardOrderSave(event) {
