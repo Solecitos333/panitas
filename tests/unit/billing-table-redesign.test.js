@@ -10,7 +10,7 @@ test('Billing Table Redesign: formatTime devuelve la hora dominicana en formato 
   assert.match(time, /\d{1,2}:\d{2}\s*(p\.\s*m\.|a\.\s*m\.|PM|AM)/i);
 });
 
-test('Billing Table Redesign: renderInvoices incluye encabezados enriquecidos y filtro de canal', () => {
+test('Billing Table Redesign: renderInvoices incluye encabezados enriquecidos y filtro de canal sin emojis', () => {
   const html = renderInvoices({ invoices: [] });
 
   // Encabezados
@@ -28,6 +28,10 @@ test('Billing Table Redesign: renderInvoices incluye encabezados enriquecidos y 
   assert.ok(html.includes('value="table"'), 'Debe incluir opción Salón / Mesas');
   assert.ok(html.includes('value="takeout"'), 'Debe incluir opción Para llevar');
   assert.ok(html.includes('id="invoice-status-filter"'), 'Debe incluir filtro de estado');
+
+  // Sin emojis (profesional)
+  const emojiRegex = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}]/u;
+  assert.equal(emojiRegex.test(html), false, 'renderInvoices no debe contener emojis');
 });
 
 test('Billing Table Redesign: cada fila muestra hora, canal, productos, método de pago y acciones rápidas', () => {
@@ -86,4 +90,8 @@ test('Billing Table Redesign: cada fila muestra hora, canal, productos, método 
   assert.ok(html.includes('data-invoice-view="inv-test-101"'), 'Botón ver detalle');
   assert.ok(html.includes('data-invoice-edit="inv-test-101"'), 'Botón modificar pedido');
   assert.ok(html.includes('data-invoice-quick-print="inv-test-101"'), 'Botón reimprimir ticket');
+
+  // 7. Sin emojis en la fila
+  const emojiRegex = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}]/u;
+  assert.equal(emojiRegex.test(html), false, 'La fila de factura no debe contener emojis');
 });

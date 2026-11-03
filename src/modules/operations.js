@@ -1652,7 +1652,7 @@ export function renderProductSalesDetailModal(product) {
             <h4 style="margin:0;font-size:0.92rem;color:var(--text);display:flex;align-items:center;gap:6px;">
               <i data-lucide="user-check" style="width:16px;height:16px;color:var(--brand-2);"></i> Pedidos donde se vendió este artículo (${sales.length})
             </h4>
-            <input type="search" id="product-buyers-search" placeholder="🔍 Filtrar por cliente, dirección o factura..." style="padding:6px 12px;border-radius:8px;background:rgba(255,255,255,.06);border:1px solid var(--line);color:#fff;font-size:0.82rem;min-width:240px;">
+            <label class="search-field" style="margin:0;min-width:260px;"><i data-lucide="search"></i><input type="search" id="product-buyers-search" placeholder="Filtrar por cliente, dirección o factura..."></label>
           </div>
 
           <div class="table-scroll" style="border:1px solid rgba(255,255,255,.08);border-radius:10px;overflow:hidden;">
