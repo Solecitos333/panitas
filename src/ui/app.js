@@ -12,7 +12,7 @@ import { can, allowedNavigation, primaryRole } from '../domain/roles.js';
 import { calculateDocument, toCents, getPendingDeliveryInvoices } from '../domain/billing.js';
 import { orderPricing, editedOrderPricing } from '../domain/order-pricing.js';
 import { createClientMemorySelector, searchClientMemory, isDeliveryInvoice, invoiceBelongsToClient } from '../domain/client-memory.js';
-import { renderCartLines, renderCartTotals, renderDashboard, renderKds, renderOrderDrawer, renderPos, renderTables, renderTablePickerModal, renderProductOptionPickerModal } from '../modules/operations.js';
+import { renderCartLines, renderCartTotals, renderDashboard, renderKds, renderOrderDrawer, renderPos, renderTables, renderTablePickerModal, renderProductOptionPickerModal, renderProductSalesDetailModal, getDailyProductsBreakdown } from '../modules/operations.js';
 import { hasProductVariants, hasProductSides, calculateVariantLinePrice, formatLineName, VARIANT_TEMPLATES } from '../domain/catalog.js';
 import { exportReport, renderInvoiceModal, renderInvoices, renderReports, renderEditInvoiceModal } from '../modules/billing.js';
 import { renderReceivables, renderFiaoPayModal, renderClientBulkPayModal, renderClientStatementModal } from '../modules/receivables.js';
@@ -408,6 +408,9 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     else if (state.modal === 'productOptions') {
       modalRoot.innerHTML = renderProductOptionPickerModal(state.optionPickerProduct, state.optionPickerItem, state.optionPickerCartIndex);
     }
+    else if (state.modal === 'productSalesDetail') {
+      modalRoot.innerHTML = renderProductSalesDetailModal(state.selectedProductSalesDetail);
+    }
     else modalRoot.innerHTML = '';
     iconsRefresh(modalRoot); bindModal(); syncNativeUpdateState(); setupTouchNumericInputs(modalRoot);
   }
@@ -623,6 +626,28 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     root.querySelectorAll('#main-content [data-route]').forEach((button)=>button.addEventListener('click',()=>route(button.dataset.route)));
     root.querySelector('[data-refresh]')?.addEventListener('click',()=>renderContent());
     root.querySelectorAll('[data-product-add]').forEach((button)=>button.addEventListener('click',()=>addProduct(button.dataset.productAdd)));
+    root.querySelectorAll('[data-product-sales-detail]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const prodId = btn.dataset.productSalesDetail;
+        const today = businessDateKey(new Date());
+        const todayInvoices = (state.invoices || []).filter((item) => {
+          if (item.status === 'cancelled' || item.documentType !== 'invoice') return false;
+          const d = item.createdAt?.toDate ? item.createdAt.toDate() : new Date(item.createdAt || 0);
+          return businessDateKey(d) === today;
+        });
+        const breakdown = getDailyProductsBreakdown(todayInvoices, state.products);
+        const selected = breakdown.find(p => String(p.id) === String(prodId) || String(p.name) === String(prodId));
+        if (selected) {
+          state.selectedProductSalesDetail = selected;
+          state.modal = 'productSalesDetail';
+          renderModal();
+        }
+      });
+    });
+    root.querySelector('[data-toggle-daily-products]')?.addEventListener('click', () => {
+      state.showAllDailyProducts = !state.showAllDailyProducts;
+      renderContent();
+    });
     root.querySelector('[data-test-barcode]')?.addEventListener('click', (e) => {
       const code = e.currentTarget.dataset.testBarcode || '5449000000996';
       handleBarcodeScan(code);

@@ -1,4 +1,4 @@
-import { formatMoney, escapeHtml, formatDate } from '../lib/format.js';
+import { formatMoney, escapeHtml, formatDate, formatTime } from '../lib/format.js';
 import { calculateDocument, getPendingDeliveryInvoices } from '../domain/billing.js';
 import { businessDateKey, inBusinessPeriod } from '../lib/business-time.js';
 import { can } from '../domain/roles.js';
@@ -150,7 +150,7 @@ export function renderDashboard(state) {
             </div>
             <button type="button" class="text-button" data-route="invoices"><i data-lucide="arrow-up-right"></i> Ver facturas</button>
           </header>
-          ${renderDailyProductsList(todayProductsBreakdown.slice(0, 8))}
+          ${renderDailyProductsList(todayProductsBreakdown, state.showAllDailyProducts)}
         </article>
 
         <article class="surface-card">
@@ -1523,12 +1523,35 @@ export function getDailyProductsBreakdown(invoices = [], products = []) {
         category,
         isPrepared,
         quantity: 0,
-        totalCents: 0
+        totalCents: 0,
+        sales: []
       };
 
       const qty = Number(line.quantity || 0);
       existing.quantity += qty;
       existing.totalCents += Number(line.totalCents ?? (Number(line.unitPriceCents || 0) * qty));
+
+      existing.sales.push({
+        invoiceId: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        clientName: inv.clientName || 'Consumidor final',
+        clientPhone: inv.clientPhone || inv.deliveryPhone || '',
+        deliveryAddress: inv.deliveryAddress || '',
+        deliveryDriverName: inv.deliveryDriverName || '',
+        isDelivery: Boolean(inv.deliveryDriverName || inv.paymentMethod === 'delivery_cod' || inv.deliveryAddress),
+        tableName: inv.tableName || (inv.tableId ? `Mesa ${inv.tableId}` : ''),
+        createdAt: inv.createdAt,
+        quantity: qty,
+        unitPriceCents: Number(line.unitPriceCents || 0),
+        totalCents: Number(line.totalCents ?? (Number(line.unitPriceCents || 0) * qty)),
+        side: line.side || '',
+        notes: line.notes || '',
+        paymentMethod: inv.paymentMethod || 'cash',
+        paidCents: Number(inv.paidCents || 0),
+        invoiceTotalCents: Number(inv.totalCents || 0),
+        status: inv.status
+      });
+
       map.set(key, existing);
     });
   });
@@ -1536,7 +1559,7 @@ export function getDailyProductsBreakdown(invoices = [], products = []) {
   return [...map.values()].sort((a, b) => b.quantity - a.quantity || b.totalCents - a.totalCents);
 }
 
-function renderDailyProductsList(items = []) {
+function renderDailyProductsList(items = [], showAll = false) {
   if (!items.length) {
     return `<div class="empty-mini-list" style="padding:32px 16px;text-align:center;color:var(--muted);font-size:0.85rem;">
       <i data-lucide="utensils" style="width:28px;height:28px;margin:0 auto 10px;display:block;opacity:0.4;color:var(--brand-2);"></i>
@@ -1544,12 +1567,15 @@ function renderDailyProductsList(items = []) {
     </div>`;
   }
 
+  const visibleItems = showAll ? items : items.slice(0, 8);
   const maxQty = items.length ? Math.max(...items.map((i) => i.quantity || 1)) : 1;
+  const hasMore = items.length > 8;
+
   return `<div class="daily-products-mini-list" style="display:flex;flex-direction:column;gap:10px;padding:4px 0;">
-    ${items.map((item, index) => {
+    ${visibleItems.map((item, index) => {
       const pct = Math.max(8, Math.min(100, Math.round(((item.quantity || 0) / maxQty) * 100)));
       return `
-      <div class="daily-product-row" style="position:relative;overflow:hidden;padding:10px 14px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:12px;">
+      <button type="button" class="daily-product-row" data-product-sales-detail="${escapeHtml(item.id)}" title="Toca para ver a quién se le vendió ${escapeHtml(item.name)}" style="width:100%;cursor:pointer;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.02);text-align:left;position:relative;overflow:hidden;padding:10px 14px;border-radius:12px;display:block;font-family:inherit;">
         <div style="position:absolute;left:0;top:0;bottom:0;width:${pct}%;background:linear-gradient(90deg, rgba(245,158,11,0.09), rgba(245,158,11,0.01));pointer-events:none;z-index:0;"></div>
         <div style="position:relative;z-index:1;display:flex;justify-content:space-between;align-items:center;gap:12px;">
           <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1;">
@@ -1559,18 +1585,153 @@ function renderDailyProductsList(items = []) {
             </span>
             <div style="min-width:0;">
               <strong style="display:block;font-size:0.88rem;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(item.name)}</strong>
-              <small style="font-size:0.72rem;color:var(--muted);">${escapeHtml(item.category)}</small>
+              <small style="font-size:0.72rem;color:var(--muted);display:flex;align-items:center;gap:4px;margin-top:2px;">
+                <span>${escapeHtml(item.category)}</span>
+                <span>·</span>
+                <span style="color:var(--brand-2);font-weight:600;display:inline-flex;align-items:center;gap:2px;">
+                  Ver a quién se le vendió <i data-lucide="chevron-right" style="width:11px;height:11px;"></i>
+                </span>
+              </small>
             </div>
           </div>
           <div style="text-align:right;flex-shrink:0;">
-            <strong style="font-size:0.95rem;color:var(--brand-2);">${item.quantity} ${item.quantity === 1 ? 'ud' : 'uds'}</strong>
+            <strong style="font-size:0.95rem;color:var(--brand-2);display:block;">${item.quantity} ${item.quantity === 1 ? 'ud' : 'uds'}</strong>
             <small style="display:block;font-size:0.75rem;color:#cbd5e1;font-weight:600;">${formatMoney(item.totalCents)}</small>
           </div>
         </div>
-      </div>
+      </button>
     `;
     }).join('')}
+    ${hasMore ? `
+      <button type="button" class="button secondary compact" data-toggle-daily-products style="margin-top:6px;width:100%;font-size:0.8rem;gap:5px;justify-content:center;padding:8px;">
+        <i data-lucide="${showAll ? 'chevron-up' : 'chevron-down'}"></i>
+        ${showAll ? 'Mostrar solo los 8 más vendidos' : `Ver todos los ${items.length} productos vendidos hoy`}
+      </button>
+    ` : ''}
   </div>`;
+}
+
+export function renderProductSalesDetailModal(product) {
+  if (!product) return '';
+  const sales = product.sales || [];
+  const totalQty = product.quantity || 0;
+  const totalCents = product.totalCents || 0;
+
+  // Clientes únicos
+  const uniqueClients = new Set(sales.map(s => s.clientName || 'Consumidor final'));
+
+  return `
+    <div class="modal-backdrop" data-modal-close>
+      <article class="modal-card form-modal" style="max-width:780px;max-height:92vh;display:flex;flex-direction:column;" data-modal-card>
+        <header style="align-items:flex-start;padding:18px 22px;border-bottom:1px solid rgba(255,255,255,.08);">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">
+              <span class="eyebrow" style="color:var(--brand-2);font-size:0.75rem;">
+                <i data-lucide="shopping-bag" style="width:13px;height:13px;display:inline-block;vertical-align:-2px;"></i> Desglose Detallado de Ventas
+              </span>
+              <span style="font-size:0.68rem;padding:2px 7px;border-radius:6px;font-weight:750;${product.isPrepared ? 'background:rgba(16,185,129,.16);color:#34d399;border:1px solid rgba(16,185,129,.3);' : 'background:rgba(56,189,248,.15);color:#38bdf8;border:1px solid rgba(56,189,248,.3);'}">
+                ${product.isPrepared ? 'Cocina' : 'Stock'}
+              </span>
+              <span class="badge" style="font-size:0.7rem;background:rgba(255,255,255,.06);color:var(--muted);border-radius:6px;padding:2px 6px;">
+                ${escapeHtml(product.category || 'General')}
+              </span>
+            </div>
+            <h2 style="font-size:1.35rem;margin:0;color:#fff;">${escapeHtml(product.name)}</h2>
+            <div style="display:flex;gap:16px;margin-top:6px;font-size:0.83rem;flex-wrap:wrap;">
+              <span style="color:#cbd5e1;">Total vendido: <strong style="color:var(--brand-2);">${totalQty} ${totalQty === 1 ? 'unidad' : 'unidades'}</strong></span>
+              <span style="color:#cbd5e1;">Monto acumulado: <strong style="color:#82dba9;">${formatMoney(totalCents)}</strong></span>
+              <span style="color:var(--muted);"><i data-lucide="users" style="width:12px;height:12px;display:inline-block;vertical-align:-1px;"></i> ${uniqueClients.size} cliente(s) distinto(s)</span>
+              <span style="color:var(--muted);"><i data-lucide="receipt" style="width:12px;height:12px;display:inline-block;vertical-align:-1px;"></i> ${sales.length} factura(s)</span>
+            </div>
+          </div>
+          <button type="button" class="icon-button" data-modal-close aria-label="Cerrar"><i data-lucide="x"></i></button>
+        </header>
+
+        <div style="padding:16px 20px;overflow-y:auto;flex:1;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+            <h4 style="margin:0;font-size:0.92rem;color:var(--text);display:flex;align-items:center;gap:6px;">
+              <i data-lucide="user-check" style="width:16px;height:16px;color:var(--brand-2);"></i> Pedidos donde se vendió este artículo (${sales.length})
+            </h4>
+            <input type="search" id="product-buyers-search" placeholder="🔍 Filtrar por cliente, dirección o factura..." style="padding:6px 12px;border-radius:8px;background:rgba(255,255,255,.06);border:1px solid var(--line);color:#fff;font-size:0.82rem;min-width:240px;">
+          </div>
+
+          <div class="table-scroll" style="border:1px solid rgba(255,255,255,.08);border-radius:10px;overflow:hidden;">
+            <table style="width:100%;border-collapse:collapse;font-size:0.84rem;">
+              <thead>
+                <tr style="background:rgba(255,255,255,.04);border-bottom:1px solid var(--line);text-align:left;">
+                  <th style="padding:10px 12px;">Cliente / Destino</th>
+                  <th style="padding:10px 12px;">Canal</th>
+                  <th style="padding:10px 12px;">Hora</th>
+                  <th style="padding:10px 12px;text-align:center;">Cant.</th>
+                  <th style="padding:10px 12px;text-align:right;">Total</th>
+                  <th style="padding:10px 12px;">Factura / Pago</th>
+                  <th style="padding:10px 12px;text-align:center;">Acción</th>
+                </tr>
+              </thead>
+              <tbody id="product-buyers-tbody">
+                ${sales.length ? sales.map((sale) => {
+                  const timeStr = formatTime(sale.createdAt);
+                  const channel = sale.isDelivery ? { label: sale.deliveryDriverName ? `Delivery · ${sale.deliveryDriverName}` : 'Delivery', icon: 'bike', class: 'delivery' }
+                    : (sale.tableName ? { label: sale.tableName, icon: 'utensils', class: 'table' } : { label: 'Para llevar', icon: 'shopping-bag', class: 'takeout' });
+                  const searchBlob = `${sale.clientName} ${sale.deliveryAddress} ${sale.clientPhone} ${sale.invoiceNumber} ${sale.tableName} ${sale.deliveryDriverName} ${sale.notes}`.toLowerCase();
+
+                  return `
+                    <tr data-product-buyer-row data-buyer-search="${escapeHtml(searchBlob)}" style="border-bottom:1px solid rgba(255,255,255,.04);">
+                      <td style="padding:10px 12px;">
+                        <strong style="display:block;color:#f8fafc;font-size:0.86rem;">${escapeHtml(sale.clientName)}</strong>
+                        ${sale.deliveryAddress ? `<small style="display:block;color:var(--muted);font-size:0.74rem;margin-top:2px;" title="${escapeHtml(sale.deliveryAddress)}"><i data-lucide="map-pin" style="width:11px;height:11px;display:inline-block;vertical-align:-1px;color:#38bdf8;"></i> ${escapeHtml(sale.deliveryAddress)}</small>` : ''}
+                        ${sale.clientPhone ? `<small style="display:block;color:var(--muted);font-size:0.72rem;margin-top:1px;"><i data-lucide="phone" style="width:10px;height:10px;display:inline-block;vertical-align:-1px;"></i> ${escapeHtml(sale.clientPhone)}</small>` : ''}
+                        ${sale.side ? `<small style="display:block;color:var(--brand-2);font-size:0.74rem;margin-top:2px;">* Guarnición: ${escapeHtml(sale.side)}</small>` : ''}
+                        ${sale.notes ? `<small style="display:block;color:var(--muted);font-style:italic;font-size:0.72rem;margin-top:1px;">Nota: ${escapeHtml(sale.notes)}</small>` : ''}
+                      </td>
+                      <td style="padding:10px 12px;white-space:nowrap;">
+                        <span class="invoice-table-channel ${channel.class}" style="margin:0;">
+                          <i data-lucide="${channel.icon}" style="width:11px;height:11px;"></i>
+                          ${escapeHtml(channel.label)}
+                        </span>
+                      </td>
+                      <td style="padding:10px 12px;white-space:nowrap;">
+                        <span style="color:#cbd5e1;display:flex;align-items:center;gap:4px;font-size:0.8rem;">
+                          <i data-lucide="clock" style="width:12px;height:12px;color:var(--brand-2);"></i>
+                          ${timeStr || '—'}
+                        </span>
+                      </td>
+                      <td style="padding:10px 12px;text-align:center;">
+                        <strong style="color:var(--brand-2);font-size:0.92rem;">${sale.quantity}x</strong>
+                      </td>
+                      <td style="padding:10px 12px;text-align:right;white-space:nowrap;">
+                        <strong style="color:#f8fafc;font-size:0.88rem;">${formatMoney(sale.totalCents)}</strong>
+                        ${sale.quantity > 1 ? `<small style="display:block;color:var(--muted);font-size:0.7rem;">${formatMoney(sale.unitPriceCents)} c/u</small>` : ''}
+                      </td>
+                      <td style="padding:10px 12px;white-space:nowrap;">
+                        <strong style="display:block;font-size:0.8rem;color:#cbd5e1;">${escapeHtml(sale.invoiceNumber || 'Factura')}</strong>
+                        <small style="color:var(--muted);text-transform:capitalize;font-size:0.72rem;">${escapeHtml(sale.paymentMethod || 'Efectivo')}</small>
+                      </td>
+                      <td style="padding:10px 12px;text-align:center;white-space:nowrap;">
+                        <button type="button" class="button secondary compact" data-invoice-view="${escapeHtml(sale.invoiceId)}" style="font-size:0.75rem;padding:4px 8px;gap:4px;" title="Ver factura ${escapeHtml(sale.invoiceNumber)}">
+                          <i data-lucide="eye"></i> Ver
+                        </button>
+                      </td>
+                    </tr>
+                  `;
+                }).join('') : `
+                  <tr>
+                    <td colspan="7" style="padding:24px;text-align:center;color:var(--muted);">
+                      No se encontraron ventas registradas para este artículo hoy.
+                    </td>
+                  </tr>
+                `}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <footer class="modal-actions" style="padding:12px 20px;border-top:1px solid rgba(255,255,255,.08);display:flex;justify-content:flex-end;">
+          <button type="button" class="button secondary" data-modal-close>Cerrar</button>
+        </footer>
+      </article>
+    </div>
+  `;
 }
 
 export function renderTablePickerModal(tables = [], selectedTableId = '', orders = []) {
