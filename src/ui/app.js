@@ -6,7 +6,8 @@ import {
   Pencil, Percent, Phone, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, RotateCcw, Salad, Sandwich, Save, ScanBarcode,
   Search, Send, Settings, Sheet, ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, Sliders, SlidersHorizontal,
   Smartphone, Sparkles, Star, Timer, Trash2, TrendingDown, TrendingUp, Truck, Unlock, Usb, UserCheck, UserPlus, Users, UserX, Utensils, Volume2,
-  Wallet, WalletCards, Wheat, Wifi, WifiOff, Wrench, X, Zap
+  Wallet, WalletCards, Wheat, Wifi, WifiOff, Wrench, X, Zap,
+  AlertCircle, Brain, CheckCheck, CheckCircle, ChevronRight, Copy, DollarSign, FileEdit, HandCoins, Info, LayoutGrid, Loader, MapPin, MinusCircle, PhoneCall, PlusCircle, Scroll, SearchX, ShoppingBag, Table, User
 } from 'lucide';
 import { can, allowedNavigation, primaryRole } from '../domain/roles.js';
 import { calculateDocument, toCents, getPendingDeliveryInvoices } from '../domain/billing.js';
@@ -69,7 +70,8 @@ const icons = {
   Layers, LayoutDashboard, Lock, LogOut, Menu, MessageSquare, MessageSquarePlus, MessageSquareWarning, Minus, Monitor, Moon, Package, PackageMinus, PackageOpen, PackagePlus, PanelLeftClose, PanelLeftOpen,
   Pencil, Percent, Phone, Plus, Printer, QrCode, Radio, Receipt, ReceiptText, RefreshCw, RotateCcw, Salad, Sandwich, Save, ScanBarcode, Search, Send, Settings, Sheet,
   ShieldAlert, ShieldCheck, ShoppingBasket, ShoppingCart, Sliders, SlidersHorizontal, Smartphone, Sparkles, Star, Timer, Trash2, TrendingDown, TrendingUp, Truck, Unlock, Usb, UserCheck, UserPlus, Users, UserX,
-  Utensils, Volume2, Wallet, WalletCards, Wheat, Wifi, WifiOff, Wrench, X, Zap
+  Utensils, Volume2, Wallet, WalletCards, Wheat, Wifi, WifiOff, Wrench, X, Zap,
+  AlertCircle, Brain, CheckCheck, CheckCircle, ChevronRight, Copy, DollarSign, FileEdit, HandCoins, Info, LayoutGrid, Loader, MapPin, MinusCircle, PhoneCall, PlusCircle, Scroll, SearchX, ShoppingBag, Table, User
 };
 const refreshScopedIcons = createScopedIcons(icons);
 
