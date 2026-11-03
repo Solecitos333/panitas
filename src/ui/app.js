@@ -1514,7 +1514,29 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       }
     }));
     root.querySelectorAll('[data-invoice-view]').forEach((button)=>button.addEventListener('click',()=>openInvoice(button.dataset.invoiceView)));
+    root.querySelectorAll('[data-invoice-edit]').forEach((button) => {
+      button.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const invId = button.dataset.invoiceEdit;
+        if (invId) openEditInvoice(invId);
+      });
+    });
+    root.querySelectorAll('[data-invoice-quick-print]').forEach((button) => {
+      button.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const invId = button.dataset.invoiceQuickPrint;
+        if (invId) {
+          setBusy(button, true);
+          try {
+            await printInvoice(invId);
+          } finally {
+            setBusy(button, false);
+          }
+        }
+      });
+    });
     root.querySelector('#invoice-search')?.addEventListener('input',filterInvoiceRows);
+    root.querySelector('#invoice-channel-filter')?.addEventListener('change',filterInvoiceRows);
     root.querySelector('#invoice-status-filter')?.addEventListener('change',filterInvoiceRows);
     root.querySelector('[data-load-more-invoices]')?.addEventListener('click', () => {
       state.invoiceDisplayLimit = (state.invoiceDisplayLimit || 60) + 60;
@@ -7120,10 +7142,12 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
   function filterInvoiceRows(){
     const term = (root.querySelector('#invoice-search')?.value || '').trim();
     const status = root.querySelector('#invoice-status-filter')?.value || '';
+    const channel = root.querySelector('#invoice-channel-filter')?.value || '';
     root.querySelectorAll('[data-invoice-row]').forEach((item) => {
       const matchesTerm = !term || matchesFuzzy(term, item.dataset.search);
       const matchesStatus = !status || item.dataset.status === status;
-      item.hidden = !(matchesTerm && matchesStatus);
+      const matchesChannel = !channel || item.dataset.channel === channel;
+      item.hidden = !(matchesTerm && matchesStatus && matchesChannel);
     });
   }
   function updatePosFields(){

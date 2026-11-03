@@ -1,7 +1,8 @@
 import { businessDateKey } from '../lib/business-time.js';
 import { csvCell, calculateInvoiceModificationDiff } from '../domain/billing.js';
 import { renderPinPadHtml } from '../lib/pin-pad.js';
-import { downloadText, escapeHtml, formatDate, formatMoney } from '../lib/format.js';
+import { downloadText, escapeHtml, formatDate, formatTime, formatMoney } from '../lib/format.js';
+import { isDeliveryInvoice } from '../domain/client-memory.js';
 
 export function renderInvoices(state) {
   const limit = state.invoiceDisplayLimit || 60;
@@ -9,8 +10,8 @@ export function renderInvoices(state) {
   const hasMore = state.invoices.length > limit;
   return `
     <section class="panel-heading"><div><span class="eyebrow">Facturación</span><h2>Documentos y cobros</h2><p>Historial fiscal y balance pendiente.</p></div><button class="button primary" data-route="pos"><i data-lucide="plus"></i> Nuevo documento</button></section>
-    <section class="surface-card data-surface"><div class="toolbar"><label class="search-field"><i data-lucide="search"></i><input id="invoice-search" type="search" placeholder="Factura, cliente o NCF"></label><select id="invoice-status-filter"><option value="">Todos los estados</option><option value="pending">Pendientes</option><option value="partial">Parciales</option><option value="paid">Pagadas</option><option value="cancelled">Anuladas</option></select></div>
-      <div class="table-scroll"><table><thead><tr><th>Documento</th><th>Cliente</th><th>Fecha</th><th>Total</th><th>Balance</th><th>Estado</th><th></th></tr></thead><tbody id="invoice-table-body">${state.invoices.length ? visibleInvoices.map(invoiceRow).join('') : `<tr><td colspan="7">${empty('receipt', 'Sin documentos', 'Las ventas y cotizaciones aparecerán aquí.')}</td></tr>`}</tbody></table></div>
+    <section class="surface-card data-surface"><div class="toolbar"><label class="search-field"><i data-lucide="search"></i><input id="invoice-search" type="search" placeholder="Factura, cliente, plato, repartidor o NCF"></label><select id="invoice-channel-filter"><option value="">Todos los canales</option><option value="delivery">🛵 Delivery</option><option value="table">🍽️ Salón / Mesas</option><option value="takeout">🛍️ Para llevar</option></select><select id="invoice-status-filter"><option value="">Todos los estados</option><option value="pending">Pendientes</option><option value="partial">Parciales</option><option value="paid">Pagadas</option><option value="cancelled">Anuladas</option></select></div>
+      <div class="table-scroll"><table><thead><tr><th>Documento y Canal</th><th>Cliente / Destino</th><th>Fecha y Hora</th><th>Productos</th><th>Total y Pago</th><th>Estado</th><th style="text-align:center;">Acciones</th></tr></thead><tbody id="invoice-table-body">${state.invoices.length ? visibleInvoices.map(invoiceRow).join('') : `<tr><td colspan="7">${empty('receipt', 'Sin documentos', 'Las ventas y cotizaciones aparecerán aquí.')}</td></tr>`}</tbody></table></div>
       ${hasMore ? `<div style="text-align:center;padding:12px;border-top:1px solid var(--line);"><button type="button" class="button secondary compact" data-load-more-invoices style="font-size:0.85rem;"><i data-lucide="refresh-cw"></i> Ver más facturas (${visibleInvoices.length} de ${state.invoices.length})</button></div>` : ''}
     </section>`;
 }
@@ -23,7 +24,7 @@ export function renderInvoiceModal(invoice, payments, capabilities = {}) {
   const tipCents = Number(invoice.tipCents || 0);
   return `<div class="modal-backdrop" data-modal-close><article class="modal-card invoice-detail" role="dialog" aria-modal="true" aria-labelledby="invoice-title" data-modal-card>
     <header><div><span class="eyebrow">${documentLabel(invoice.documentType)}</span><h2 id="invoice-title">${escapeHtml(invoice.invoiceNumber)}</h2></div><button class="icon-button" data-modal-close aria-label="Cerrar"><i data-lucide="x"></i></button></header>
-    <div id="printable-invoice" class="print-document"><div class="print-brand"><img src="/logo.png" alt="Los Panitas"><div><h2>Los Panitas by Nechy</h2><p>${escapeHtml(invoice.invoiceNumber)}${invoice.ncf ? ` · NCF ${escapeHtml(invoice.ncf)}` : ''}</p></div></div><div class="invoice-parties"><div><span>Cliente</span><strong>${escapeHtml(invoice.clientName)}</strong>${invoice.clientRnc ? `<small style="display:block;color:#666;">RNC/Cédula: ${escapeHtml(invoice.clientRnc)}</small>` : ''}</div><div><span>Fecha</span><strong>${formatDate(invoice.createdAt)}</strong></div></div><table><thead><tr><th>Descripción</th><th>Cant.</th><th>Precio</th><th>Total</th></tr></thead><tbody>${invoice.items.map((item) => `<tr><td>${escapeHtml(item.name)}${item.notes ? `<small style="display:block;color:#777;">Nota: ${escapeHtml(item.notes)}</small>` : ''}</td><td>${item.quantity}</td><td>${formatMoney(item.unitPriceCents)}</td><td>${formatMoney(item.unitPriceCents * item.quantity)}</td></tr>`).join('')}</tbody></table><div class="invoice-totals"><p><span>Subtotal</span><b>${formatMoney(invoice.subtotalCents)}</b></p>${discountCents > 0 ? `<p style="color:#d9534f;"><span>Descuento</span><b>-${formatMoney(discountCents)}</b></p>` : ''}<p><span>ITBIS</span><b>${formatMoney(invoice.taxCents)}</b></p>${tipCents > 0 ? `<p><span>Propina Legal (10%)</span><b>${formatMoney(tipCents)}</b></p>` : ''}<p><span>Total</span><strong>${formatMoney(invoice.totalCents)}</strong></p><p><span>Pagado</span><b>${formatMoney(invoice.paidCents)}</b></p><p><span>Balance</span><strong>${formatMoney(balance)}</strong></p></div></div>
+    <div id="printable-invoice" class="print-document"><div class="print-brand"><img src="/logo.png" alt="Los Panitas"><div><h2>Los Panitas by Nechy</h2><p>${escapeHtml(invoice.invoiceNumber)}${invoice.ncf ? ` · NCF ${escapeHtml(invoice.ncf)}` : ''}</p></div></div><div class="invoice-parties"><div><span>Cliente</span><strong>${escapeHtml(invoice.clientName)}</strong>${invoice.clientRnc ? `<small style="display:block;color:#666;">RNC/Cédula: ${escapeHtml(invoice.clientRnc)}</small>` : ''}</div><div><span>Fecha y hora</span><strong>${formatDate(invoice.createdAt, true)}</strong>${invoice.cashierName ? `<small style="display:block;color:#888;margin-top:2px;">Cajero: ${escapeHtml(invoice.cashierName)}</small>` : ''}${invoice.revision && Number(invoice.revision) > 1 ? `<small style="display:block;color:var(--brand-2);font-weight:700;margin-top:2px;">Revisión: Rev. ${invoice.revision}</small>` : ''}</div></div><table><thead><tr><th>Descripción</th><th>Cant.</th><th>Precio</th><th>Total</th></tr></thead><tbody>${invoice.items.map((item) => `<tr><td>${escapeHtml(item.name)}${item.notes ? `<small style="display:block;color:#777;">Nota: ${escapeHtml(item.notes)}</small>` : ''}</td><td>${item.quantity}</td><td>${formatMoney(item.unitPriceCents)}</td><td>${formatMoney(item.unitPriceCents * item.quantity)}</td></tr>`).join('')}</tbody></table><div class="invoice-totals"><p><span>Subtotal</span><b>${formatMoney(invoice.subtotalCents)}</b></p>${discountCents > 0 ? `<p style="color:#d9534f;"><span>Descuento</span><b>-${formatMoney(discountCents)}</b></p>` : ''}<p><span>ITBIS</span><b>${formatMoney(invoice.taxCents)}</b></p>${tipCents > 0 ? `<p><span>Propina Legal (10%)</span><b>${formatMoney(tipCents)}</b></p>` : ''}<p><span>Total</span><strong>${formatMoney(invoice.totalCents)}</strong></p><p><span>Pagado</span><b>${formatMoney(invoice.paidCents)}</b></p><p><span>Balance</span><strong>${formatMoney(balance)}</strong></p></div></div>
     ${(invoice.deliveryDriverName || invoice.paymentMethod === 'delivery_cod' || invoice.deliveryStatus === 'in_transit') ? `
       <section class="invoice-delivery-info" style="margin:14px 0;padding:12px 16px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);border-radius:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
         <div>
@@ -323,7 +324,151 @@ export function buildDgii607Row(invoice, payments = [], clients = []) {
   ];
 }
 
-function invoiceRow(item) { const balance = Number(item.totalCents) - Number(item.paidCents || 0); return `<tr data-invoice-row data-search="${escapeHtml(`${item.invoiceNumber} ${item.clientName} ${item.ncf || ''}`.toLowerCase())}" data-status="${item.status}"><td><strong>${escapeHtml(item.invoiceNumber)}</strong><small>${documentLabel(item.documentType)}${item.ncf ? ` · ${escapeHtml(item.ncf)}` : ''}</small></td><td>${escapeHtml(item.clientName)}</td><td>${formatDate(item.createdAt)}</td><td>${formatMoney(item.totalCents)}</td><td>${formatMoney(balance)}</td><td><span class="document-status status-${item.status}">${statusLabel(item.status)}</span></td><td><button class="icon-button" data-invoice-view="${item.id}" aria-label="Ver documento"><i data-lucide="eye"></i></button></td></tr>`; }
+function getPaymentMethodInfo(method) {
+  const map = {
+    cash: { label: 'Efectivo', icon: 'banknote', badgeClass: 'cash' },
+    card: { label: 'Tarjeta', icon: 'credit-card', badgeClass: 'card' },
+    transfer: { label: 'Transferencia', icon: 'landmark', badgeClass: 'transfer' },
+    check: { label: 'Cheque', icon: 'file-text', badgeClass: 'transfer' },
+    credit: { label: 'Fiao / Crédito', icon: 'book-open', badgeClass: 'credit' },
+    delivery_cod: { label: 'Contra-entrega', icon: 'bike', badgeClass: 'cod' }
+  };
+  return map[method] || { label: method || 'Efectivo', icon: 'circle-dollar-sign', badgeClass: 'cash' };
+}
+
+function renderInvoiceItemsCell(items) {
+  if (!items || !items.length) {
+    return '<span style="color:var(--muted);font-style:italic;font-size:0.75rem;">Sin platos</span>';
+  }
+  const fullText = items.map(i => `${i.quantity}x ${i.name}${i.side ? ` (${i.side})` : ''}`).join('\n');
+  const preview = items.slice(0, 2);
+  const extra = items.length - preview.length;
+
+  return `
+    <div style="font-size:0.78rem;line-height:1.35;max-width:220px;" title="${escapeHtml(fullText)}">
+      ${preview.map(p => `
+        <div style="display:flex;align-items:baseline;gap:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+          <b style="color:var(--brand-2);font-size:0.74rem;flex-shrink:0;">${p.quantity}x</b>
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#cbd5e1;">${escapeHtml(p.name)}</span>
+        </div>
+      `).join('')}
+      ${extra > 0 ? `<small style="color:var(--muted);font-size:0.7rem;display:inline-block;margin-top:1px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:4px;">+${extra} más</small>` : ''}
+    </div>
+  `;
+}
+
+function invoiceRow(item) {
+  const balance = Number(item.totalCents) - Number(item.paidCents || 0);
+  const isMod = item.revision && Number(item.revision) > 1;
+  const isDel = isDeliveryInvoice(item);
+  const isTable = Boolean(item.tableName || item.tableId || item.orderId || item.posDestination === 'table');
+
+  let channelType = 'takeout';
+  let channelLabel = 'Para llevar';
+  let channelIcon = 'shopping-bag';
+
+  if (isDel) {
+    channelType = 'delivery';
+    channelLabel = item.deliveryDriverName ? `Delivery · ${item.deliveryDriverName}` : 'Delivery';
+    channelIcon = 'bike';
+  } else if (isTable) {
+    channelType = 'table';
+    channelLabel = item.tableName ? item.tableName : (item.tableId ? `Mesa ${item.tableId}` : 'Salón');
+    channelIcon = 'utensils';
+  }
+
+  const methodInfo = getPaymentMethodInfo(item.paymentMethod);
+  const items = Array.isArray(item.items) ? item.items : [];
+  const address = item.deliveryAddress || item.clientAddress || '';
+  const phone = item.deliveryPhone || item.clientPhone || '';
+  const dateStr = formatDate(item.createdAt);
+  const timeStr = formatTime(item.createdAt);
+
+  const searchBlob = `${item.invoiceNumber} ${item.clientName} ${item.ncf || ''} ${item.deliveryDriverName || ''} ${address} ${phone} ${item.cashierName || ''} ${channelLabel} ${methodInfo.label} ${items.map(i => i.name).join(' ')}`.toLowerCase();
+
+  return `
+    <tr data-invoice-row data-search="${escapeHtml(searchBlob)}" data-status="${item.status}" data-channel="${channelType}">
+      <!-- 1. Documento y Canal -->
+      <td>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <strong>${escapeHtml(item.invoiceNumber)}</strong>
+          ${isMod ? `<span class="badge" style="font-size:0.65rem;padding:1px 5px;background:rgba(239,189,105,.2);color:var(--brand-2);border-radius:4px;border:1px solid rgba(239,189,105,.35);font-weight:700;">Rev. ${item.revision}</span>` : ''}
+        </div>
+        <small style="color:var(--muted);margin-top:2px;">${documentLabel(item.documentType)}${item.ncf ? ` · ${escapeHtml(item.ncf)}` : ''}</small>
+        <span class="invoice-table-channel ${channelType}">
+          <i data-lucide="${channelIcon}" style="width:12px;height:12px;"></i>
+          ${escapeHtml(channelLabel)}
+        </span>
+      </td>
+
+      <!-- 2. Cliente y Destino -->
+      <td>
+        <strong style="color:#f8fafc;font-size:0.85rem;">${escapeHtml(item.clientName || 'Consumidor final')}</strong>
+        ${address ? `<small style="color:var(--muted);display:flex;align-items:center;gap:4px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px;" title="${escapeHtml(address)}"><i data-lucide="map-pin" style="width:11px;height:11px;flex-shrink:0;color:#38bdf8;"></i> ${escapeHtml(address)}</small>` : ''}
+        ${phone ? `<small style="color:var(--muted);display:flex;align-items:center;gap:4px;margin-top:2px;"><i data-lucide="phone" style="width:11px;height:11px;flex-shrink:0;"></i> ${escapeHtml(phone)}</small>` : ''}
+        ${item.clientRnc ? `<small style="color:var(--muted);margin-top:2px;">RNC: ${escapeHtml(item.clientRnc)}</small>` : ''}
+      </td>
+
+      <!-- 3. Fecha y Hora -->
+      <td>
+        <strong style="display:block;white-space:nowrap;font-size:0.82rem;color:#f8fafc;">${dateStr}</strong>
+        <small style="color:var(--brand-2);display:flex;align-items:center;gap:4px;white-space:nowrap;font-size:0.75rem;font-weight:600;margin-top:3px;">
+          <i data-lucide="clock" style="width:12px;height:12px;"></i> ${timeStr || '—'}
+        </small>
+      </td>
+
+      <!-- 4. Resumen de Productos -->
+      <td>
+        ${renderInvoiceItemsCell(items)}
+      </td>
+
+      <!-- 5. Total y Pago -->
+      <td>
+        <strong style="font-size:0.9rem;color:#f8fafc;display:block;">${formatMoney(item.totalCents)}</strong>
+        <span class="invoice-pay-badge ${methodInfo.badgeClass}">
+          <i data-lucide="${methodInfo.icon}" style="width:11px;height:11px;"></i>
+          ${methodInfo.label}
+        </span>
+        ${balance > 0 ? `
+          <small style="color:#f59e0b;display:flex;align-items:center;gap:3px;font-size:0.72rem;margin-top:3px;">
+            <i data-lucide="alert-circle" style="width:10px;height:10px;"></i> Debe: <strong>${formatMoney(balance)}</strong>
+          </small>
+        ` : `
+          <small style="color:#82dba9;display:flex;align-items:center;gap:3px;font-size:0.72rem;margin-top:3px;">
+            <i data-lucide="check-circle-2" style="width:10px;height:10px;"></i> Cobrado
+          </small>
+        `}
+        ${item.cashierName ? `
+          <small style="color:var(--muted);display:flex;align-items:center;gap:3px;font-size:0.7rem;margin-top:2px;">
+            <i data-lucide="user" style="width:10px;height:10px;"></i> ${escapeHtml(item.cashierName)}
+          </small>
+        ` : ''}
+      </td>
+
+      <!-- 6. Estado -->
+      <td>
+        <span class="document-status status-${item.status}">${statusLabel(item.status)}</span>
+      </td>
+
+      <!-- 7. Acciones -->
+      <td>
+        <div class="invoice-actions-cell">
+          <button type="button" class="icon-button" data-invoice-view="${item.id}" title="Ver detalle completo" aria-label="Ver documento">
+            <i data-lucide="eye"></i>
+          </button>
+          ${item.status !== 'cancelled' ? `
+            <button type="button" class="icon-button" data-invoice-edit="${item.id}" title="Modificar pedido (con PIN)" aria-label="Modificar pedido" style="color:var(--brand-2);">
+              <i data-lucide="file-edit"></i>
+            </button>
+          ` : ''}
+          <button type="button" class="icon-button" data-invoice-quick-print="${item.id}" title="Reimprimir ticket térmico" aria-label="Reimprimir ticket">
+            <i data-lucide="printer"></i>
+          </button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
 function documentLabel(type) { return ({ invoice: 'Factura', quote: 'Cotización', proforma: 'Proforma' })[type] || 'Documento'; }
 function statusLabel(status) { return ({ pending:'Pendiente', partial:'Parcial', paid:'Pagada', cancelled:'Anulada', converted:'Convertida' })[status] || status; }
 function paymentLabel(method) { return ({ cash:'Efectivo',card:'Tarjeta',transfer:'Transferencia',check:'Cheque',credit:'Crédito' })[method] || method; }

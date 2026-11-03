@@ -7,12 +7,25 @@ const dateFormatter = new Intl.DateTimeFormat('es-DO', dateOptions);
 const dateTimeFormatter = new Intl.DateTimeFormat('es-DO', {
   ...dateOptions, hour: '2-digit', minute: '2-digit', second: '2-digit'
 });
+const timeFormatter = new Intl.DateTimeFormat('es-DO', {
+  timeZone: BUSINESS_TIME_ZONE,
+  hour: 'numeric',
+  minute: '2-digit',
+  hour12: true
+});
 
 export function formatDate(value, withTime = false) {
   if (!value) return 'Pendiente';
   const date = typeof value.toDate === 'function' ? value.toDate() : new Date(value);
   if (Number.isNaN(date.getTime())) return 'Pendiente';
   return (withTime ? dateTimeFormatter : dateFormatter).format(date);
+}
+
+export function formatTime(value) {
+  if (!value) return '';
+  const date = typeof value?.toDate === 'function' ? value.toDate() : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return timeFormatter.format(date);
 }
 export function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
