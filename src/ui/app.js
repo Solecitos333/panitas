@@ -2114,13 +2114,16 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 
           let newId = null;
           try {
-            newId = await perform(() => service.saveProduct(newProduct));
+            newId = await service.saveProduct(newProduct);
           } catch (err) {
             console.warn('Error guardando producto en Firestore (modo local):', err);
             newId = 'local-prod-' + Date.now();
           }
+          if (typeof newId !== 'string' || !newId) {
+            newId = 'local-prod-' + Date.now();
+          }
 
-          const createdProduct = { id: newId || ('local-prod-' + Date.now()), ...newProduct };
+          const createdProduct = { id: newId, ...newProduct };
           if (!state.products.some((p) => p.id === createdProduct.id)) {
             state.products.push(createdProduct);
           }
@@ -4465,12 +4468,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
         state.invoices.unshift(state.lastSaleResult);
         toast(hasDelivery ? `¡Delivery despachado en Modo Contingencia! Se guardó localmente en la terminal y se imprimió el comprobante.` : '¡Venta registrada e impresa en Modo Contingencia local!', 'warning', 8000);
       } else {
-        if (created?.isContingency) {
-        state.invoices.unshift(state.lastSaleResult);
-        toast(hasDelivery ? `¡Delivery despachado en Modo Contingencia! Se guardó localmente en la terminal y se imprimió el comprobante.` : '¡Venta registrada e impresa en Modo Contingencia local!', 'warning', 8000);
-      } else {
         toast(isCredit ? `Fiao registrado a nombre de ${payload.clientName}.` : hasDelivery ? `Pedido delivery despachado con ${payload.deliveryDriverName || 'mensajero'}.` : 'Venta registrada correctamente.', 'success');
-      }
       }
       return { ok: true, result: created };
     } catch (err) {
