@@ -660,6 +660,15 @@ function orderCard(inv, viewMode) {
         <button
           type="button"
           class="button secondary compact"
+          data-delivery-invoice-edit="${escapeHtml(inv.id)}"
+          title="Modificar productos o forma de pago"
+          style="font-size:0.8rem;padding:6px 10px;gap:5px;"
+        >
+          <i data-lucide="file-edit"></i> Editar Pedido
+        </button>
+        <button
+          type="button"
+          class="button secondary compact"
           data-delivery-reassign="${escapeHtml(inv.id)}"
           title="Cambiar o reasignar repartidor"
           style="font-size:0.8rem;padding:6px 10px;gap:5px;"

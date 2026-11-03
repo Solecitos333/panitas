@@ -14,7 +14,7 @@ import { orderPricing, editedOrderPricing } from '../domain/order-pricing.js';
 import { createClientMemorySelector, searchClientMemory, isDeliveryInvoice, invoiceBelongsToClient } from '../domain/client-memory.js';
 import { renderCartLines, renderCartTotals, renderDashboard, renderKds, renderOrderDrawer, renderPos, renderTables, renderTablePickerModal, renderProductOptionPickerModal } from '../modules/operations.js';
 import { hasProductVariants, hasProductSides, calculateVariantLinePrice, formatLineName, VARIANT_TEMPLATES } from '../domain/catalog.js';
-import { exportReport, renderInvoiceModal, renderInvoices, renderReports } from '../modules/billing.js';
+import { exportReport, renderInvoiceModal, renderInvoices, renderReports, renderEditInvoiceModal } from '../modules/billing.js';
 import { renderReceivables, renderFiaoPayModal, renderClientBulkPayModal, renderClientStatementModal } from '../modules/receivables.js';
 import { renderDeliveries, renderDriverFormModal, renderDeliverySettleModal, renderReassignDeliveryModal } from '../modules/deliveries.js';
 import { renderWhatsApp, bindWhatsAppEvents } from '../modules/whatsapp.js';
@@ -123,6 +123,7 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     loadedOrderId: '', loadedTableId: '', loadedOrderRevision: null, sendingOrder: false,
     hardwareStatus: null, updateStatus: getEloUpdateStatus(), scannerActive: false, checkoutOpening: false, saleInProgress: false, pendingLiveRender: false, pendingPinDestination: '', mobileReportPeriod: 'day', posDiscountState: { discount: 0, discountType: 'amount', includeLegalTip: false }, posDraft: {}, posSearch: '', posCategory: 'Todos', posPaymentMethod: 'cash',
     sidebarCollapsed: typeof localStorage !== 'undefined' && localStorage.getItem('panitas_sidebar_collapsed') === '1',
+    editingInvoice: null, editingInvoiceDraft: null,
     products: [], clients: [], tables: [], orders: [], invoices: [], payments: [], cashSessions: [], cashMovements: [], users: [], auditLogs: [], deliveryDrivers: [], selectedDeliveryDriver: null, selectedDeliveryInvoices: [], editingDriver: null, reassigningInvoiceId: '', whatsappBot: null, development,
     auditCategoryFilter: 'all', auditTimeFilter: 'all', auditSearchTerm: '', auditDisplayLimit: 50,
     deliveriesTab: 'active', deliveriesViewMode: 'drivers', deliveriesDriverFilter: 'all', deliveriesSearch: '', deliveriesSort: 'time_asc', deliveriesExpandedDrivers: {}, deliveriesAllExpanded: null,
@@ -391,6 +392,15 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
     else if (state.modal === 'reassignDelivery') {
       const inv = (state.invoices || []).find((i) => i.id === state.reassigningInvoiceId) || (state.lastSaleResult?.id === state.reassigningInvoiceId ? state.lastSaleResult : null);
       modalRoot.innerHTML = renderReassignDeliveryModal(inv, state.deliveryDrivers);
+    }
+    else if (state.modal === 'editInvoice') {
+      const inv = state.editingInvoice || (state.invoices || []).find((i) => i.id === state.selectedInvoiceId) || (state.lastSaleResult?.id === state.selectedInvoiceId ? state.lastSaleResult : null);
+      modalRoot.innerHTML = renderEditInvoiceModal({
+        invoice: inv,
+        products: state.products,
+        deliveryDrivers: state.deliveryDrivers,
+        draft: state.editingInvoiceDraft
+      });
     }
     else if (state.modal === 'newScannedProduct') {
       modalRoot.innerHTML = renderNewScannedProductModal(state.scannedProductDraft || {});
@@ -1386,6 +1396,12 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
       root.querySelectorAll('[data-delivery-order-item]').forEach((item) => {
         const search = item.dataset.search || '';
         item.hidden = q ? !matchesFuzzy(q, search) : false;
+      });
+    });
+    root.querySelectorAll('[data-delivery-invoice-edit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const invId = btn.dataset.deliveryInvoiceEdit;
+        if (invId) openEditInvoice(invId);
       });
     });
     root.querySelectorAll('[data-delivery-invoice-view]').forEach((btn) => {
@@ -3858,6 +3874,215 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
           state.saleInProgress = false;
           setBusy(button, false);
           if (!destroyed && !state.modal) renderContent();
+        }
+      });
+    }
+  
+    // Botón de Modificar Pedido desde detalle de factura
+    modalRoot?.querySelectorAll('[data-invoice-edit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const invId = btn.dataset.invoiceEdit || state.selectedInvoiceId;
+        if (invId) openEditInvoice(invId);
+      });
+    });
+
+    // Formulario de Edición de Pedido / Factura
+    const editInvForm = modalRoot?.querySelector('#edit-invoice-form');
+    if (editInvForm) {
+      const pinInput = editInvForm.querySelector('#edit-inv-pin-input');
+      const errBox = editInvForm.querySelector('#edit-inv-pin-error');
+      const submitBtn = editInvForm.querySelector('#edit-inv-submit-btn');
+
+      disposePinPad = bindPinPad({
+        form: editInvForm,
+        input: pinInput,
+        slots: [...editInvForm.querySelectorAll('#edit-inv-pin-slots .pin-slot')],
+        digits: [...editInvForm.querySelectorAll('.pin-num-btn')],
+        clear: editInvForm.querySelector('#edit-inv-pin-clear'),
+        backspace: editInvForm.querySelector('#edit-inv-pin-del'),
+        submit: submitBtn,
+        error: errBox,
+        isBusy: () => state.saleInProgress
+      });
+
+      // Modificar cantidad (-)
+      editInvForm.querySelectorAll('[data-edit-inv-qty-dec]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const idx = Number(btn.dataset.editInvQtyDec);
+          if (!state.editingInvoiceDraft?.items?.[idx]) return;
+          const current = Number(state.editingInvoiceDraft.items[idx].quantity || 1);
+          if (current <= 1) {
+            state.editingInvoiceDraft.items.splice(idx, 1);
+          } else {
+            state.editingInvoiceDraft.items[idx].quantity = current - 1;
+          }
+          renderModal();
+        });
+      });
+
+      // Modificar cantidad (+)
+      editInvForm.querySelectorAll('[data-edit-inv-qty-inc]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const idx = Number(btn.dataset.editInvQtyInc);
+          if (!state.editingInvoiceDraft?.items?.[idx]) return;
+          state.editingInvoiceDraft.items[idx].quantity = Number(state.editingInvoiceDraft.items[idx].quantity || 1) + 1;
+          renderModal();
+        });
+      });
+
+      // Eliminar producto
+      editInvForm.querySelectorAll('[data-edit-inv-del]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const idx = Number(btn.dataset.editInvDel);
+          if (!state.editingInvoiceDraft?.items?.[idx]) return;
+          state.editingInvoiceDraft.items.splice(idx, 1);
+          renderModal();
+        });
+      });
+
+      // Agregar producto seleccionado
+      const addSelect = editInvForm.querySelector('#edit-inv-add-product-select');
+      const addBtn = editInvForm.querySelector('#edit-inv-add-product-btn');
+      addBtn?.addEventListener('click', () => {
+        const prodId = addSelect?.value;
+        if (!prodId) return toast('Elige un producto para agregar.', 'warning');
+        const prod = (state.products || []).find((p) => p.id === prodId);
+        if (!prod) return;
+        const existing = (state.editingInvoiceDraft.items || []).find((i) => i.productId === prod.id && !i.side && !i.notes);
+        if (existing) {
+          existing.quantity = Number(existing.quantity || 1) + 1;
+        } else {
+          state.editingInvoiceDraft.items.push({
+            productId: prod.id,
+            name: prod.name,
+            quantity: 1,
+            unitPriceCents: Number(prod.priceCents || 0),
+            taxRate: Number(prod.taxRate || 0)
+          });
+        }
+        renderModal();
+      });
+
+      // Cambio de método de pago
+      const methodSelect = editInvForm.querySelector('#edit-inv-payment-method');
+      methodSelect?.addEventListener('change', () => {
+        if (!state.editingInvoiceDraft) return;
+        state.editingInvoiceDraft.paymentMethod = methodSelect.value;
+        const refContainer = editInvForm.querySelector('#edit-inv-ref-container');
+        const settleNotice = editInvForm.querySelector('#edit-inv-settle-notice');
+        if (refContainer) refContainer.style.display = ['transfer', 'card'].includes(methodSelect.value) ? 'block' : 'none';
+        if (settleNotice) settleNotice.style.display = methodSelect.value === 'transfer' ? 'flex' : 'none';
+      });
+
+      // Cambio de repartidor
+      const driverSelect = editInvForm.querySelector('#edit-inv-driver-select');
+      const driverNameInput = editInvForm.querySelector('#edit-inv-driver-name');
+      driverSelect?.addEventListener('change', () => {
+        if (!state.editingInvoiceDraft) return;
+        const selOpt = driverSelect.options[driverSelect.selectedIndex];
+        state.editingInvoiceDraft.deliveryDriverId = driverSelect.value;
+        state.editingInvoiceDraft.deliveryDriverName = selOpt?.dataset?.name || '';
+        if (driverNameInput) driverNameInput.value = state.editingInvoiceDraft.deliveryDriverName;
+      });
+
+      // Preset de motivo
+      const presetSelect = editInvForm.querySelector('#edit-inv-reason-preset');
+      const reasonInput = editInvForm.querySelector('#edit-inv-reason');
+      presetSelect?.addEventListener('change', () => {
+        if (presetSelect.value && reasonInput) {
+          reasonInput.value = presetSelect.value;
+          state.editingInvoiceDraft.reason = presetSelect.value;
+        }
+      });
+      reasonInput?.addEventListener('input', () => {
+        if (state.editingInvoiceDraft) state.editingInvoiceDraft.reason = reasonInput.value;
+      });
+
+      // Submit
+      editInvForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (state.saleInProgress) return;
+        const pin = (pinInput?.value || '').trim();
+        if (!/^d{6}$/.test(pin)) {
+          if (errBox) errBox.textContent = 'Digita tu PIN personal de 6 dígitos.';
+          return;
+        }
+
+        const reason = (reasonInput?.value || '').trim();
+        if (reason.length < 3) {
+          if (errBox) errBox.textContent = 'Indica un motivo de al menos 3 caracteres.';
+          return toast('Indica un motivo de al menos 3 caracteres.', 'warning');
+        }
+
+        if (!state.editingInvoiceDraft?.items?.length) {
+          return toast('El pedido debe tener al menos un producto.', 'warning');
+        }
+
+        const paymentMethod = methodSelect?.value || state.editingInvoiceDraft.paymentMethod || 'cash';
+        const paymentReference = (editInvForm.querySelector('#edit-inv-payment-ref')?.value || '').trim();
+        const deliveryDriverId = driverSelect?.value || '';
+        const deliveryDriverName = (driverNameInput?.value || '').trim();
+        const deliveryAddress = (editInvForm.querySelector('#edit-inv-address')?.value || '').trim();
+        const deliveryPhone = (editInvForm.querySelector('#edit-inv-phone')?.value || '').trim();
+        const deliveryNotes = (editInvForm.querySelector('#edit-inv-notes')?.value || '').trim();
+        const rawChangeFor = editInvForm.querySelector('#edit-inv-change-for')?.value;
+        let deliveryChangeForCents = 0;
+        try {
+          if (rawChangeFor) deliveryChangeForCents = toCents(rawChangeFor);
+        } catch (_) {}
+        const shouldPrint = Boolean(editInvForm.querySelector('#edit-inv-print-receipt')?.checked);
+
+        state.saleInProgress = true;
+        setBusy(submitBtn, true);
+
+        try {
+          const outcome = await service.modifyInvoice(state.editingInvoice.id, {
+            pin,
+            reason,
+            items: state.editingInvoiceDraft.items,
+            paymentMethod,
+            paymentReference,
+            deliveryDriverId,
+            deliveryDriverName,
+            deliveryAddress,
+            deliveryPhone,
+            deliveryNotes,
+            deliveryChangeForCents,
+            activeCashSessionId: state.activeCash?.id || ''
+          });
+
+          // Actualizar estado local
+          const invIndex = state.invoices.findIndex(i => i.id === state.editingInvoice.id);
+          if (invIndex >= 0) {
+            state.invoices[invIndex] = { ...state.invoices[invIndex], ...outcome };
+          } else {
+            state.invoices.unshift(outcome);
+          }
+
+          toast(`Factura ${outcome.invoiceNumber || state.editingInvoice.invoiceNumber} modificada exitosamente.`, 'success');
+          beepHardware('ok').catch(() => {});
+
+          if (shouldPrint) {
+            void printSaleReceipt(outcome, { openDrawer: false });
+          }
+
+          state.modal = '';
+          state.editingInvoice = null;
+          state.editingInvoiceDraft = null;
+          closeModal();
+          renderContent();
+        } catch (err) {
+          beepHardware('error').catch(() => {});
+          const msg = err.message || 'Error al modificar el pedido.';
+          toast(msg, 'danger');
+          if (errBox) errBox.textContent = msg;
+          if (pinInput) {
+            pinInput.value = '';
+            editInvForm.querySelectorAll('#edit-inv-pin-slots .pin-slot').forEach(s => s.classList.remove('filled'));
+          }
+        } finally {
+          state.saleInProgress = false;
+          setBusy(submitBtn, false);
         }
       });
     }
@@ -6387,6 +6612,27 @@ export function createApplication({ root, user, service, onLogout, onChangePassw
 
   function openOrder(id){if(!id)return;state.selectedOrderId=id;state.modal='order';renderModal();}
   function openInvoice(id){state.selectedInvoiceId=id;state.modal='invoice';renderModal();}
+  function openEditInvoice(id) {
+    if (!id) return;
+    const inv = (state.invoices || []).find((i) => i.id === id) || (state.lastSaleResult?.id === id ? state.lastSaleResult : null);
+    if (!inv) return toast('Factura no encontrada.', 'warning');
+    if (inv.status === 'cancelled') return toast('No se puede modificar una factura anulada.', 'warning');
+    state.editingInvoice = inv;
+    state.editingInvoiceDraft = {
+      items: Array.isArray(inv.items) ? inv.items.map(i => ({ ...i })) : [],
+      paymentMethod: inv.paymentMethod || 'cash',
+      paymentReference: inv.paymentReference || '',
+      deliveryDriverId: inv.deliveryDriverId || '',
+      deliveryDriverName: inv.deliveryDriverName || '',
+      deliveryAddress: inv.deliveryAddress || '',
+      deliveryPhone: inv.deliveryPhone || '',
+      deliveryNotes: inv.deliveryNotes || '',
+      deliveryChangeForCents: inv.deliveryChangeForCents || 0,
+      reason: ''
+    };
+    state.modal = 'editInvoice';
+    renderModal();
+  }
   function openForm(type,id=''){state.editingId=id;state.modal=type;renderModal();}
   function openUserForm(id=''){state.editingUser=id?state.users.find((item)=>item.id===id):{};state.modal='user';renderModal();}
   function closeModal(){

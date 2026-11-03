@@ -241,3 +241,87 @@ export function csvCell(value) {
   if (/^[=+\-@]/.test(text)) text = `'${text}`;
   return `"${text.replace(/"/g, '""')}"`;
 }
+
+
+export function calculateInvoiceModificationDiff(invoice, newItems, newPaymentMethod = '', newDriverName = '') {
+  if (!invoice) throw new Error('Se requiere la factura original.');
+  const oldItems = Array.isArray(invoice.items) ? invoice.items : [];
+  const validNewItems = Array.isArray(newItems) ? newItems : [];
+
+  const oldTotalCents = Number(invoice.totalCents || 0);
+  const newTotals = calculateDocument(validNewItems, {
+    discount: invoice.discount || invoice.discountCents,
+    discountType: invoice.discountType,
+    includeLegalTip: invoice.includeLegalTip === true,
+    tipCents: invoice.tipCents
+  });
+  const newTotalCents = newTotals.totalCents;
+  const totalDiffCents = newTotalCents - oldTotalCents;
+
+  const oldStockMap = new Map();
+  oldItems.forEach(line => {
+    const key = line.productId || line.name;
+    oldStockMap.set(key, (oldStockMap.get(key) || 0) + Number(line.quantity || 0));
+  });
+
+  const newStockMap = new Map();
+  validNewItems.forEach(line => {
+    const key = line.productId || line.name;
+    newStockMap.set(key, (newStockMap.get(key) || 0) + Number(line.quantity || 0));
+  });
+
+  const allKeys = new Set([...oldStockMap.keys(), ...newStockMap.keys()]);
+  const stockDeltas = [];
+  const itemChanges = [];
+
+  for (const key of allKeys) {
+    const oldQty = oldStockMap.get(key) || 0;
+    const newQty = newStockMap.get(key) || 0;
+    const delta = Math.round((newQty - oldQty) * 1000) / 1000;
+    if (delta !== 0) {
+      const lineSample = validNewItems.find(l => (l.productId || l.name) === key) || oldItems.find(l => (l.productId || l.name) === key);
+      const name = lineSample?.name || key;
+      const productId = lineSample?.productId || key;
+      stockDeltas.push({ productId, name, delta });
+      if (oldQty === 0) {
+        itemChanges.push(`+${newQty} ${name}`);
+      } else if (newQty === 0) {
+        itemChanges.push(`-${oldQty} ${name} (eliminado)`);
+      } else {
+        itemChanges.push(`${name}: ${oldQty} → ${newQty}`);
+      }
+    }
+  }
+
+  const oldMethod = invoice.paymentMethod || 'cash';
+  const resolvedNewMethod = newPaymentMethod || oldMethod;
+  const paymentMethodChanged = Boolean(newPaymentMethod && oldMethod !== resolvedNewMethod);
+
+  const oldDriver = invoice.deliveryDriverName || 'Sin asignar';
+  const resolvedNewDriver = newDriverName || oldDriver;
+  const driverChanged = Boolean(newDriverName && oldDriver !== resolvedNewDriver);
+
+  const changesList = [...itemChanges];
+  if (paymentMethodChanged) {
+    changesList.push(`Método de pago: ${oldMethod} → ${resolvedNewMethod}`);
+  }
+  if (driverChanged) {
+    changesList.push(`Repartidor: ${oldDriver} → ${resolvedNewDriver}`);
+  }
+
+  return {
+    oldTotals: {
+      subtotalCents: Number(invoice.subtotalCents || 0),
+      taxCents: Number(invoice.taxCents || 0),
+      totalCents: oldTotalCents,
+      paidCents: Number(invoice.paidCents || 0)
+    },
+    newTotals,
+    totalDiffCents,
+    stockDeltas,
+    itemChanges,
+    paymentMethodChanged,
+    driverChanged,
+    summary: changesList.length ? changesList.join(' | ') : 'Sin cambios en productos ni forma de pago'
+  };
+}

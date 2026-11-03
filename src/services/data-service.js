@@ -4,7 +4,8 @@ import {
 } from 'firebase/firestore';
 import {
   buildDocumentNumber, buildNcf, calculateDocument, canTransitionOrder, paymentStatus, PAYMENT_METHODS,
-  validateRncOrCedula
+  validateRncOrCedula,
+  calculateInvoiceModificationDiff
 } from '../domain/billing.js';
 import { can, ROLES } from '../domain/roles.js';
 import { createUsernameIdentity } from './firebase.js';
@@ -1245,6 +1246,318 @@ export class DataService {
         actorEmail: this.actor.email || '', createdAt: serverTimestamp()
       });
     });
+  }
+
+  async modifyInvoice(invoiceId, payload = {}) {
+    const {
+      pin,
+      reason,
+      items,
+      paymentMethod,
+      paymentReference,
+      deliveryDriverId,
+      deliveryDriverName,
+      deliveryAddress,
+      deliveryPhone,
+      deliveryNotes,
+      deliveryChangeForCents,
+      activeCashSessionId
+    } = payload;
+
+    const cleanReason = String(reason || '').trim().slice(0, 500);
+    if (cleanReason.length < 3) {
+      throw new Error('Indica un motivo de modificación de al menos tres caracteres.');
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error('El pedido debe tener al menos un producto.');
+    }
+
+    const verifyRes = await this.verifyDrawerPin(pin, `Modificación de Factura ${invoiceId}: ${cleanReason}`);
+    const authorizer = verifyRes.user;
+
+    const invoiceRef = doc(this.db, 'invoices', invoiceId);
+    const auditRef = doc(collection(this.db, 'auditLogs'));
+    const safeItems = documentItems(items);
+
+    let updatedInvoice = null;
+
+    try {
+      await runTransaction(this.db, async (transaction) => {
+        const snap = await transaction.get(invoiceRef);
+        if (!snap.exists()) throw new Error('La factura no existe.');
+        const invoice = snap.data();
+        if (invoice.status === 'cancelled') throw new Error('No se puede modificar una factura anulada.');
+
+        const diff = calculateInvoiceModificationDiff(invoice, safeItems, paymentMethod, deliveryDriverName);
+        const newTotals = diff.newTotals;
+        const newPaymentMethod = paymentMethod || invoice.paymentMethod || 'cash';
+        const isDelivery = Boolean(
+          deliveryDriverName ||
+          invoice.deliveryDriverName ||
+          newPaymentMethod === 'delivery_cod' ||
+          invoice.deliveryStatus === 'in_transit' ||
+          deliveryAddress ||
+          invoice.deliveryAddress
+        );
+
+        const stockDeltas = diff.stockDeltas;
+        const productSnapshots = await Promise.all(
+          stockDeltas.map(async ({ productId, delta }) => {
+            const ref = doc(this.db, 'products', productId);
+            return { ref, delta, snapshot: await transaction.get(ref) };
+          })
+        );
+
+        productSnapshots.forEach(({ ref, delta, snapshot: pSnap }) => {
+          if (!pSnap.exists()) return;
+          const prod = pSnap.data();
+          if (!prod.isPrepared) {
+            const currentStock = Number(prod.stock || 0);
+            const nextStock = Math.round((currentStock - delta) * 1000) / 1000;
+            transaction.update(ref, {
+              stock: Math.max(0, nextStock),
+              updatedAt: serverTimestamp(),
+              updatedBy: authorizer.uid
+            });
+          }
+        });
+
+        let paidCents = Number(invoice.paidCents || 0);
+        let status = invoice.status;
+        let deliveryStatus = invoice.deliveryStatus;
+        let deliverySettledAt = invoice.deliverySettledAt || null;
+
+        const cashSessionRef = activeCashSessionId ? doc(this.db, 'cashSessions', activeCashSessionId) : null;
+        let cashSessionSnap = null;
+        if (cashSessionRef) {
+          cashSessionSnap = await transaction.get(cashSessionRef);
+        }
+
+        if (invoice.paymentMethod === 'delivery_cod' && ['transfer', 'card', 'cash'].includes(newPaymentMethod)) {
+          paidCents = newTotals.totalCents;
+          status = 'paid';
+          deliveryStatus = 'settled';
+          deliverySettledAt = serverTimestamp();
+
+          const paymentRef = doc(collection(this.db, 'payments'));
+          transaction.set(paymentRef, {
+            invoiceId,
+            invoiceNumber: invoice.invoiceNumber,
+            amountCents: newTotals.totalCents,
+            method: newPaymentMethod,
+            reference: String(paymentReference || '').slice(0, 120),
+            tenderedCents: newTotals.totalCents,
+            changeCents: 0,
+            cashierId: authorizer.uid,
+            cashierName: authorizer.displayName,
+            cashSessionId: activeCashSessionId || '',
+            createdAt: serverTimestamp(),
+            createdBy: authorizer.uid,
+            notes: `Liquidado al recibir: ${cleanReason}`
+          });
+
+          if (newPaymentMethod === 'cash' && cashSessionSnap?.exists() && cashSessionSnap.data().status === 'open') {
+            const currentExp = Number(cashSessionSnap.data().expectedCents ?? 0);
+            transaction.update(cashSessionRef, {
+              expectedCents: currentExp + newTotals.totalCents,
+              lastCashActivityId: paymentRef.id,
+              lastCashActivityType: 'payment',
+              updatedAt: serverTimestamp(),
+              updatedBy: authorizer.uid
+            });
+          }
+        } else if (newPaymentMethod === 'delivery_cod' || newPaymentMethod === 'credit') {
+          if (paidCents === 0) {
+            status = 'pending';
+          } else {
+            status = paymentStatus(newTotals.totalCents, paidCents);
+          }
+        } else if (paidCents > 0) {
+          const diffCents = diff.totalDiffCents;
+          if (diff.paymentMethodChanged) {
+            if (invoice.paymentMethod === 'cash' && newPaymentMethod !== 'cash' && cashSessionSnap?.exists()) {
+              const currentExp = Number(cashSessionSnap.data().expectedCents ?? 0);
+              transaction.update(cashSessionRef, {
+                expectedCents: Math.max(0, currentExp - paidCents),
+                updatedAt: serverTimestamp(),
+                updatedBy: authorizer.uid
+              });
+            } else if (invoice.paymentMethod !== 'cash' && newPaymentMethod === 'cash' && cashSessionSnap?.exists()) {
+              const currentExp = Number(cashSessionSnap.data().expectedCents ?? 0);
+              transaction.update(cashSessionRef, {
+                expectedCents: currentExp + paidCents,
+                updatedAt: serverTimestamp(),
+                updatedBy: authorizer.uid
+              });
+            }
+          }
+
+          if (diffCents > 0) {
+            paidCents += diffCents;
+            status = 'paid';
+            if (newPaymentMethod === 'cash' && cashSessionSnap?.exists()) {
+              const currentExp = Number(cashSessionSnap.data().expectedCents ?? 0);
+              transaction.update(cashSessionRef, {
+                expectedCents: currentExp + diffCents,
+                updatedAt: serverTimestamp(),
+                updatedBy: authorizer.uid
+              });
+            }
+          } else if (diffCents < 0) {
+            paidCents = newTotals.totalCents;
+            status = 'paid';
+            if (invoice.paymentMethod === 'cash' && cashSessionSnap?.exists()) {
+              const currentExp = Number(cashSessionSnap.data().expectedCents ?? 0);
+              transaction.update(cashSessionRef, {
+                expectedCents: Math.max(0, currentExp + diffCents),
+                updatedAt: serverTimestamp(),
+                updatedBy: authorizer.uid
+              });
+            }
+          }
+        }
+
+        const revision = (Number(invoice.revision) || 1) + 1;
+        const modifications = Array.isArray(invoice.modifications) ? [...invoice.modifications] : [];
+        const modRecord = {
+          revision,
+          modifiedAt: new Date().toISOString(),
+          modifiedBy: authorizer.uid,
+          modifiedByName: authorizer.displayName,
+          reason: cleanReason,
+          oldTotalCents: diff.oldTotals.totalCents,
+          newTotalCents: newTotals.totalCents,
+          oldPaymentMethod: invoice.paymentMethod,
+          newPaymentMethod,
+          summary: diff.summary
+        };
+        modifications.push(modRecord);
+
+        const invoiceUpdates = {
+          items: safeItems,
+          ...newTotals,
+          paidCents,
+          status,
+          paymentMethod: newPaymentMethod,
+          ...(paymentReference !== undefined ? { paymentReference: String(paymentReference).slice(0, 120) } : {}),
+          ...(deliveryDriverId !== undefined ? { deliveryDriverId: String(deliveryDriverId || '') } : {}),
+          ...(deliveryDriverName !== undefined ? { deliveryDriverName: String(deliveryDriverName || '').slice(0, 160) } : {}),
+          ...(deliveryAddress !== undefined ? { deliveryAddress: String(deliveryAddress || '').slice(0, 300) } : {}),
+          ...(deliveryPhone !== undefined ? { deliveryPhone: String(deliveryPhone || '').slice(0, 30) } : {}),
+          ...(deliveryNotes !== undefined ? { deliveryNotes: String(deliveryNotes || '').slice(0, 300) } : {}),
+          ...(deliveryChangeForCents !== undefined ? { deliveryChangeForCents: Math.max(0, Number(deliveryChangeForCents || 0)) } : {}),
+          deliveryStatus: deliveryStatus || (isDelivery ? 'in_transit' : ''),
+          ...(deliverySettledAt ? { deliverySettledAt } : {}),
+          revision,
+          modifications,
+          isModified: true,
+          modifiedAt: serverTimestamp(),
+          modifiedBy: authorizer.uid,
+          modifiedByName: authorizer.displayName,
+          modificationReason: cleanReason,
+          updatedAt: serverTimestamp(),
+          updatedBy: authorizer.uid
+        };
+
+        transaction.update(invoiceRef, invoiceUpdates);
+
+        transaction.set(auditRef, {
+          action: 'invoice.modified',
+          details: `Factura ${invoice.invoiceNumber || invoiceId} modificada por ${authorizer.displayName}. Motivo: ${cleanReason}. Cambios: ${diff.summary}. Total: ${diff.oldTotals.totalCents} → ${newTotals.totalCents}`,
+          actorId: authorizer.uid,
+          actorName: authorizer.displayName,
+          actorEmail: this.actor.email || '',
+          invoiceId,
+          invoiceNumber: invoice.invoiceNumber || '',
+          reason: cleanReason,
+          revision,
+          changes: {
+            oldTotalCents: diff.oldTotals.totalCents,
+            newTotalCents: newTotals.totalCents,
+            oldPaymentMethod: invoice.paymentMethod,
+            newPaymentMethod,
+            summary: diff.summary
+          },
+          createdAt: serverTimestamp()
+        });
+
+        updatedInvoice = {
+          id: invoiceId,
+          ...invoice,
+          ...invoiceUpdates,
+          createdAt: invoice.createdAt,
+          updatedAt: new Date()
+        };
+      });
+    } catch (err) {
+      const errStr = (String(err?.message || '') + ' ' + String(err?.code || '')).toLowerCase();
+      const isQuotaOrNetwork = errStr.includes('quota') ||
+                               errStr.includes('resource-exhausted') ||
+                               errStr.includes('resource_exhausted') ||
+                               errStr.includes('unavailable') ||
+                               errStr.includes('failed to fetch');
+
+      if (isQuotaOrNetwork) {
+        console.warn('MODIFICACIÓN EN MODO CONTINGENCIA (Guardando localmente):', err);
+        return this.modifyContingencyInvoice(invoiceId, safeItems, cleanReason, authorizer, payload);
+      }
+      throw err;
+    }
+
+    return updatedInvoice;
+  }
+
+  modifyContingencyInvoice(invoiceId, safeItems, cleanReason, authorizer, payload) {
+    let queue = [];
+    if (typeof localStorage !== 'undefined') {
+      try {
+        queue = JSON.parse(localStorage.getItem('panitas_contingency_invoices') || '[]');
+      } catch {}
+    }
+    const idx = queue.findIndex(i => i.id === invoiceId || i.invoiceNumber === invoiceId);
+    let invoice = idx >= 0 ? queue[idx] : null;
+    if (!invoice) {
+      invoice = {
+        id: invoiceId,
+        invoiceNumber: invoiceId,
+        items: safeItems,
+        totalCents: 0,
+        paidCents: 0,
+        createdAt: new Date(),
+        paymentMethod: payload.paymentMethod || 'cash'
+      };
+    }
+    const diff = calculateInvoiceModificationDiff(invoice, safeItems, payload.paymentMethod, payload.deliveryDriverName);
+    const revision = (Number(invoice.revision) || 1) + 1;
+    const updated = {
+      ...invoice,
+      items: safeItems,
+      ...diff.newTotals,
+      paymentMethod: payload.paymentMethod || invoice.paymentMethod,
+      deliveryDriverId: payload.deliveryDriverId ?? invoice.deliveryDriverId,
+      deliveryDriverName: payload.deliveryDriverName ?? invoice.deliveryDriverName,
+      deliveryAddress: payload.deliveryAddress ?? invoice.deliveryAddress,
+      deliveryPhone: payload.deliveryPhone ?? invoice.deliveryPhone,
+      deliveryNotes: payload.deliveryNotes ?? invoice.deliveryNotes,
+      revision,
+      isModified: true,
+      modifiedAt: new Date(),
+      modifiedBy: authorizer.uid,
+      modifiedByName: authorizer.displayName,
+      modificationReason: cleanReason,
+      isContingency: true
+    };
+    if (idx >= 0) {
+      queue[idx] = updated;
+    } else {
+      queue.push(updated);
+    }
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem('panitas_contingency_invoices', JSON.stringify(queue));
+      } catch {}
+    }
+    return updated;
   }
 
   async ensureDailyCashSession(defaultOpeningCents = 0) {

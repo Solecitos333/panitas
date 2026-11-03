@@ -4,6 +4,7 @@ import {
   canTransitionOrder,
   paymentStatus,
   PAYMENT_METHODS,
+  calculateInvoiceModificationDiff,
 } from "../domain/billing.js";
 import { createOperationId } from "../lib/id.js";
 import { calculateWasteCostCents, getInventoryReason, validateInventoryAdjustment } from "../domain/inventory.js";
@@ -815,6 +816,183 @@ export class MemoryDataService {
     invoice.status = "cancelled";
     invoice.cancellationReason = String(reason || "").trim();
     this.emit("invoices");
+  }
+
+  async modifyInvoice(invoiceId, payload = {}) {
+    const {
+      pin,
+      reason,
+      items,
+      paymentMethod,
+      paymentReference,
+      deliveryDriverId,
+      deliveryDriverName,
+      deliveryAddress,
+      deliveryPhone,
+      deliveryNotes,
+      deliveryChangeForCents,
+      activeCashSessionId
+    } = payload;
+
+    const cleanReason = String(reason || '').trim().slice(0, 500);
+    if (cleanReason.length < 3) {
+      throw new Error('Indica un motivo de modificación de al menos tres caracteres.');
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error('El pedido debe tener al menos un producto.');
+    }
+
+    const verifyRes = await this.verifyDrawerPin(pin, `Modificación de Factura ${invoiceId}: ${cleanReason}`);
+    const authorizer = verifyRes.user;
+
+    const invoice = this.data.invoices.find((i) => i.id === invoiceId);
+    if (!invoice) throw new Error('La factura no existe.');
+    if (invoice.status === 'cancelled') throw new Error('No se puede modificar una factura anulada.');
+
+    const safeItems = documentItems(items);
+    const diff = calculateInvoiceModificationDiff(invoice, safeItems, paymentMethod, deliveryDriverName);
+    const newTotals = diff.newTotals;
+    const newPaymentMethod = paymentMethod || invoice.paymentMethod || 'cash';
+    const isDelivery = Boolean(
+      deliveryDriverName ||
+      invoice.deliveryDriverName ||
+      newPaymentMethod === 'delivery_cod' ||
+      invoice.deliveryStatus === 'in_transit' ||
+      deliveryAddress ||
+      invoice.deliveryAddress
+    );
+
+    // Ajuste de stock en memoria
+    for (const { productId, delta } of diff.stockDeltas) {
+      const prod = this.data.products.find(p => p.id === productId);
+      if (prod && !prod.isPrepared) {
+        prod.stock = Math.max(0, Math.round((Number(prod.stock || 0) - delta) * 1000) / 1000);
+      }
+    }
+    if (diff.stockDeltas.length) this.emit('products');
+
+    let paidCents = Number(invoice.paidCents || 0);
+    let status = invoice.status;
+    let deliveryStatus = invoice.deliveryStatus;
+    let deliverySettledAt = invoice.deliverySettledAt || null;
+
+    const cashSession = activeCashSessionId ? this.data.cashSessions.find(s => s.id === activeCashSessionId) : null;
+
+    if (invoice.paymentMethod === 'delivery_cod' && ['transfer', 'card', 'cash'].includes(newPaymentMethod)) {
+      paidCents = newTotals.totalCents;
+      status = 'paid';
+      deliveryStatus = 'settled';
+      deliverySettledAt = new Date();
+
+      const paymentId = createOperationId('payment');
+      this.data.payments.unshift({
+        id: paymentId,
+        invoiceId,
+        invoiceNumber: invoice.invoiceNumber,
+        amountCents: newTotals.totalCents,
+        method: newPaymentMethod,
+        reference: String(paymentReference || '').slice(0, 120),
+        tenderedCents: newTotals.totalCents,
+        changeCents: 0,
+        cashierId: authorizer.uid,
+        cashierName: authorizer.displayName,
+        cashSessionId: activeCashSessionId || '',
+        createdAt: new Date(),
+        createdBy: authorizer.uid,
+        notes: `Liquidado al recibir: ${cleanReason}`
+      });
+      this.emit('payments');
+
+      if (newPaymentMethod === 'cash' && cashSession) {
+        cashSession.expectedCents = (Number(cashSession.expectedCents || 0)) + newTotals.totalCents;
+        this.emit('cashSessions');
+      }
+    } else if (newPaymentMethod === 'delivery_cod' || newPaymentMethod === 'credit') {
+      if (paidCents === 0) status = 'pending';
+      else status = paymentStatus(newTotals.totalCents, paidCents);
+    } else if (paidCents > 0) {
+      const diffCents = diff.totalDiffCents;
+      if (diff.paymentMethodChanged && cashSession) {
+        if (invoice.paymentMethod === 'cash' && newPaymentMethod !== 'cash') {
+          cashSession.expectedCents = Math.max(0, (Number(cashSession.expectedCents || 0)) - paidCents);
+        } else if (invoice.paymentMethod !== 'cash' && newPaymentMethod === 'cash') {
+          cashSession.expectedCents = (Number(cashSession.expectedCents || 0)) + paidCents;
+        }
+      }
+
+      if (diffCents > 0) {
+        paidCents += diffCents;
+        status = 'paid';
+        if (newPaymentMethod === 'cash' && cashSession) {
+          cashSession.expectedCents = (Number(cashSession.expectedCents || 0)) + diffCents;
+        }
+      } else if (diffCents < 0) {
+        paidCents = newTotals.totalCents;
+        status = 'paid';
+        if (invoice.paymentMethod === 'cash' && cashSession) {
+          cashSession.expectedCents = Math.max(0, (Number(cashSession.expectedCents || 0)) + diffCents);
+        }
+      }
+      if (cashSession) this.emit('cashSessions');
+    }
+
+    const revision = (Number(invoice.revision) || 1) + 1;
+    const modifications = Array.isArray(invoice.modifications) ? [...invoice.modifications] : [];
+    modifications.push({
+      revision,
+      modifiedAt: new Date().toISOString(),
+      modifiedBy: authorizer.uid,
+      modifiedByName: authorizer.displayName,
+      reason: cleanReason,
+      oldTotalCents: diff.oldTotals.totalCents,
+      newTotalCents: newTotals.totalCents,
+      oldPaymentMethod: invoice.paymentMethod,
+      newPaymentMethod,
+      summary: diff.summary
+    });
+
+    Object.assign(invoice, {
+      items: safeItems,
+      ...newTotals,
+      paidCents,
+      status,
+      paymentMethod: newPaymentMethod,
+      ...(paymentReference !== undefined ? { paymentReference: String(paymentReference).slice(0, 120) } : {}),
+      ...(deliveryDriverId !== undefined ? { deliveryDriverId: String(deliveryDriverId || '') } : {}),
+      ...(deliveryDriverName !== undefined ? { deliveryDriverName: String(deliveryDriverName || '').slice(0, 160) } : {}),
+      ...(deliveryAddress !== undefined ? { deliveryAddress: String(deliveryAddress || '').slice(0, 300) } : {}),
+      ...(deliveryPhone !== undefined ? { deliveryPhone: String(deliveryPhone || '').slice(0, 30) } : {}),
+      ...(deliveryNotes !== undefined ? { deliveryNotes: String(deliveryNotes || '').slice(0, 300) } : {}),
+      ...(deliveryChangeForCents !== undefined ? { deliveryChangeForCents: Math.max(0, Number(deliveryChangeForCents || 0)) } : {}),
+      deliveryStatus: deliveryStatus || (isDelivery ? 'in_transit' : ''),
+      ...(deliverySettledAt ? { deliverySettledAt } : {}),
+      revision,
+      modifications,
+      isModified: true,
+      modifiedAt: new Date(),
+      modifiedBy: authorizer.uid,
+      modifiedByName: authorizer.displayName,
+      modificationReason: cleanReason,
+      updatedAt: new Date(),
+      updatedBy: authorizer.uid
+    });
+
+    this.data.auditLogs.unshift({
+      id: createOperationId('audit'),
+      action: 'invoice.modified',
+      details: `Factura ${invoice.invoiceNumber || invoiceId} modificada por ${authorizer.displayName}. Motivo: ${cleanReason}. Cambios: ${diff.summary}. Total: ${diff.oldTotals.totalCents} → ${newTotals.totalCents}`,
+      actorId: authorizer.uid,
+      actorName: authorizer.displayName,
+      invoiceId,
+      invoiceNumber: invoice.invoiceNumber || '',
+      reason: cleanReason,
+      revision,
+      createdAt: new Date()
+    });
+
+    this.emit('invoices');
+    this.emit('auditLogs');
+    return invoice;
   }
   async ensureDailyCashSession(defaultOpeningCents = 0) {
     const openSession = this.data.cashSessions.find((s) => s.status === "open" && s.openedBy === this.actor.uid);

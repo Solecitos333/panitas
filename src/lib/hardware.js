@@ -327,6 +327,14 @@ export function buildInvoiceEscPos(invoice, settings = {}, payments = [], change
   if (invoice.tableName) b.line(`Mesa: ${invoice.tableName}`);
   if (invoice.cashierName) b.line(`Atendido por: ${invoice.cashierName}`);
 
+  if (invoice.revision > 1 || invoice.isModified) {
+    b.separator('*');
+    b.align('center').bold(true).line(`*** TICKET MODIFICADO (REV ${invoice.revision || 2}) ***`).bold(false).align('left');
+    if (invoice.modificationReason) b.line(`Motivo: ${invoice.modificationReason}`);
+    if (invoice.modifiedByName) b.line(`Autorizado por: ${invoice.modifiedByName}`);
+    b.separator('*');
+  }
+
   if (invoice.deliveryDriverName || invoice.paymentMethod === 'delivery_cod') {
     b.separator('*');
     b.align('center').bold(true).line('*** PAGO CONTRA ENTREGA (DELIVERY) ***').bold(false).align('left');
@@ -499,6 +507,14 @@ export function buildInvoicePlainText(invoice, settings = {}, payments = [], cha
   if (invoice.clientRnc) lines.push(`RNC/Cédula: ${receiptText(invoice.clientRnc)}`);
   if (invoice.tableName) lines.push(`Mesa: ${receiptText(invoice.tableName)}`);
   if (invoice.cashierName) lines.push(`Atendido por: ${receiptText(invoice.cashierName)}`);
+
+  if (invoice.revision > 1 || invoice.isModified) {
+    lines.push('[SEP]');
+    lines.push(`[C][B]*** TICKET MODIFICADO (REV ${invoice.revision || 2}) ***`);
+    if (invoice.modificationReason) lines.push(`[C]Motivo: ${receiptText(invoice.modificationReason)}`);
+    if (invoice.modifiedByName) lines.push(`[C]Autorizado por: ${receiptText(invoice.modifiedByName)}`);
+    lines.push('[SEP]');
+  }
 
   if (invoice.deliveryDriverName || invoice.paymentMethod === 'delivery_cod') {
     lines.push('[SEP]');
